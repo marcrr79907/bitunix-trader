@@ -11,7 +11,7 @@ from django.utils import timezone
 
 User = get_user_model()
 
-PASSWORD = "signup-pw-98765"
+PASSWORD = "signup-pw-98765"  #gitleaks:allow (test fixture, not a real secret)
 
 
 def _invite(**overrides) -> Invite:
