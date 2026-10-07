@@ -158,12 +158,15 @@ def margin_state(rate) -> str:
 
 
 def position_row(raw: dict, mark: float | None) -> dict:
-    side = raw.get("side", "")
+    # API returns side "BUY"/"SELL" (some docs say LONG/SHORT) — normalize.
+    side = str(raw.get("side", "")).upper()
+    is_long = side in ("BUY", "LONG")
+    side = "LONG" if is_long else "SHORT" if side in ("SELL", "SHORT") else side
     state = margin_state(raw.get("marginRate"))
     return {
         "symbol": raw.get("symbol", ""),
         "side": side,
-        "side_fmt": f"[green]LONG[/green]" if side == "LONG" else f"[red]SHORT[/red]",
+        "side_fmt": "[green]LONG[/green]" if is_long else "[red]SHORT[/red]",
         "leverage": raw.get("leverage", ""),
         "qty": raw.get("qty", ""),
         "avg_open": raw.get("avgOpenPrice", ""),
@@ -220,9 +223,16 @@ def render_positions(rows: list[dict], balance: dict | None = None) -> Table:
 
 def fetch_positions(client: BitunixClient, marks: dict[str, float]) -> tuple[list[dict], dict | None]:
     raw = client.positions()
+    # Positions may include symbols outside config.SYMBOLS; fetch their marks too.
+    extra = [p["symbol"] for p in raw if p.get("symbol") and p["symbol"] not in marks]
+    if extra:
+        for t in client.tickers(extra):
+            marks[t["symbol"]] = _f(t.get("lastPrice"))
     rows = [position_row(p, marks.get(p.get("symbol"))) for p in raw]
     rows.sort(key=lambda r: r["symbol"])
-    balance = (client.account() or [None])[0]
+    account = client.account()
+    # API returns a dict here despite docs showing a list.
+    balance = account[0] if isinstance(account, list) else account
     return rows, balance
 
 

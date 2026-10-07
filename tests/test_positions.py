@@ -49,10 +49,20 @@ def test_position_row_from_api_shape():
     assert row["margin_state"] == "ok"
 
 
+def test_position_row_normalizes_buy_sell():
+    """Real API returns BUY/SELL even though docs say LONG/SHORT."""
+    buy = position_row({"symbol": "X", "side": "BUY", "marginRate": "0.01"}, 100.0)
+    sell = position_row({"symbol": "Y", "side": "SELL", "marginRate": "0.7"}, 100.0)
+    assert buy["side"] == "LONG"
+    assert sell["side"] == "SHORT"
+    assert sell["margin_state"] == "danger"
+
+
 if __name__ == "__main__":
     test_liq_distance_pct_long()
     test_liq_distance_pct_short_above_mark()
     test_liq_distance_pct_no_liquidation()
     test_margin_state()
     test_position_row_from_api_shape()
+    test_position_row_normalizes_buy_sell()
     print("ok: positions parsing works")
