@@ -219,3 +219,126 @@ None material. Two implementation notes:
 
 6/6 Phase-2 tasks complete. 15/15 total tasks complete (Phases 1–2). Ready for
 verify (PR2), then PR3 (Invite + token signup).
+
+---
+
+# Apply Progress: web-foundation — PR3 (batch 3)
+
+## Mode
+
+**Strict TDD** (openspec `config.yaml` `strict_tdd: true`, runner `python -m pytest`).
+
+## Scope of this batch
+
+PR3 only — Work Unit 3 of the feature-branch chain: `Invite` model + staff-gated
+invite creation + token-gated signup + migration + templates. Branch
+`feat/web-foundation-invite` (base `feat/web-dashboard` containing PR1+PR2).
+Chain strategy: `feature-branch-chain`. Hard-depends on PR2 (User must exist).
+
+## Completed Tasks
+
+- [x] 3.1 RED `tests/web/test_invite.py` — 7 cases (unique/generated token, default
+  future expiry, duplicate active rejected, used invite doesn't block, past expiry
+  rejected at creation, member forbidden, staff allowed + `created_by` set).
+- [x] 3.2 GREEN `Invite` in `accounts/models.py`, `forms.py` (`InviteForm.clean_email`
+  + `clean_expires_at`), registered in `admin.py`; migration `0002_invite.py`.
+- [x] 3.3 RED `tests/web/test_signup.py` — 8 cases (render valid token, valid token
+  creates User with invite role + sets `used_at`, expired/reused/unknown rejected,
+  email normalised, no open self-registration route, token single-use).
+- [x] 3.4 GREEN `accounts/views.py` (`invite_create`, `signup`) + routes + templates
+  `accounts/{invite_create,signup}.html`.
+- [x] 3.5 PR3 rollback — revert deletes signup view/templates + `0002_invite`; PR2
+  auth + migrations 0001 remain bootable green.
+
+## Design decisions (justification)
+
+- **Default expiry = 7 days** (`INVITE_TTL = timedelta(days=7)`, model-level
+  `default_expiry`). Matches design interface (`now + 7d`); long enough for a real
+  invitee, short enough to shrink the window on a leaked token.
+- **`created_by` on_delete `SET_NULL`** (not CASCADE): an invite is an audit-ish
+  record; deleting the staff creator must not delete the invitee's history.
+- **No open registration route**: only `accounts/signup/<token>/` exists; the
+  `test_no_open_self_registration_route` case asserts `/signup/`, `/register/`, and
+  `/accounts/signup/` all 404.
+- **Uniform 404 for expired/reused/unknown**: same response for all invalid tokens
+  → no timing/status info leak (R2 "exposes no account form").
+- **Signup role from invite, never from the form**: the visitor picks only a
+  password; email + role come from the server-side invite row (privilege escalation
+  impossible).
+- **Form, not bare view, owns duplicate/expiry validation** (design D4): "active" is
+  clock-dependent, so a DB unique constraint can't express `expires_at > now()`;
+  DB unique stays on `token` only.
+
+## TDD Cycle Evidence
+
+| Task | Test File | Layer | Safety Net | RED | GREEN | TRIANGULATE | REFACTOR |
+|------|-----------|-------|------------|-----|-------|-------------|----------|
+| 3.1 | `tests/web/test_invite.py` | Integration (ORM+form+client) | ✅ 44/44 | ✅ Written → `ModuleNotFoundError: accounts.forms` | ✅ 7 passed | ✅ 7 cases (unique, dup, used-then-recreate, past, member, staff) | ✅ `ruff format`, dropped redundant `invite.email=` reassign |
+| 3.2 | `test_invite.py` (migration) | Integration | ✅ 44/44 | ✅ via 3.1 | ✅ passed | ✅ `makemigrations --check` clean | ✅ clean |
+| 3.3 | `tests/web/test_signup.py` | Integration (Django test client) | ✅ 44/44 | ✅ Written → route removed → 4 valid-path failures (404) | ✅ 8 passed | ✅ 8 cases incl. single-use + normalisation + no-open-route | ✅ clean |
+| 3.4 | `test_signup.py` | Integration | ✅ 44/44 | ✅ via 3.3 | ✅ passed | ✅ render + POST + invalid-token paths | ✅ clean |
+
+Notes:
+- 3.1 RED captured at import time (`accounts.forms` absent) — proves the test
+  references production code that did not exist yet.
+- 3.3 RED honoured by temporarily removing the signup URL line → 4 valid-path tests
+  failed 404 (`test_signup_page_renders_for_valid_token`,
+  `..._creates_user_with_invite_role`, `..._normalises_email`, `..._single_use`),
+  then restored → green. The 4 rejection tests stayed green throughout (they assert
+  404), which is why removal was needed to demonstrate RED for the happy paths.
+- `test_token_is_single_use` triangulates the whole flow: first POST creates one
+  User, second POST on the same token 404s and leaves the count at 1.
+
+## Test Summary
+
+- Total tests written this batch: 15 (7 invite + 8 signup)
+- Total tests passing: 59 / 59 (full suite; baseline 44 preserved)
+- Layers used: Integration (15)
+- Approval tests: None — no refactoring of existing modules
+- Pure functions created: 1 (`Invite.is_valid()` — clock predicate)
+
+## Files Changed
+
+| File | Action | What Was Done |
+|------|--------|---------------|
+| `web/accounts/models.py` | Modified | `gen_token`/`default_expiry` helpers, `INVITE_TTL`, `Invite` model |
+| `web/accounts/forms.py` | Created | `InviteForm` (dup + past-expiry validation), `SignupForm` |
+| `web/accounts/views.py` | Created | `invite_create` (staff-only), `signup` (token-gated) |
+| `web/accounts/urls.py` | Modified | `accounts/invites/new/`, `accounts/signup/<token>/` |
+| `web/accounts/admin.py` | Modified | `InviteAdmin` registration |
+| `web/accounts/migrations/0002_invite.py` | Created | `Invite` schema |
+| `web/accounts/templates/accounts/{invite_create,signup}.html` | Created | Minimal forms |
+| `tests/web/test_invite.py` | Created | R1 contract |
+| `tests/web/test_signup.py` | Created | R2 contract |
+| `pyproject.toml` | Modified | ruff migration per-file-ignore adds `I001` (generated import order) |
+
+## Deviations from Design
+
+None material. Design D4 (form-level duplicate check, DB unique on token only) is
+implemented exactly. One naming note: design's file table lists templates under
+`templates/accounts/*.html`; the invite/signup forms landed there as specified
+(the PR2 login shell stays under `registration/`, Django's convention). Design
+also marked `created_by` as "deferred (YAGNI)" — the task brief explicitly requires
+it, so it is implemented (nullable FK, `SET_NULL`).
+
+## Verification (PR3)
+
+- `.venv/bin/python -m pytest` → **59 passed** in 8.25s
+- `.venv/bin/python web/manage.py makemigrations --check --dry-run` → **No changes detected**
+- `.venv/bin/python web/manage.py check` → **System check identified no issues (0 silenced)**
+- `.venv/bin/ruff check .` → **All checks passed!**
+- `.venv/bin/ruff format --check .` → **58 files already formatted**
+- New migration: `web/accounts/migrations/0002_invite.py`
+- New test names — `test_invite.py`: {token_is_unique_and_generated,
+  default_expiry_is_in_the_future, duplicate_active_invite_rejected,
+  used_invite_does_not_block_new_invite, past_expiry_rejected_at_creation,
+  member_forbidden_from_creating_invite, staff_can_create_invite};
+  `test_signup.py`: {signup_page_renders_for_valid_token,
+  valid_token_creates_user_with_invite_role, expired_token_rejected,
+  reused_token_rejected, unknown_token_rejected, signup_normalises_email,
+  no_open_self_registration_route, token_is_single_use}
+
+## Status
+
+5/5 Phase-3 tasks complete. 20/20 total tasks complete (Phases 1–3). Ready for
+verify (PR3), then PR4 (Docker/Railway + stubs + CI/CD).

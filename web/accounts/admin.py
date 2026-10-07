@@ -5,7 +5,8 @@ from __future__ import annotations
 from django.contrib import admin
 from django.contrib.auth.admin import UserAdmin as DjangoUserAdmin
 
-from accounts.models import User
+from accounts.forms import InviteForm
+from accounts.models import Invite, User
 
 
 @admin.register(User)
@@ -27,3 +28,13 @@ class UserAdmin(DjangoUserAdmin):
     list_display = ("email", "role", "is_staff", "is_active")
     ordering = ("email",)
     search_fields = ("email",)
+
+
+@admin.register(Invite)
+class InviteAdmin(admin.ModelAdmin):
+    # W2: use InviteForm so admin creation runs the same email/expiry validation.
+    form = InviteForm
+    list_display = ("email", "role", "expires_at", "used_at", "created_by")
+    list_filter = ("role", "used_at")
+    search_fields = ("email", "token")
+    readonly_fields = ("token", "created_at", "used_at")

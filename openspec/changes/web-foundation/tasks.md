@@ -102,11 +102,11 @@ Layers: **L1** = pytest/pytest-django (every PR) · **L2** = `docker build` + `d
 
 ## Phase 3 — PR3: `Invite` + token signup (L1) — *requires PR2*
 
-- [ ] 3.1 **RED** `tests/web/test_invite.py`: valid invite (unique token, `used_at` null, future expiry); duplicate active rejected; past expiry rejected; creation gated by `is_staff` (D1). [L1]
-- [ ] 3.2 **GREEN** `Invite` in `accounts/models.py` + `forms.py` `clean_email`; `makemigrations` → `0002_invite`; register in `admin.py`. [L1]
-- [ ] 3.3 **RED** `tests/web/test_signup.py`: valid token creates user with invite role + sets `used_at`; expired/reused/unknown rejected; no open registration route. [L1]
-- [ ] 3.4 **GREEN** view `signup/<token>/` + templates `accounts/*.html`. [L1]
-- [ ] 3.5 **PR3 rollback**: revert → delete signup view/templates + `0002_invite`; PR2 auth still green.
+- [x] 3.1 **RED** `tests/web/test_invite.py`: valid invite (unique token, `used_at` null, future expiry); duplicate active rejected; past expiry rejected; creation gated by `is_staff` (D1). [L1]
+- [x] 3.2 **GREEN** `Invite` in `accounts/models.py` + `forms.py` `clean_email`; `makemigrations` → `0002_invite`; register in `admin.py`. [L1]
+- [x] 3.3 **RED** `tests/web/test_signup.py`: valid token creates user with invite role + sets `used_at`; expired/reused/unknown rejected; no open registration route. [L1]
+- [x] 3.4 **GREEN** view `signup/<token>/` + templates `accounts/*.html`. [L1]
+- [x] 3.5 **PR3 rollback**: revert → delete signup view/templates + `0002_invite`; PR2 auth still green.
 
 ## Phase 4 — PR4: Docker/Compose/Railway + stubs + CI/CD (L1 + L2 + L3)
 
