@@ -2,24 +2,28 @@ name: CI
 
 on:
   pull_request:
-    branches: [main]
   push:
-    branches: [main]
+    branches: [main, develop]
 
 permissions:
   contents: read
 
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   test:
-    name: Lint & tests
+    name: L1 lint & tests
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
           persist-credentials: false
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
         with:
           python-version: "3.12"
           cache: pip
@@ -38,5 +42,87 @@ jobs:
       - name: Format check
         run: ruff format --check .
 
-      - name: Tests
-        run: python -m pytest
+      - name: Django system check
+        run: python web/manage.py check
+
+      - name: Migration drift check
+        run: python web/manage.py makemigrations --check --dry-run
+
+      - name: Tests with coverage gate
+        run: python -m pytest --cov
+
+  core-isolation:
+    name: L1 core imports without Django
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: requirements.txt
+
+      - name: Install runtime deps only (no Django)
+        run: |
+          pip install --upgrade pip
+          pip install requests rich
+
+      - name: Import every core module with Django absent
+        run: |
+          python - <<'PY'
+          import importlib, pathlib, sys
+          assert "django" not in sys.modules
+          for path in sorted(pathlib.Path("src").glob("*.py")):
+              if path.stem == "__init__":
+                  continue
+              importlib.import_module(f"src.{path.stem}")
+          print("core imports clean without Django")
+          PY
+
+  security:
+    name: L1 security scans
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      pull-requests: read
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        with:
+          python-version: "3.12"
+
+      - name: Dependency CVE audit
+        run: |
+          pip install --upgrade pip pip-audit
+          pip-audit -r requirements.txt
+
+      - name: Secret scan (gitleaks)
+        uses: gitleaks/gitleaks-action@ff98106e4c7b2bc287b24eaf42907196329070c7 # v2.3.9
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  docker:
+    name: L2 build & compose config
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+
+      - name: Validate docker compose config
+        run: docker compose config
+
+      - name: Build image
+        run: docker build -t bitunix-trader:ci .

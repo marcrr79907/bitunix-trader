@@ -1,0 +1,12 @@
+# gitleaks config — extend the defaults and allowlist test fixtures only.
+# Test files hold fake passwords/keys by design; the default generic-api-key
+# rule flags them. We scope the allowance to tests/ so real secrets elsewhere
+# are still caught.
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Fake credentials in test fixtures are not secrets"
+paths = [
+    '''tests/.*\.py$''',
+]

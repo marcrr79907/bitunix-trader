@@ -1,0 +1,65 @@
+name: CD
+
+on:
+  push:
+    branches: [main, develop]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: cd-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  smoke:
+    name: L3 deploy smoke (/healthz)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      # The deploy itself is triggered by Railway on push (GitHub integration).
+      # This job only proves the deployed service is alive after the deploy.
+      - name: Resolve target URL
+        id: target
+        env:
+          STAGING_URL: ${{ secrets.STAGING_URL }}
+          PROD_URL: ${{ secrets.PROD_URL }}
+        run: |
+          if [ "${{ github.ref_name }}" = "main" ]; then
+            url="$PROD_URL"
+            name="production"
+          else
+            url="$STAGING_URL"
+            name="staging"
+          fi
+          echo "name=$name" >> "$GITHUB_OUTPUT"
+          echo "url=$url" >> "$GITHUB_OUTPUT"
+
+      - name: Skip when URL not configured
+        if: steps.target.outputs.url == ''
+        run: |
+          echo "::notice::${{ steps.target.outputs.name }} URL secret not set; skipping smoke"
+          echo "Set the STAGING_URL / PROD_URL repository secret to enable this gate."
+
+      - name: Wait for deploy to settle
+        if: steps.target.outputs.url != ''
+        run: sleep 30
+
+      - name: Probe /healthz
+        if: steps.target.outputs.url != ''
+        env:
+          URL: ${{ steps.target.outputs.url }}
+        run: |
+          set -euo pipefail
+          endpoint="${URL%/}/healthz"
+          for attempt in 1 2 3 4 5; do
+            code=$(curl -s -o /dev/null -w "%{http_code}" --max-time 20 "$endpoint" || true)
+            echo "attempt $attempt: $endpoint -> $code"
+            if [ "$code" = "200" ]; then
+              echo "smoke OK"
+              exit 0
+            fi
+            sleep 15
+          done
+          echo "::error::deploy smoke failed for $endpoint (last code $code)"
+          exit 1
