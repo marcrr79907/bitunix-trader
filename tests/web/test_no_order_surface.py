@@ -13,7 +13,19 @@ from pathlib import Path
 WEB = Path(__file__).resolve().parent.parent.parent / "web"
 
 ORDER_VERBS = frozenset(
-    {"place_order", "batch_order", "cancel_order", "close_position"}
+    {
+        "place_order",
+        "create_order",
+        "submit_order",
+        "batch_order",
+        "modify_order",
+        "cancel_order",
+        "cancel_orders",
+        "cancel_all_orders",
+        "close_position",
+        "close_all_position",
+        "flash_close_position",
+    }
 )
 
 

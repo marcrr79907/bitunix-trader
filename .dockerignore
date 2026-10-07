@@ -1,17 +1,21 @@
+# Build context: only what the image needs. Keep secrets and local state out.
 .git
+.github
 .gitignore
 .venv
 .env
-*.db
-*.sqlite3
-__pycache__
-*.py[cod]
+**/.env
+**/*.db
+**/*.sqlite3
+**/__pycache__
+**/*.py[cod]
 .pytest_cache
 .ruff_cache
+.coverage
+htmlcov
 .atl
 openspec
 tests
-.github
 README.md
 CHANGELOG.md
 docker-compose.yml

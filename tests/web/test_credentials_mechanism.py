@@ -29,7 +29,11 @@ def fernet_key(monkeypatch):
 
 
 def _decrypt_offenders(root: Path) -> list[str]:
-    """Files that import ``decrypt`` from a credentials module or call it."""
+    """Files that reach ``decrypt``: import, attribute call, bare call, getattr.
+
+    Deliberately broad — a false positive in the request path is cheaper than a
+    missed decryption, which would break the worker-only invariant.
+    """
     offenders: list[str] = []
     for path in sorted(root.rglob("*.py")):
         tree = ast.parse(path.read_text(), filename=str(path))
@@ -41,7 +45,18 @@ def _decrypt_offenders(root: Path) -> list[str]:
                 and any(alias.name == "decrypt" for alias in node.names)
             )
             calls_decrypt = isinstance(node, ast.Attribute) and node.attr == "decrypt"
-            if imports_decrypt or calls_decrypt:
+            bare_call = isinstance(node, ast.Name) and node.id == "decrypt"
+            # getattr(mod, "decrypt") hides an attribute access behind a string.
+            getattr_decrypt = (
+                isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Name)
+                and node.func.id == "getattr"
+                and any(
+                    isinstance(arg, ast.Constant) and arg.value == "decrypt"
+                    for arg in node.args
+                )
+            )
+            if imports_decrypt or calls_decrypt or bare_call or getattr_decrypt:
                 offenders.append(str(path))
                 break
     return offenders
@@ -75,3 +90,8 @@ def test_scanner_flags_a_decrypt_call(tmp_path):
     )
     (tmp_path / "clean.py").write_text("import os\n")
     assert _decrypt_offenders(tmp_path) == [str(tmp_path / "leaky.py")]
+
+
+def test_scanner_flags_a_getattr_decrypt(tmp_path):
+    (tmp_path / "sneaky.py").write_text("getattr(mod, 'decrypt')(token)\n")
+    assert _decrypt_offenders(tmp_path) == [str(tmp_path / "sneaky.py")]
