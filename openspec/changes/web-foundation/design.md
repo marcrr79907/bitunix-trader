@@ -51,17 +51,24 @@ class User(AbstractUser):
     email = models.EmailField(unique=True)
     role = models.CharField(max_length=16, choices=Role.choices, default=Role.MEMBER)
     USERNAME_FIELD, REQUIRED_FIELDS = "email", []
-    objects = UserManager()          # create_user(email, password, **extra)
+    objects = UserManager()  # create_user(email, password, **extra)
+
 
 class Invite(models.Model):
-    email      = models.EmailField(db_index=True)
-    token      = models.CharField(max_length=64, unique=True, default=gen_token)  # secrets.token_urlsafe(32)
-    role       = models.CharField(max_length=16, choices=Role.choices, default=Role.MEMBER)
-    expires_at = models.DateTimeField(default=default_expiry)   # now + 7d
-    used_at    = models.DateTimeField(null=True, blank=True)
-    def is_valid(self): return self.used_at is None and self.expires_at > now()
+    email = models.EmailField(db_index=True)
+    token = models.CharField(
+        max_length=64, unique=True, default=gen_token
+    )  # secrets.token_urlsafe(32)
+    role = models.CharField(max_length=16, choices=Role.choices, default=Role.MEMBER)
+    expires_at = models.DateTimeField(default=default_expiry)  # now + 7d
+    used_at = models.DateTimeField(null=True, blank=True)
 
-def healthz(request): return JsonResponse({"status": "ok"})
+    def is_valid(self):
+        return self.used_at is None and self.expires_at > now()
+
+
+def healthz(request):
+    return JsonResponse({"status": "ok"})
 ```
 
 Boundary test is stdlib-only: `ast.parse` each `src/*.py`, fail on any `django` root import. A
@@ -77,11 +84,12 @@ module — the real proof of R9's no-Django scenario.
 | R10 | existing 20 tests | Regression |
 | R11 | **Partial**: `test_no_order_surface.py` scans `web/` for order verbs; read-only credential provisioning = **deferred** (deploy-time) | Unit |
 | R12 | `test_no_secrets.py`: `.env` gitignored + no literal secret in settings | Unit |
-| R13/R14 | **Deferred to Phase 2** — no credentials/user-rows exist yet | — |
-| R6/R7 | Manual smoke: `docker compose up`; Railway boot | Manual |
+| R13/R14 | **Mechanism NOW** (Fernet round-trip, "web path never decrypts" scan); R14 harness-ready (no owned rows → red→green in Phase 2) | Unit |
+| R6/R7 | **Automated**: L2 `docker build` + `docker compose config` + worker/scheduler boot test; L3 deploy `curl /healthz` | L2+L3 |
 
-> Verify MUST NOT claim R6, R7, R11-credential, R13, R14 as automated-pass. R13/R14 deferred
-> by design, not skipped.
+> Verify MUST NOT under-claim R6/R7 as "manual": they are automated (L2 build + L3 deploy smoke).
+> R11-credential/R13: the mechanism is tested now; only the real-credential lifecycle waits Phase 2.
+> R14: no user-owned rows exist in Phase 0 → harness left ready to flip red→green in Phase 2.
 
 ## Migration / Rollout
 
@@ -101,7 +109,11 @@ tests, CLI untouched. Tear down Railway services independently.
 | PR1 | Scaffold + settings + `/healthz` + boundary test | ~330 | base |
 | PR2 | Custom `User` + manager + auth + tests | ~300 | PR1 |
 | PR3 | `Invite` + signup + migration + tests | ~300 | PR2 |
-| PR4 | Docker/compose/railway + stubs + CI + `.env.example` | ~280 | PR1, PR3 |
+| PR4 | Docker/compose/railway + stubs + CI **hardening** + CD + `.env.example` | ~330 | PR1, PR3 |
+
+**Branch topology**: `feat/web-dashboard` tracker → `develop` (Railway staging) → `main` (Railway
+production); `feat/*` get ephemeral Railway PR environments. Both `develop` and `main` protected.
+No separate `staging` branch (develop fills that role).
 
 ## Open Questions
 
