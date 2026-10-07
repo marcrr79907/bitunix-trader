@@ -46,7 +46,7 @@ Verified against professional baseline. In scope for Phase 0:
 
 | # | Practice | Where |
 |---|----------|-------|
-| 1 | CI triggers on **all PRs** + `push` to `develop` and `main` (fixes current `branches:[main]` bug) | `ci.yml` |
+| 1 | ~~CI triggers~~ **DONE in PR1** (trigger fix shipped early so the PR runs CI); PR4 adds hardening 2-6 | `ci.yml` |
 | 2 | `manage.py check` + `makemigrations --check --dry-run` (migration drift) | `ci.yml` |
 | 3 | `pytest-cov` with `--cov-fail-under=85` gate | `ci.yml` + `requirements-dev.txt` |
 | 4 | `pip-audit` (dependency CVEs) | `ci.yml` |
