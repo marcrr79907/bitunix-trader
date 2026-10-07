@@ -93,12 +93,12 @@ Layers: **L1** = pytest/pytest-django (every PR) · **L2** = `docker build` + `d
 
 ## Phase 2 — PR2: Custom `User` + native auth (L1) — *before PR3*
 
-- [ ] 2.1 **RED** `tests/web/test_user.py`: `AUTH_USER_MODEL == accounts.User`; duplicate email rejected; `role` defaults `member`; `authenticate(email, pw)` succeeds. [L1]
-- [ ] 2.2 **GREEN** `web/accounts/{apps,managers,models,admin}.py` + `AUTH_USER_MODEL`; `makemigrations` → `0001_initial.py`. [L1]
-- [ ] 2.3 **RED** `tests/web/test_auth.py`: login with email; wrong creds → no session; logout invalidates session; password-reset round-trip. [L1]
-- [ ] 2.4 **GREEN** wire Django auth views in `accounts/urls.py` + `config/urls.py`. [L1]
-- [ ] 2.5 `tests/web/conftest.py`: R14 isolation **harness** — `user_a`, `user_b` fixtures only (no green assertion yet). [L1]
-- [ ] 2.6 **PR2 rollback**: revert → delete `accounts/`+migration; PR1 scaffold remains bootable.
+- [x] 2.1 **RED** `tests/web/test_user.py`: `AUTH_USER_MODEL == accounts.User`; duplicate email rejected; `role` defaults `member`; `authenticate(email, pw)` succeeds. [L1]
+- [x] 2.2 **GREEN** `web/accounts/{apps,managers,models,admin}.py` + `AUTH_USER_MODEL`; `makemigrations` → `0001_initial.py`. [L1]
+- [x] 2.3 **RED** `tests/web/test_auth.py`: login with email; wrong creds → no session; logout invalidates session; password-reset round-trip. [L1]
+- [x] 2.4 **GREEN** wire Django auth views in `accounts/urls.py` + `config/urls.py`. [L1]
+- [x] 2.5 `tests/web/conftest.py`: R14 isolation **harness** — `user_a`, `user_b` fixtures only (no green assertion yet). [L1]
+- [x] 2.6 **PR2 rollback**: revert → delete `accounts/`+migration; PR1 scaffold remains bootable.
 
 ## Phase 3 — PR3: `Invite` + token signup (L1) — *requires PR2*
 
