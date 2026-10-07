@@ -14,3 +14,17 @@ testpaths = ["tests"]
 addopts = "-q"
 pythonpath = ["web"]
 DJANGO_SETTINGS_MODULE = "config.settings.dev"
+
+[tool.coverage.run]
+# Measure the code this project owns. `src/` (legacy CLI) is covered
+# incrementally as later changes touch those modules; the web app is gated.
+source = ["web"]
+omit = [
+    "web/manage.py",
+    "web/config/wsgi.py",
+    "web/config/asgi.py",
+    "*/migrations/*",
+]
+
+[tool.coverage.report]
+fail_under = 85

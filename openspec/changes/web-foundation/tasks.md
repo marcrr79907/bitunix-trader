@@ -83,7 +83,7 @@ Layers: **L1** = pytest/pytest-django (every PR) · **L2** = `docker build` + `d
 
 - [x] 1.1 **RED** `tests/test_settings.py`: `DATABASE_URL` parsed (no hardcoded host), `REDIS_URL` used, prod missing `SECRET_KEY` raises, dev local defaults + `DEBUG` true, falsey `DEBUG` disables. [L1]
 - [x] 1.2 **GREEN** `web/config/settings/{__init__,base,dev,prod}.py`: split via `dj-database-url`; prod `os.environ["SECRET_KEY"]` fail-closed. [L1]
-- [x] 1.3 **GREEN** `web/manage.py`, `web/config/{urls,wsgi,asgi}.py`; `pyproject.toml` `pythonpath=["web"]` + `DJANGO_SETTINGS_MODULE`; requirements (+Django 5.1, psycopg, dj-database-url, pytest-django). [L1]
+- [x] 1.3 **GREEN** `web/manage.py`, `web/config/{urls,wsgi,asgi}.py`; `pyproject.toml` `pythonpath=["web"]` + `DJANGO_SETTINGS_MODULE`; requirements (+Django 5.2 LTS, psycopg, dj-database-url, pytest-django). [L1]
 - [x] 1.4 **RED** `tests/web/test_health.py`: anonymous `GET /healthz` → 200; body has no secret/connection string. [L1]
 - [x] 1.5 **GREEN** `web/config/health.py` + route in `config/urls.py`. [L1]
 - [x] 1.6 `tests/test_boundary.py`: `ast.parse` every `src/*.py`, fail on `django` root import (plus triangulating scanner test). [L1]
@@ -110,14 +110,14 @@ Layers: **L1** = pytest/pytest-django (every PR) · **L2** = `docker build` + `d
 
 ## Phase 4 — PR4: Docker/Compose/Railway + stubs + CI/CD (L1 + L2 + L3)
 
-- [ ] 4.1 **GREEN** `web/credentials.py`: Fernet `encrypt`/`decrypt` (key from env), confined to worker zone; add `cryptography`. [L1]
-- [ ] 4.2 **RED→GREEN** `tests/web/test_credentials_mechanism.py`: Fernet round-trip **now** + AST scan asserts no `web/config`/`web/accounts` module decrypts (R11-cred, R13). [L1]
-- [ ] 4.3 `tests/web/test_no_order_surface.py`: scan `web/` for order-placement verbs (R11). [L1]
-- [ ] 4.4 **RED→GREEN** `tests/web/test_service_stubs.py` (mock `redis.Redis.ping`) → `web/worker.py`, `web/scheduler.py` bootable Redis-ping+idle stubs (D8/R7). [L1]
-- [ ] 4.5 `Dockerfile`, `.dockerignore`, `docker-compose.yml` (pg+redis), `railway.json` (web/worker/scheduler). [L2]
-- [ ] 4.6 `.env.example`: finalize `REDIS_URL`, crypto key placeholder. [L1]
-- [ ] 4.7 `.github/workflows/ci.yml` — **L1**: triggers on all PRs + push to `develop`/`main` (bug fix); add `manage.py check` + `makemigrations --check`; add `pytest-cov --cov-fail-under=85`; add `pip-audit` and `gitleaks` jobs; SHA-pin actions + `concurrency` + `timeout-minutes`. [L1]
-- [ ] 4.8 `.github/workflows/ci.yml` — **L2** job: `docker build` + `docker compose config`. [L2]
-- [ ] 4.9 `.github/workflows/cd.yml` — **L3** CD job: on push to `develop` smoke `curl $STAGING_URL/healthz`; on `main` smoke `curl $PROD_URL/healthz`; PR env smoke on PR URL. Fail pipeline on non-200. Requires repo secrets `STAGING_URL`, `PROD_URL`, `RAILWAY_URL`, `RAILWAY_TOKEN`. [L3]
-- [ ] 4.10 `core-isolation` job: install `requirements.txt` only (no Django), import all `src/` modules. [L1]
-- [ ] 4.11 **PR4 rollback**: revert → delete infra files + CI/CD jobs, remove worker/scheduler stubs; app still runnable via dev settings.
+- [x] 4.1 **GREEN** `web/credentials.py`: Fernet `encrypt`/`decrypt` (key from env), confined to worker zone; add `cryptography`. [L1]
+- [x] 4.2 **RED→GREEN** `tests/web/test_credentials_mechanism.py`: Fernet round-trip **now** + AST scan asserts no `web/config`/`web/accounts` module decrypts (R11-cred, R13). [L1]
+- [x] 4.3 `tests/web/test_no_order_surface.py`: scan `web/` for order-placement verbs (R11). [L1]
+- [x] 4.4 **RED→GREEN** `tests/web/test_service_stubs.py` (mock `redis.Redis.ping`) → `web/worker.py`, `web/scheduler.py` bootable Redis-ping+idle stubs (D8/R7). [L1]
+- [x] 4.5 `Dockerfile`, `.dockerignore`, `docker-compose.yml` (pg+redis), `railway.json` (web/worker/scheduler). [L2]
+- [x] 4.6 `.env.example`: finalize `REDIS_URL`, crypto key placeholder. [L1]
+- [x] 4.7 `.github/workflows/ci.yml` — **L1**: triggers on all PRs + push to `develop`/`main` (bug fix); add `manage.py check` + `makemigrations --check`; add `pytest-cov --cov-fail-under=85`; add `pip-audit` and `gitleaks` jobs; SHA-pin actions + `concurrency` + `timeout-minutes`. [L1]
+- [x] 4.8 `.github/workflows/ci.yml` — **L2** job: `docker build` + `docker compose config`. [L2]
+- [x] 4.9 `.github/workflows/cd.yml` — **L3** CD job: on push to `develop` smoke `curl $STAGING_URL/healthz`; on `main` smoke `curl $PROD_URL/healthz`; PR env smoke on PR URL. Fail pipeline on non-200. Requires repo secrets `STAGING_URL`, `PROD_URL`, `RAILWAY_URL`, `RAILWAY_TOKEN`. [L3]
+- [x] 4.10 `core-isolation` job: install `requirements.txt` only (no Django), import all `src/` modules. [L1]
+- [x] 4.11 **PR4 rollback**: revert → delete infra files + CI/CD jobs, remove worker/scheduler stubs; app still runnable via dev settings.
