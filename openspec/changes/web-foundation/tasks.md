@@ -53,15 +53,15 @@ Layers: **L1** = pytest/pytest-django (every PR) · **L2** = `docker build` + `d
 
 ## Phase 1 — PR1: Scaffold + settings + `/healthz` + boundary (L1)
 
-- [ ] 1.1 **RED** `tests/test_settings.py`: `DATABASE_URL` parsed (no hardcoded host), `REDIS_URL` used, prod missing `SECRET_KEY` raises, dev local defaults + `DEBUG` true, falsey `DEBUG` disables. [L1]
-- [ ] 1.2 **GREEN** `web/config/settings/{__init__,base,dev,prod}.py`: split via `dj-database-url`; prod `os.environ["SECRET_KEY"]` fail-closed. [L1]
-- [ ] 1.3 **GREEN** `web/manage.py`, `web/config/{urls,wsgi,asgi}.py`; `pyproject.toml` `pythonpath=["web"]` + `DJANGO_SETTINGS_MODULE`; requirements (+Django 5.1, psycopg, dj-database-url, pytest-django). [L1]
-- [ ] 1.4 **RED** `tests/web/test_health.py`: anonymous `GET /healthz` → 200; body has no secret/connection string. [L1]
-- [ ] 1.5 **GREEN** `web/config/health.py` + route in `config/urls.py`. [L1]
-- [ ] 1.6 `tests/test_boundary.py`: `ast.parse` every `src/*.py`, fail on `django` root import (passes immediately — guard test). [L1]
-- [ ] 1.7 `tests/test_no_secrets.py`: `.env` gitignored; no literal secret in settings. [L1]
-- [ ] 1.8 `.env.example`: add `SECRET_KEY`, `DATABASE_URL`, `REDIS_URL`, `DEBUG`, `ALLOWED_HOSTS`, `DJANGO_SETTINGS_MODULE` placeholders. [L1]
-- [ ] 1.9 **PR1 rollback**: revert branch → delete `web/`, revert `pyproject.toml`/requirements/`.env.example`; `src/`+CLI untouched.
+- [x] 1.1 **RED** `tests/test_settings.py`: `DATABASE_URL` parsed (no hardcoded host), `REDIS_URL` used, prod missing `SECRET_KEY` raises, dev local defaults + `DEBUG` true, falsey `DEBUG` disables. [L1]
+- [x] 1.2 **GREEN** `web/config/settings/{__init__,base,dev,prod}.py`: split via `dj-database-url`; prod `os.environ["SECRET_KEY"]` fail-closed. [L1]
+- [x] 1.3 **GREEN** `web/manage.py`, `web/config/{urls,wsgi,asgi}.py`; `pyproject.toml` `pythonpath=["web"]` + `DJANGO_SETTINGS_MODULE`; requirements (+Django 5.1, psycopg, dj-database-url, pytest-django). [L1]
+- [x] 1.4 **RED** `tests/web/test_health.py`: anonymous `GET /healthz` → 200; body has no secret/connection string. [L1]
+- [x] 1.5 **GREEN** `web/config/health.py` + route in `config/urls.py`. [L1]
+- [x] 1.6 `tests/test_boundary.py`: `ast.parse` every `src/*.py`, fail on `django` root import (plus triangulating scanner test). [L1]
+- [x] 1.7 `tests/test_no_secrets.py`: `.env` gitignored; no literal secret in settings. [L1]
+- [x] 1.8 `.env.example`: add `SECRET_KEY`, `DATABASE_URL`, `REDIS_URL`, `DEBUG`, `ALLOWED_HOSTS`, `DJANGO_SETTINGS_MODULE` placeholders. [L1]
+- [x] 1.9 **PR1 rollback**: revert branch → delete `web/`, revert `pyproject.toml`/requirements/`.env.example`; `src/`+CLI untouched. [noted — boundary is clean]
 
 ## Phase 2 — PR2: Custom `User` + native auth (L1) — *before PR3*
 
