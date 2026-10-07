@@ -1,0 +1,70 @@
+# Dev stack: `docker compose up` brings up Postgres + Redis + the three services.
+# No cloud dependency (R6). Copy .env.example -> .env to override credentials.
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: bitunix
+      POSTGRES_PASSWORD: bitunix
+      POSTGRES_DB: bitunix
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U bitunix"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  web:
+    build: .
+    command: >
+      sh -c "python web/manage.py migrate --noinput &&
+             gunicorn config.wsgi:application --bind 0.0.0.0:8000"
+    environment:
+      DJANGO_SETTINGS_MODULE: config.settings.dev
+      DATABASE_URL: postgres://bitunix:bitunix@db:5432/bitunix
+      REDIS_URL: redis://redis:6379/0
+    ports:
+      - "8000:8000"
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  worker:
+    build: .
+    command: python web/worker.py
+    environment:
+      DJANGO_SETTINGS_MODULE: config.settings.dev
+      DATABASE_URL: postgres://bitunix:bitunix@db:5432/bitunix
+      REDIS_URL: redis://redis:6379/0
+    depends_on:
+      redis:
+        condition: service_healthy
+
+  scheduler:
+    build: .
+    command: python web/scheduler.py
+    environment:
+      DJANGO_SETTINGS_MODULE: config.settings.dev
+      DATABASE_URL: postgres://bitunix:bitunix@db:5432/bitunix
+      REDIS_URL: redis://redis:6379/0
+    depends_on:
+      redis:
+        condition: service_healthy
+
+volumes:
+  pgdata:

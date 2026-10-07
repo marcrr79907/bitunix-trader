@@ -11,6 +11,8 @@ __pycache__/
 .venv/
 .pytest_cache/
 .ruff_cache/
+.coverage
+htmlcov/
 
 # Local agent tooling (skill registry)
 .atl/

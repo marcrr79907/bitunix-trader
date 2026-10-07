@@ -3,3 +3,6 @@ rich>=13.0
 Django==5.1.*
 psycopg[binary]>=3.1
 dj-database-url>=2.1
+gunicorn>=22
+redis>=5
+cryptography>=43
