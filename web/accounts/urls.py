@@ -10,6 +10,8 @@ from __future__ import annotations
 from django.contrib.auth import views as auth_views
 from django.urls import path
 
+from accounts import views
+
 urlpatterns = [
     path(
         "login/",
@@ -17,6 +19,8 @@ urlpatterns = [
         name="login",
     ),
     path("logout/", auth_views.LogoutView.as_view(), name="logout"),
+    path("accounts/invites/new/", views.invite_create, name="invite_create"),
+    path("accounts/signup/<str:token>/", views.signup, name="signup"),
     path(
         "password-reset/",
         auth_views.PasswordResetView.as_view(),
