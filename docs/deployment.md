@@ -8,6 +8,20 @@ push develop        -> staging
 push tag vX.Y.Z     -> production
 ```
 
+## Deploy modes
+
+**Current mode — autodeploy + smoke.** Railway's GitHub autodeploy is ON and
+ships every push (staging from `develop`, production from `main`). CD runs the
+quality gate and the `/healthz` smoke, but its image-deploy step is a no-op
+because no Railway project token is configured yet (creating project tokens
+requires a verified Railway account). The pipeline stays green: the smoke
+verifies whatever autodeploy shipped.
+
+**Target mode — build-once.** Once `RAILWAY_TOKEN_STAGING` / `RAILWAY_TOKEN_PROD`
+exist, the image-deploy step activates automatically and ships the immutable
+GHCR image. Then **disable Railway autodeploy** on `web`, `worker`, `scheduler`
+or the two deploys race.
+
 ## Pipeline
 
 1. **CI (gate)** — `ci.yml`, invoked by CD as a reusable workflow. Lint, tests
@@ -34,6 +48,9 @@ ancestor of `origin/main`; staging commits must be on `origin/develop`.
 | `STAGING_URL` | `https://web-staging-e8bd.up.railway.app` |
 | `PROD_URL` | production web URL (set when prod exists) |
 | `GHCR_USER` / `GHCR_TOKEN` | only if the GHCR package is **private**: a GitHub PAT with `read:packages` (used as Railway registry credentials) |
+
+The `RAILWAY_TOKEN_*` secrets are **optional today**: without them the CD smoke
+still runs and autodeploy ships the commit. Set them to switch to build-once.
 
 Create project tokens in Railway: **Project -> Settings -> Tokens**. A project
 token is scoped to a single environment, so a leaked CI token exposes one
