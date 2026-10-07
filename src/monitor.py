@@ -15,6 +15,7 @@ from rich.table import Table
 
 from src import config
 from src.client import BitunixClient, BitunixError
+from src.db import init_db, insert_funding, insert_prices
 
 console = Console(highlight=False)
 
@@ -43,24 +44,75 @@ def funding_state(rate: float) -> str:
 def fetch_rows(client: BitunixClient, symbols: list[str]) -> list[dict]:
     tickers = {t["symbol"]: t for t in client.tickers(symbols)}
     funding = {f["symbol"]: f for f in client.funding_rate_batch()}
+    ts = int(time.time() * 1000)
     rows = []
     for sym in symbols:
         t = tickers.get(sym, {})
         f = funding.get(sym, {})
         rate = float(f.get("fundingRate", 0) or 0)
         interval = int(f.get("fundingInterval", 8) or 8)
+        next_funding = int(f.get("nextFundingTime", 0) or 0)
         rows.append(
             {
+                # display
                 "symbol": sym,
                 "price": t.get("lastPrice", "—"),
                 "funding": rate,
                 "annual": annualized(rate, interval),
-                "countdown": countdown(int(f.get("nextFundingTime", 0) or 0)),
+                "countdown": countdown(next_funding),
                 "state": funding_state(rate),
-                "interval": interval,
+                # persistence
+                "ts": ts,
+                "mark_price": _f(f.get("markPrice")),
+                "index_price": _f(f.get("indexPrice")),
+                "next_funding_time": next_funding,
+                "funding_interval": interval,
+                "last_price": _f(t.get("lastPrice")),
+                "high": _f(t.get("high")),
+                "low": _f(t.get("low")),
+                "quote_vol": _f(t.get("quoteVol")),
             }
         )
     return rows
+
+
+def _f(value) -> float | None:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def persist(conn, rows: list[dict]) -> None:
+    insert_funding(
+        conn,
+        [
+            {
+                "ts": r["ts"],
+                "symbol": r["symbol"],
+                "funding_rate": r["funding"],
+                "mark_price": r["mark_price"],
+                "index_price": r["index_price"],
+                "next_funding_time": r["next_funding_time"],
+                "funding_interval": r["funding_interval"],
+            }
+            for r in rows
+        ],
+    )
+    insert_prices(
+        conn,
+        [
+            {
+                "ts": r["ts"],
+                "symbol": r["symbol"],
+                "last_price": r["last_price"],
+                "high": r["high"],
+                "low": r["low"],
+                "quote_vol": r["quote_vol"],
+            }
+            for r in rows
+        ],
+    )
 
 
 def render(rows: list[dict]) -> Table:
@@ -85,6 +137,7 @@ def render(rows: list[dict]) -> Table:
 
 def run() -> None:
     client = BitunixClient(config.API_KEY, config.API_SECRET)
+    conn = init_db(config.DB_PATH)
     if config.PUBLIC_ONLY:
         console.print(
             "[dim]modo público: sin API key, solo mercado. "
@@ -96,6 +149,7 @@ def run() -> None:
             while True:
                 try:
                     rows = fetch_rows(client, config.SYMBOLS)
+                    persist(conn, rows)
                     live.update(render(rows))
                     backoff = config.POLL_SECONDS
                 except (BitunixError, requests.RequestException, ValueError) as e:

@@ -54,7 +54,7 @@ Apalancamiento sugerido para arrancar: 5-10x. Riesgo por operación ≤ 1-2% del
 - [x] Etapa 0 — scaffold
 - [ ] Etapa 1 — cliente API + firma
 - [ ] Etapa 2 — monitor público
-- [ ] Etapa 3 — persistencia SQLite
+- [x] Etapa 3 — persistencia SQLite
 - [ ] Etapa 4 — panel de posiciones
 - [ ] Etapa 5 — journal / métricas
 - [ ] Etapa 6 — alertas Telegram
