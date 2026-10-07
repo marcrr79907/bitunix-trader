@@ -35,7 +35,7 @@ se desactivan con aviso y el monitor sigue funcionando.
 | Variable | Default | Uso |
 |---|---|---|
 | `BITUNIX_API_KEY` / `BITUNIX_API_SECRET` | vacío | Paneles privados (solo lectura) |
-| `BITUNIX_SYMBOLS` | `BTCUSDT,ETHUSDT,SOLUSDT,PEPEUSDT` | Pares monitoreados |
+| `BITUNIX_SYMBOLS` | `BTCUSDT,ETHUSDT,SOLUSDT,1000PEPEUSDT` | Pares monitoreados |
 | `TELEGRAM_TOKEN` / `TELEGRAM_CHAT_ID` | vacío | Alertas (Etapa 6) |
 
 ## Seguridad
