@@ -17,6 +17,7 @@ import requests
 
 BASE_URL = "https://fapi.bitunix.com"
 PUBLIC_PREFIX = "/api/v1/futures/market"
+PRIVATE_PREFIX = "/api/v1/futures"
 
 _ALNUM = string.ascii_letters + string.digits
 
@@ -119,3 +120,16 @@ class BitunixClient:
     def funding_rate_batch(self) -> list[dict]:
         # Endpoint ignores the `symbols` param and returns every pair; filter client-side.
         return self.get(f"{PUBLIC_PREFIX}/funding_rate/batch")
+
+    # --- private account endpoints (read-only) ---
+
+    def positions(self, symbol: str | None = None) -> list[dict]:
+        params = {"symbol": symbol} if symbol else None
+        return self.get(f"{PRIVATE_PREFIX}/position/get_pending_positions", params, private=True)
+
+    def account(self, margin_coin: str = "USDT") -> list[dict]:
+        return self.get(
+            f"{PRIVATE_PREFIX}/account",
+            {"marginCoin": margin_coin},
+            private=True,
+        )

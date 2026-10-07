@@ -9,7 +9,7 @@ from __future__ import annotations
 import time
 
 import requests
-from rich.console import Console
+from rich.console import Console, Group
 from rich.live import Live
 from rich.table import Table
 
@@ -135,6 +135,97 @@ def render(rows: list[dict]) -> Table:
     return table
 
 
+# --- positions panel (private, requires read-only API key) ---
+
+
+def liq_distance_pct(liq_price, mark) -> float | None:
+    """Absolute % distance from mark to liquidation. None if no liq price."""
+    try:
+        liq, mk = float(liq_price), float(mark)
+    except (TypeError, ValueError):
+        return None
+    if liq <= 0 or mk <= 0:
+        return None
+    return abs(liq - mk) / mk * 100
+
+
+def margin_state(rate) -> str:
+    try:
+        r = float(rate)
+    except (TypeError, ValueError):
+        return "ok"
+    return "danger" if r >= config.MARGIN_WARN else "ok"
+
+
+def position_row(raw: dict, mark: float | None) -> dict:
+    side = raw.get("side", "")
+    state = margin_state(raw.get("marginRate"))
+    return {
+        "symbol": raw.get("symbol", ""),
+        "side": side,
+        "side_fmt": f"[green]LONG[/green]" if side == "LONG" else f"[red]SHORT[/red]",
+        "leverage": raw.get("leverage", ""),
+        "qty": raw.get("qty", ""),
+        "avg_open": raw.get("avgOpenPrice", ""),
+        "upnl": _f(raw.get("unrealizedPNL")),
+        "liq_price": raw.get("liqPrice", ""),
+        "distance": liq_distance_pct(raw.get("liqPrice"), mark),
+        "margin_rate": _f(raw.get("marginRate")),
+        "margin_state": state,
+    }
+
+
+def render_positions(rows: list[dict], balance: dict | None = None) -> Table:
+    title = "BitUnix · posiciones"
+    if balance:
+        avail = balance.get("available", "—")
+        upnl = balance.get("crossUnrealizedPNL", "—")
+        title += f"   ·   disponible: {avail} USDT   ·   uPnL cross: {upnl}"
+    if not rows:
+        table = Table(title=title, title_justify="left")
+        table.add_column("Sin posiciones abiertas", style="dim")
+        table.add_row("—")
+        return table
+    table = Table(title=title, title_justify="left")
+    table.add_column("Símbolo", style="bold")
+    table.add_column("Lado")
+    table.add_column("Lev", justify="right")
+    table.add_column("Cant.", justify="right")
+    table.add_column("Entrada", justify="right")
+    table.add_column("uPnL", justify="right")
+    table.add_column("Liq", justify="right")
+    table.add_column("Dist. liq", justify="right")
+    table.add_column("Margen")
+    for r in rows:
+        dist = f"{r['distance']:.1f}%" if r["distance"] is not None else "—"
+        upnl = f"{r['upnl']:+.2f}" if r["upnl"] is not None else "—"
+        marg = (
+            f"[red]{r['margin_rate'] * 100:.0f}% ⚠[/red]"
+            if r["margin_state"] == "danger"
+            else f"{r['margin_rate'] * 100:.0f}%" if r["margin_rate"] is not None else "—"
+        )
+        table.add_row(
+            r["symbol"],
+            r["side_fmt"],
+            str(r["leverage"]),
+            str(r["qty"]),
+            str(r["avg_open"]),
+            upnl,
+            str(r["liq_price"]),
+            dist,
+            marg,
+        )
+    return table
+
+
+def fetch_positions(client: BitunixClient, marks: dict[str, float]) -> tuple[list[dict], dict | None]:
+    raw = client.positions()
+    rows = [position_row(p, marks.get(p.get("symbol"))) for p in raw]
+    rows.sort(key=lambda r: r["symbol"])
+    balance = (client.account() or [None])[0]
+    return rows, balance
+
+
 def run() -> None:
     client = BitunixClient(config.API_KEY, config.API_SECRET)
     conn = init_db(config.DB_PATH)
@@ -150,7 +241,17 @@ def run() -> None:
                 try:
                     rows = fetch_rows(client, config.SYMBOLS)
                     persist(conn, rows)
-                    live.update(render(rows))
+                    renderables = [render(rows)]
+                    if not config.PUBLIC_ONLY:
+                        try:
+                            marks = {r["symbol"]: r["last_price"] for r in rows}
+                            pos, balance = fetch_positions(client, marks)
+                            renderables.append(render_positions(pos, balance))
+                        except (BitunixError, requests.RequestException) as e:
+                            renderables.append(
+                                Table(title=f"[red]posiciones: {e}[/red]")
+                            )
+                    live.update(Group(*renderables))
                     backoff = config.POLL_SECONDS
                 except (BitunixError, requests.RequestException, ValueError) as e:
                     live.update(
