@@ -10,11 +10,24 @@
 | Suggested split | PR1 → PR2 → PR3 → PR4 (each child targets prior branch) |
 | Delivery strategy | ask-on-risk |
 | Chain strategy | feature-branch-chain |
+| Tracker branch | `feat/web-dashboard` → merges to `develop` |
+| Environments | `develop` → Railway **staging**; `main` → Railway **production**; `feat/*` → ephemeral PR environments |
 
 Decision needed before apply: Yes
 Chained PRs recommended: Yes
 Chain strategy: feature-branch-chain
 400-line budget risk: High
+
+### Branch / environment topology
+
+```
+feat/*            → Railway PR environment (ephemeral)  → CI (L1+L2) + L3 smoke on PR URL
+feat/web-dashboard → (tracker, no deploy)               → PRs stack here
+develop           → Railway staging                     → CI + L3 smoke on STAGING_URL
+main              → Railway production                  → CI + L3 smoke on PROD_URL
+```
+
+`develop` and `main` are protected (required checks, no direct push). NO separate `staging` branch and no full git-flow: `develop` is the integration branch that deploys to staging.
 
 ### Suggested Work Units
 
@@ -23,9 +36,24 @@ Chain strategy: feature-branch-chain
 | 1 | Scaffold + settings + `/healthz` + boundary | PR1 | `feat/web-dashboard` | 330 |
 | 2 | Custom `User` + native auth + isolation harness | PR2 | PR1 branch | 300 |
 | 3 | `Invite` + token signup | PR3 | PR2 branch | 300 |
-| 4 | Docker/Compose/Railway + worker stubs + CI/ **CD smoke** | PR4 | PR3 branch | 280 |
+| 4 | Docker/Compose/Railway + worker stubs + CI/ **CD smoke** | PR4 | PR3 branch | 330 |
 
 All slices ≤ ~330 changed lines (≤ ~60 min review each). PR4 also needs PR1's `healthz`; PR3 **hard-depends on PR2** (User must exist before `Invite.role`/signup FK).
+
+### CI/CD hardening (in PR4 — confirmed scope)
+
+Verified against professional baseline. In scope for Phase 0:
+
+| # | Practice | Where |
+|---|----------|-------|
+| 1 | ~~CI triggers~~ **DONE in PR1** (trigger fix shipped early so the PR runs CI); PR4 adds hardening 2-6 | `ci.yml` |
+| 2 | `manage.py check` + `makemigrations --check --dry-run` (migration drift) | `ci.yml` |
+| 3 | `pytest-cov` with `--cov-fail-under=85` gate | `ci.yml` + `requirements-dev.txt` |
+| 4 | `pip-audit` (dependency CVEs) | `ci.yml` |
+| 5 | `gitleaks` (secret scanning on commits) | `ci.yml` |
+| 6 | SHA-pinned actions + `concurrency` (cancel stale) + `timeout-minutes` | `ci.yml` |
+
+Explicitly **OUT** with trigger: type checking (mypy/pyright) → add when domain grows or type bugs appear; dependency lockfile (`uv`/pip-tools) → add when a build breaks on a minor bump; Python version matrix → never (single 3.12 target).
 
 ## Requirement → Verification Layer Traceability
 
@@ -53,15 +81,15 @@ Layers: **L1** = pytest/pytest-django (every PR) · **L2** = `docker build` + `d
 
 ## Phase 1 — PR1: Scaffold + settings + `/healthz` + boundary (L1)
 
-- [ ] 1.1 **RED** `tests/test_settings.py`: `DATABASE_URL` parsed (no hardcoded host), `REDIS_URL` used, prod missing `SECRET_KEY` raises, dev local defaults + `DEBUG` true, falsey `DEBUG` disables. [L1]
-- [ ] 1.2 **GREEN** `web/config/settings/{__init__,base,dev,prod}.py`: split via `dj-database-url`; prod `os.environ["SECRET_KEY"]` fail-closed. [L1]
-- [ ] 1.3 **GREEN** `web/manage.py`, `web/config/{urls,wsgi,asgi}.py`; `pyproject.toml` `pythonpath=["web"]` + `DJANGO_SETTINGS_MODULE`; requirements (+Django 5.1, psycopg, dj-database-url, pytest-django). [L1]
-- [ ] 1.4 **RED** `tests/web/test_health.py`: anonymous `GET /healthz` → 200; body has no secret/connection string. [L1]
-- [ ] 1.5 **GREEN** `web/config/health.py` + route in `config/urls.py`. [L1]
-- [ ] 1.6 `tests/test_boundary.py`: `ast.parse` every `src/*.py`, fail on `django` root import (passes immediately — guard test). [L1]
-- [ ] 1.7 `tests/test_no_secrets.py`: `.env` gitignored; no literal secret in settings. [L1]
-- [ ] 1.8 `.env.example`: add `SECRET_KEY`, `DATABASE_URL`, `REDIS_URL`, `DEBUG`, `ALLOWED_HOSTS`, `DJANGO_SETTINGS_MODULE` placeholders. [L1]
-- [ ] 1.9 **PR1 rollback**: revert branch → delete `web/`, revert `pyproject.toml`/requirements/`.env.example`; `src/`+CLI untouched.
+- [x] 1.1 **RED** `tests/test_settings.py`: `DATABASE_URL` parsed (no hardcoded host), `REDIS_URL` used, prod missing `SECRET_KEY` raises, dev local defaults + `DEBUG` true, falsey `DEBUG` disables. [L1]
+- [x] 1.2 **GREEN** `web/config/settings/{__init__,base,dev,prod}.py`: split via `dj-database-url`; prod `os.environ["SECRET_KEY"]` fail-closed. [L1]
+- [x] 1.3 **GREEN** `web/manage.py`, `web/config/{urls,wsgi,asgi}.py`; `pyproject.toml` `pythonpath=["web"]` + `DJANGO_SETTINGS_MODULE`; requirements (+Django 5.1, psycopg, dj-database-url, pytest-django). [L1]
+- [x] 1.4 **RED** `tests/web/test_health.py`: anonymous `GET /healthz` → 200; body has no secret/connection string. [L1]
+- [x] 1.5 **GREEN** `web/config/health.py` + route in `config/urls.py`. [L1]
+- [x] 1.6 `tests/test_boundary.py`: `ast.parse` every `src/*.py`, fail on `django` root import (plus triangulating scanner test). [L1]
+- [x] 1.7 `tests/test_no_secrets.py`: `.env` gitignored; no literal secret in settings. [L1]
+- [x] 1.8 `.env.example`: add `SECRET_KEY`, `DATABASE_URL`, `REDIS_URL`, `DEBUG`, `ALLOWED_HOSTS`, `DJANGO_SETTINGS_MODULE` placeholders. [L1]
+- [x] 1.9 **PR1 rollback**: revert branch → delete `web/`, revert `pyproject.toml`/requirements/`.env.example`; `src/`+CLI untouched. [noted — boundary is clean]
 
 ## Phase 2 — PR2: Custom `User` + native auth (L1) — *before PR3*
 
@@ -88,5 +116,8 @@ Layers: **L1** = pytest/pytest-django (every PR) · **L2** = `docker build` + `d
 - [ ] 4.4 **RED→GREEN** `tests/web/test_service_stubs.py` (mock `redis.Redis.ping`) → `web/worker.py`, `web/scheduler.py` bootable Redis-ping+idle stubs (D8/R7). [L1]
 - [ ] 4.5 `Dockerfile`, `.dockerignore`, `docker-compose.yml` (pg+redis), `railway.json` (web/worker/scheduler). [L2]
 - [ ] 4.6 `.env.example`: finalize `REDIS_URL`, crypto key placeholder. [L1]
-- [ ] 4.7 `.github/workflows/ci.yml`: add `core-isolation` job (install `requirements.txt` only, import all `src/`); add **L2** job (`docker build` + `docker compose config`); add **L3** CD job — deploy then `curl $RAILWAY_URL/healthz`, fail on non-200. [L2 + L3]
-- [ ] 4.8 **PR4 rollback**: revert → delete infra files + CI/CD jobs, remove worker/scheduler stubs; app still runnable via dev settings.
+- [ ] 4.7 `.github/workflows/ci.yml` — **L1**: triggers on all PRs + push to `develop`/`main` (bug fix); add `manage.py check` + `makemigrations --check`; add `pytest-cov --cov-fail-under=85`; add `pip-audit` and `gitleaks` jobs; SHA-pin actions + `concurrency` + `timeout-minutes`. [L1]
+- [ ] 4.8 `.github/workflows/ci.yml` — **L2** job: `docker build` + `docker compose config`. [L2]
+- [ ] 4.9 `.github/workflows/cd.yml` — **L3** CD job: on push to `develop` smoke `curl $STAGING_URL/healthz`; on `main` smoke `curl $PROD_URL/healthz`; PR env smoke on PR URL. Fail pipeline on non-200. Requires repo secrets `STAGING_URL`, `PROD_URL`, `RAILWAY_URL`, `RAILWAY_TOKEN`. [L3]
+- [ ] 4.10 `core-isolation` job: install `requirements.txt` only (no Django), import all `src/` modules. [L1]
+- [ ] 4.11 **PR4 rollback**: revert → delete infra files + CI/CD jobs, remove worker/scheduler stubs; app still runnable via dev settings.
