@@ -90,7 +90,8 @@ def test_staff_can_create_invite(client):
     response = client.post(
         INVITE_URL, {"email": "invitee@example.com", "role": "member"}
     )
-    assert response.status_code == 302
+    # The view re-renders (200) with the shareable link instead of redirecting.
+    assert response.status_code == 200
     invite = Invite.objects.get(email="invitee@example.com")
     assert invite.created_by == staff
     assert invite.used_at is None

@@ -127,4 +127,9 @@ USE_TZ = True
 
 STATIC_URL = "static/"
 
+# Origins allowed to POST with CSRF protection. Behind Railway's HTTPS proxy
+# the browser sends https://... while Django may see the request as http, so
+# these must be listed explicitly (comma-separated, full scheme).
+CSRF_TRUSTED_ORIGINS = env_list("CSRF_TRUSTED_ORIGINS")
+
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"

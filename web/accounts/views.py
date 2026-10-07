@@ -1,4 +1,4 @@
-"""Invite creation (staff-only) and token-gated signup."""
+"""Home landing, invite creation (staff-only) and token-gated signup."""
 
 from __future__ import annotations
 
@@ -8,6 +8,7 @@ from django.core.exceptions import PermissionDenied, ValidationError
 from django.db import transaction
 from django.http import Http404, HttpRequest, HttpResponse
 from django.shortcuts import redirect, render
+from django.urls import reverse
 from django.utils import timezone
 from django.views.decorators.http import require_http_methods
 
@@ -17,21 +18,43 @@ from accounts.models import Invite
 User = get_user_model()
 
 
+@require_http_methods(["GET"])
+def home(request: HttpRequest) -> HttpResponse:
+    """Landing: anonymous goes to login, authenticated sees the home page.
+
+    Also the target of LOGIN_REDIRECT_URL, so it must never 404 (it did before
+    this view existed).
+    """
+    if not request.user.is_authenticated:
+        return redirect("login")
+    return render(request, "accounts/home.html", {"user": request.user})
+
+
 @login_required
 @require_http_methods(["GET", "POST"])
 def invite_create(request: HttpRequest) -> HttpResponse:
     if not request.user.is_staff:
         raise PermissionDenied
+    signup_url = None
     if request.method == "POST":
         form = InviteForm(request.POST)
         if form.is_valid():
             invite = form.save(commit=False)
             invite.created_by = request.user
             invite.save()
-            return redirect("invite_create")
+            # Show the shareable link instead of redirecting away, so the
+            # inviter can copy it without opening the Django admin.
+            signup_url = request.build_absolute_uri(
+                reverse("signup", args=[invite.token])
+            )
+            form = InviteForm()
     else:
         form = InviteForm()
-    return render(request, "accounts/invite_create.html", {"form": form})
+    return render(
+        request,
+        "accounts/invite_create.html",
+        {"form": form, "signup_url": signup_url},
+    )
 
 
 @require_http_methods(["GET", "POST"])
