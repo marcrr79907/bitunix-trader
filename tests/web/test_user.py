@@ -23,6 +23,22 @@ def test_duplicate_email_rejected():
 
 
 @pytest.mark.django_db
+def test_duplicate_email_case_insensitive():
+    User.objects.create_user(email="Case@Example.com", password="pw-123456")
+    stored = User.objects.get(email="case@example.com")
+    assert stored.email == "case@example.com"
+    with pytest.raises(IntegrityError):
+        with transaction.atomic():
+            User.objects.create_user(email="CASE@EXAMPLE.COM", password="pw-654321")
+
+
+@pytest.mark.django_db
+def test_authenticate_email_is_case_insensitive():
+    User.objects.create_user(email="mixed@example.com", password="pw-123456")
+    assert authenticate(email="MiXeD@Example.com", password="pw-123456") is not None
+
+
+@pytest.mark.django_db
 def test_role_defaults_to_member():
     user = User.objects.create_user(email="role@example.com", password="pw-123456")
     assert user.role == "member"

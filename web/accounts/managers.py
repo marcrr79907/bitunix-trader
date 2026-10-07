@@ -15,7 +15,9 @@ class UserManager(BaseUserManager):
     def _create_user(self, email: str, password: str | None, **extra: Any):
         if not email:
             raise ValueError("An email address is required.")
-        email = self.normalize_email(email)
+        # ponytail: lowercase the whole address so all callers store one canonical
+        # form; the DB unique constraint then rejects case-variant duplicates.
+        email = self.normalize_email(email).lower()
         user = self.model(email=email, **extra)
         user.set_password(password)
         user.save(using=self._db)
@@ -30,3 +32,8 @@ class UserManager(BaseUserManager):
         extra.setdefault("is_staff", True)
         extra.setdefault("is_superuser", True)
         return self._create_user(email, password, **extra)
+
+    def get_by_natural_key(self, username: str | None):
+        # Login path: ModelBackend calls this with the raw email; normalize so
+        # `MiXeD@Example.com` authenticates against the stored lowercase form.
+        return self.get(**{self.model.USERNAME_FIELD + "__iexact": username})
