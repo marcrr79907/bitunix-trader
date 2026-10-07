@@ -202,11 +202,12 @@ def render_positions(rows: list[dict], balance: dict | None = None) -> Table:
     for r in rows:
         dist = f"{r['distance']:.1f}%" if r["distance"] is not None else "—"
         upnl = f"{r['upnl']:+.2f}" if r["upnl"] is not None else "—"
-        marg = (
-            f"[red]{r['margin_rate'] * 100:.0f}% ⚠[/red]"
-            if r["margin_state"] == "danger"
-            else f"{r['margin_rate'] * 100:.0f}%" if r["margin_rate"] is not None else "—"
-        )
+        if r["margin_rate"] is None:
+            marg = "—"
+        elif r["margin_state"] == "danger":
+            marg = f"[red]{r['margin_rate'] * 100:.0f}% ⚠[/red]"
+        else:
+            marg = f"{r['margin_rate'] * 100:.0f}%"
         table.add_row(
             r["symbol"],
             r["side_fmt"],
@@ -221,7 +222,9 @@ def render_positions(rows: list[dict], balance: dict | None = None) -> Table:
     return table
 
 
-def fetch_positions(client: BitunixClient, marks: dict[str, float]) -> tuple[list[dict], dict | None]:
+def fetch_positions(
+    client: BitunixClient, marks: dict[str, float]
+) -> tuple[list[dict], dict | None]:
     raw = client.positions()
     # Positions may include symbols outside config.SYMBOLS; fetch their marks too.
     extra = [p["symbol"] for p in raw if p.get("symbol") and p["symbol"] not in marks]
@@ -264,9 +267,7 @@ def run() -> None:
                     live.update(Group(*renderables))
                     backoff = config.POLL_SECONDS
                 except (BitunixError, requests.RequestException, ValueError) as e:
-                    live.update(
-                        Table(title=f"[red]error de red: {e}[/red]")
-                    )
+                    live.update(Table(title=f"[red]error de red: {e}[/red]"))
                     backoff = min(backoff * 2, 300)
                 time.sleep(backoff)
     except KeyboardInterrupt:

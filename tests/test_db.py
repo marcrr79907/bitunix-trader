@@ -5,7 +5,6 @@ db.py is the storage interface; reading back with SQL asserts the behavior
 """
 
 import os
-import sqlite3
 import tempfile
 
 from src.db import init_db, insert_funding, insert_prices
@@ -61,7 +60,9 @@ def test_price_snapshot_roundtrip():
                 }
             ],
         )
-        rows = _read(conn, "SELECT ts, symbol, last_price, quote_vol FROM price_snapshots")
+        rows = _read(
+            conn, "SELECT ts, symbol, last_price, quote_vol FROM price_snapshots"
+        )
         assert rows == [(1000, "ETHUSDT", 2680.5, 1234.5)]
     finally:
         os.remove(path)
@@ -74,7 +75,19 @@ def test_init_db_is_idempotent():
     try:
         init_db(path)
         conn = init_db(path)
-        insert_prices(conn, [{"ts": 1, "symbol": "X", "last_price": 1, "high": 1, "low": 1, "quote_vol": 1}])
+        insert_prices(
+            conn,
+            [
+                {
+                    "ts": 1,
+                    "symbol": "X",
+                    "last_price": 1,
+                    "high": 1,
+                    "low": 1,
+                    "quote_vol": 1,
+                }
+            ],
+        )
         assert _read(conn, "SELECT COUNT(*) FROM price_snapshots") == [(1,)]
     finally:
         os.remove(path)

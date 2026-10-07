@@ -9,3 +9,7 @@ __pycache__/
 *.py[cod]
 .venv/
 .pytest_cache/
+.ruff_cache/
+
+# Local agent tooling (skill registry)
+.atl/

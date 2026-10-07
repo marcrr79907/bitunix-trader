@@ -19,7 +19,7 @@ DEFAULT_SYMBOLS = ["BTCUSDT", "ETHUSDT", "SOLUSDT", "1000PEPEUSDT"]
 
 # Thresholds
 FUNDING_EXTREME = 0.0005  # 0.05% per funding interval
-MARGIN_WARN = 0.5         # 50% margin ratio
+MARGIN_WARN = 0.5  # 50% margin ratio
 POLL_SECONDS = 30
 
 

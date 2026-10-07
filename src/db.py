@@ -42,8 +42,10 @@ def init_db(path: str) -> sqlite3.Connection:
 def insert_funding(conn: sqlite3.Connection, rows: list[dict]) -> None:
     conn.executemany(
         "INSERT INTO funding_snapshots "
-        "(ts, symbol, funding_rate, mark_price, index_price, next_funding_time, funding_interval) "
-        "VALUES (:ts, :symbol, :funding_rate, :mark_price, :index_price, :next_funding_time, :funding_interval)",
+        "(ts, symbol, funding_rate, mark_price, index_price, "
+        "next_funding_time, funding_interval) "
+        "VALUES (:ts, :symbol, :funding_rate, :mark_price, :index_price, "
+        ":next_funding_time, :funding_interval)",
         rows,
     )
     conn.commit()

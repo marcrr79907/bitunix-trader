@@ -98,7 +98,9 @@ class BitunixClient:
         # Compact JSON with no spaces; the SAME string is signed and sent.
         raw = json.dumps(body, separators=(",", ":"))
         headers = self._headers("", raw) if private else {}
-        resp = requests.post(self.base_url + path, data=raw, headers=headers, timeout=15)
+        resp = requests.post(
+            self.base_url + path, data=raw, headers=headers, timeout=15
+        )
         return self._unwrap(resp)
 
     @staticmethod
@@ -118,14 +120,16 @@ class BitunixClient:
         return self.get(f"{PUBLIC_PREFIX}/tickers", params)
 
     def funding_rate_batch(self) -> list[dict]:
-        # Endpoint ignores the `symbols` param and returns every pair; filter client-side.
+        # Endpoint ignores `symbols` and returns every pair; filter client-side.
         return self.get(f"{PUBLIC_PREFIX}/funding_rate/batch")
 
     # --- private account endpoints (read-only) ---
 
     def positions(self, symbol: str | None = None) -> list[dict]:
         params = {"symbol": symbol} if symbol else None
-        return self.get(f"{PRIVATE_PREFIX}/position/get_pending_positions", params, private=True)
+        return self.get(
+            f"{PRIVATE_PREFIX}/position/get_pending_positions", params, private=True
+        )
 
     def account(self, margin_coin: str = "USDT") -> list[dict]:
         return self.get(
