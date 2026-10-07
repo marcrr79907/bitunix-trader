@@ -2,7 +2,7 @@
 
 ## Technical Approach
 
-A Django 5.1 LTS project in `web/` (project package `config`, app `accounts`) imports the
+A Django 5.2 LTS project (bumped from 5.1: 5.1.15 carried 8 CVEs) in `web/` (project package `config`, app `accounts`) imports the
 framework-free `src/` core as an external library. Phase 0 ships env-driven settings, a custom
 email-identifier `User`, invitation-gated signup + native auth, `/healthz`, local Compose, a
 Railway-shaped deploy (web/worker/scheduler), and a boundary test. No DRF, no Celery, no order
@@ -36,7 +36,7 @@ yes → POST → `create_user(email, pw, role=invite.role)` + `invite.used_at=no
 | `tests/{test_boundary,test_settings,test_no_secrets}.py`, `tests/web/test_*.py` | Create | Boundary, settings, hygiene, accounts, health |
 | `Dockerfile`, `docker-compose.yml`, `railway.json`, `.dockerignore` | Create | Single image / local stack / Railway |
 | `.env.example` | Modify | + `SECRET_KEY`, `DATABASE_URL`, `REDIS_URL`, `DEBUG`, `ALLOWED_HOSTS`, `DJANGO_SETTINGS_MODULE` |
-| `requirements.txt` | Modify | + `Django>=5.1,<5.2`, `psycopg[binary]>=3.1`, `dj-database-url>=2.1`, `gunicorn>=22`, `redis>=5` |
+| `requirements.txt` | Modify | + `Django>=5.2.17,<6.0`, `psycopg[binary]>=3.1`, `dj-database-url>=2.1`, `gunicorn>=22`, `redis>=5` |
 | `requirements-dev.txt` | Modify | + `pytest-django>=4.8` |
 | `pyproject.toml` | Modify | `pythonpath=["web"]`, `DJANGO_SETTINGS_MODULE="config.settings.dev"` |
 | `.github/workflows/ci.yml` | Modify | `manage.py check` + pytest-django; `core-isolation` job |

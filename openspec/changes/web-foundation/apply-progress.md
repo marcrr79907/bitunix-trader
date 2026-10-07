@@ -75,7 +75,7 @@ Notes:
 | `tests/test_boundary.py` | Created | R9 stdlib AST boundary guard |
 | `tests/test_no_secrets.py` | Created | R12 secrets hygiene |
 | `pyproject.toml` | Modified | `pythonpath=["web"]`, `DJANGO_SETTINGS_MODULE` |
-| `requirements.txt` | Modified | Django==5.1.*, psycopg[binary], dj-database-url |
+| `requirements.txt` | Modified | Django>=5.2.17,<6.0, psycopg[binary], dj-database-url |
 | `requirements-dev.txt` | Modified | pytest-django |
 | `.env.example` | Modified | SECRET_KEY, DATABASE_URL, REDIS_URL, DEBUG, ALLOWED_HOSTS, DJANGO_SETTINGS_MODULE |
 

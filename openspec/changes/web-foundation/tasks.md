@@ -83,7 +83,7 @@ Layers: **L1** = pytest/pytest-django (every PR) · **L2** = `docker build` + `d
 
 - [x] 1.1 **RED** `tests/test_settings.py`: `DATABASE_URL` parsed (no hardcoded host), `REDIS_URL` used, prod missing `SECRET_KEY` raises, dev local defaults + `DEBUG` true, falsey `DEBUG` disables. [L1]
 - [x] 1.2 **GREEN** `web/config/settings/{__init__,base,dev,prod}.py`: split via `dj-database-url`; prod `os.environ["SECRET_KEY"]` fail-closed. [L1]
-- [x] 1.3 **GREEN** `web/manage.py`, `web/config/{urls,wsgi,asgi}.py`; `pyproject.toml` `pythonpath=["web"]` + `DJANGO_SETTINGS_MODULE`; requirements (+Django 5.1, psycopg, dj-database-url, pytest-django). [L1]
+- [x] 1.3 **GREEN** `web/manage.py`, `web/config/{urls,wsgi,asgi}.py`; `pyproject.toml` `pythonpath=["web"]` + `DJANGO_SETTINGS_MODULE`; requirements (+Django 5.2 LTS, psycopg, dj-database-url, pytest-django). [L1]
 - [x] 1.4 **RED** `tests/web/test_health.py`: anonymous `GET /healthz` → 200; body has no secret/connection string. [L1]
 - [x] 1.5 **GREEN** `web/config/health.py` + route in `config/urls.py`. [L1]
 - [x] 1.6 `tests/test_boundary.py`: `ast.parse` every `src/*.py`, fail on `django` root import (plus triangulating scanner test). [L1]
