@@ -137,3 +137,19 @@ class BitunixClient:
             {"marginCoin": margin_coin},
             private=True,
         )
+
+    def history_trades(self, symbol: str | None = None, skip: int = 0) -> dict:
+        params = {"skip": skip, "limit": 100}
+        if symbol:
+            params["symbol"] = symbol
+        return self.get(
+            f"{PRIVATE_PREFIX}/trade/get_history_trades", params, private=True
+        )
+
+    def history_orders(self, symbol: str | None = None, skip: int = 0) -> dict:
+        params = {"skip": skip, "limit": 100}
+        if symbol:
+            params["symbol"] = symbol
+        return self.get(
+            f"{PRIVATE_PREFIX}/trade/get_history_orders", params, private=True
+        )

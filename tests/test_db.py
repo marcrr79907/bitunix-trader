@@ -7,7 +7,7 @@ db.py is the storage interface; reading back with SQL asserts the behavior
 import os
 import tempfile
 
-from src.db import init_db, insert_funding, insert_prices
+from src.db import init_db, insert_funding, insert_prices, upsert_trades
 
 
 def _read(conn, sql):
@@ -93,8 +93,33 @@ def test_init_db_is_idempotent():
         os.remove(path)
 
 
+def test_upsert_trades_is_idempotent():
+    """Syncing twice must not duplicate trades (trade_id is the key)."""
+    fd, path = tempfile.mkstemp(suffix=".db")
+    os.close(fd)
+    try:
+        conn = init_db(path)
+        trade = {
+            "trade_id": "t1",
+            "order_id": "o1",
+            "symbol": "BTCUSDT",
+            "side": "BUY",
+            "qty": 1.0,
+            "price": 60000.0,
+            "fee": 0.5,
+            "realized_pnl": 10.0,
+            "ctime": 1000,
+        }
+        upsert_trades(conn, [trade])
+        upsert_trades(conn, [trade])  # same trade again
+        assert _read(conn, "SELECT COUNT(*) FROM trades") == [(1,)]
+    finally:
+        os.remove(path)
+
+
 if __name__ == "__main__":
     test_funding_snapshot_roundtrip()
     test_price_snapshot_roundtrip()
     test_init_db_is_idempotent()
+    test_upsert_trades_is_idempotent()
     print("ok: db roundtrips work")

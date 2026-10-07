@@ -23,10 +23,13 @@ cp .env.example .env   # editar solo si vas a usar paneles privados
 ## Uso
 
 ```bash
-python -m src.monitor
+python -m src.monitor          # monitor en vivo (funding, precios, posiciones)
+python -m src.journal sync     # sincroniza historial de trades a SQLite
+python -m src.journal report   # win rate y PnL neto por par
 ```
 
-Sin API key corre en modo público: muestra funding y precios de BTC/ETH/SOL/PEPE.
+Sin API key corre en modo público: muestra funding y precios de BTC/ETH/SOL/1000PEPE.
+El journal y las posiciones requieren API key de solo lectura.
 Ctrl+C para salir.
 
 ## Configuración
@@ -58,5 +61,5 @@ Apalancamiento sugerido para arrancar: 5-10x. Riesgo por operación ≤ 1-2% del
 - [ ] Etapa 2 — monitor público
 - [x] Etapa 3 — persistencia SQLite
 - [x] Etapa 4 — panel de posiciones
-- [ ] Etapa 5 — journal / métricas
+- [x] Etapa 5 — journal / métricas
 - [ ] Etapa 6 — alertas Telegram
