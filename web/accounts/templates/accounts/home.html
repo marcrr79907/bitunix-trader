@@ -1,0 +1,16 @@
+{% extends "registration/base.html" %}
+
+{% block title %}Home{% endblock %}
+
+{% block content %}
+<h1>bitunix-trader</h1>
+<p>Signed in as <strong>{{ user.email }}</strong> ({{ user.role }}).</p>
+<ul>
+  {% if user.is_staff %}
+  <li><a href="{% url 'invite_create' %}">Invite a user</a></li>
+  <li><a href="/admin/">Django admin</a></li>
+  {% endif %}
+  <li><a href="{% url 'logout' %}">Log out</a></li>
+</ul>
+<p>Market dashboard coming in the next phase.</p>
+{% endblock %}

@@ -1,9 +1,18 @@
 {% extends "registration/base.html" %}
 
+{% block title %}Create invite{% endblock %}
+
 {% block content %}
 <h1>Create invite</h1>
 <form method="post">{% csrf_token %}
   {{ form.as_p }}
   <input type="submit" value="Create invite">
 </form>
+
+{% if signup_url %}
+<h2>Share this link</h2>
+<p>Send it to the invitee. It is single-use and expires.</p>
+<p><code>{{ signup_url }}</code></p>
+<input type="text" value="{{ signup_url }}" readonly onclick="this.select()">
+{% endif %}
 {% endblock %}
