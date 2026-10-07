@@ -4,10 +4,16 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es/1.1.0/).
 
 ## [Unreleased]
 
-### Added
-- Etapa 6 — alertas por Telegram (pendiente)
+## [0.4.0] - 2026-10-07
 
-[Unreleased]: https://github.com/marcrr79907/bitunix-trader/compare/v0.3.0...HEAD
+### Added
+- Etapa 6: alertas por Telegram (`src/alerts.py`).
+  - Reglas: funding extremo y margen peligroso.
+  - Antidebounce: dispara solo en la transición, no en cada vuelta.
+  - El monitor envía las alertas automáticamente si hay `TELEGRAM_TOKEN`/`TELEGRAM_CHAT_ID`.
+
+[Unreleased]: https://github.com/marcrr79907/bitunix-trader/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/marcrr79907/bitunix-trader/compare/v0.3.0...v0.4.0
 
 ## [0.3.0] - 2026-10-07
 

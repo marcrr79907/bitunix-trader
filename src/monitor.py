@@ -14,6 +14,7 @@ from rich.live import Live
 from rich.table import Table
 
 from src import config
+from src.alerts import AlertState, check_market, check_positions, dispatch
 from src.client import BitunixClient, BitunixError
 from src.db import init_db, insert_funding, insert_prices
 
@@ -248,22 +249,27 @@ def run() -> None:
             "Paneles privados (posiciones) quedan desactivados.[/dim]"
         )
     backoff = config.POLL_SECONDS
+    alerts = AlertState()
     try:
         with Live(console=console, refresh_per_second=4) as live:
             while True:
                 try:
                     rows = fetch_rows(client, config.SYMBOLS)
                     persist(conn, rows)
+                    messages = check_market(rows, alerts)
                     renderables = [render(rows)]
                     if not config.PUBLIC_ONLY:
                         try:
                             marks = {r["symbol"]: r["last_price"] for r in rows}
                             pos, balance = fetch_positions(client, marks)
                             renderables.append(render_positions(pos, balance))
+                            messages += check_positions(pos, alerts)
                         except (BitunixError, requests.RequestException) as e:
                             renderables.append(
                                 Table(title=f"[red]posiciones: {e}[/red]")
                             )
+                    if messages:
+                        dispatch(messages)
                     live.update(Group(*renderables))
                     backoff = config.POLL_SECONDS
                 except (BitunixError, requests.RequestException, ValueError) as e:
