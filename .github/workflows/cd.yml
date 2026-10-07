@@ -56,21 +56,23 @@ jobs:
           fi
 
       - name: Verify commit is on the deploy branch
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          BASE: ${{ steps.env.outputs.name == 'production' && 'main' || 'develop' }}
         run: |
           set -euo pipefail
-          git fetch --no-tags origin main develop
-          target="${{ steps.env.outputs.name }}"
-          if [ "$target" = "production" ]; then
-            base=main
+          # The deployed commit must be an ancestor of the branch it targets.
+          # Use the API (no git credentials needed; checkout is credential-less).
+          # compare/BASE...HEAD status: "ahead" => HEAD contains BASE's history
+          # plus more; "identical" => same commit. Here BASE=sha, HEAD=branch,
+          # so "ahead"/"identical" means sha is contained in the branch.
+          cmp=$(gh api "repos/${{ github.repository }}/compare/${{ github.sha }}...$BASE" --jq '.status' 2>/dev/null || echo "error")
+          if [ "$cmp" = "identical" ] || [ "$cmp" = "ahead" ]; then
+            echo "OK: ${{ github.sha }} is on $BASE ($cmp)"
           else
-            base=develop
-          fi
-          # The commit being deployed must be reachable from its branch.
-          if ! git merge-base --is-ancestor "${{ github.sha }}" "origin/$base"; then
-            echo "::error::${{ github.sha }} is not on origin/$base; refusing to deploy"
+            echo "::error::${{ github.sha }} is not on $BASE (status=$cmp); refusing to deploy"
             exit 1
           fi
-          echo "OK: ${{ github.sha }} is on origin/$base"
 
       - name: Deploy image to Railway
         env:
