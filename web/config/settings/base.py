@@ -79,6 +79,9 @@ LOGIN_REDIRECT_URL = "/"
 LOGOUT_REDIRECT_URL = "/login/"
 
 MIDDLEWARE = [
+    # First: short-circuit /healthz before host validation (Railway's internal
+    # probe arrives with a private-IP Host that ALLOWED_HOSTS cannot express).
+    "config.middleware.HealthProbeHostMiddleware",
     "django.middleware.security.SecurityMiddleware",
     "django.contrib.sessions.middleware.SessionMiddleware",
     "django.middleware.common.CommonMiddleware",
