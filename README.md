@@ -62,4 +62,4 @@ Apalancamiento sugerido para arrancar: 5-10x. Riesgo por operación ≤ 1-2% del
 - [x] Etapa 3 — persistencia SQLite
 - [x] Etapa 4 — panel de posiciones
 - [x] Etapa 5 — journal / métricas
-- [ ] Etapa 6 — alertas Telegram
+- [x] Etapa 6 — alertas Telegram
