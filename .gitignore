@@ -1,0 +1,11 @@
+# Secrets — never commit
+.env
+
+# Local database (builds your own dataset)
+*.db
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+.pytest_cache/
