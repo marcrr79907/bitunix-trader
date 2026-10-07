@@ -1,0 +1,36 @@
+name: Bug report
+description: Reportar un comportamiento incorrecto
+title: "[Bug]: "
+labels: ["bug"]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: ¿Qué pasó?
+      description: Comportamiento observado vs esperado.
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: Pasos para reproducir
+      placeholder: |
+        1. Correr `python -m src.monitor`
+        2. ...
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs / salida
+      description: Pegá el error (sin secretos).
+      render: shell
+    validations:
+      required: false
+  - type: input
+    id: env
+    attributes:
+      label: Entorno
+      placeholder: "Python 3.12.3, Linux"
+    validations:
+      required: false

@@ -1,5 +1,7 @@
 # bitunix-trader
 
+[![CI](https://github.com/marcrr79907/bitunix-trader/actions/workflows/ci.yml/badge.svg)](https://github.com/marcrr79907/bitunix-trader/actions/workflows/ci.yml)
+
 CLI de solo lectura sobre la API de futuros de [BitUnix](https://www.bitunix.com/api-docs/):
 monitor de funding y precios, panel de posiciones, journal propio en SQLite y alertas Telegram.
 
