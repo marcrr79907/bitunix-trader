@@ -1,0 +1,5 @@
+blank_issues_enabled: false
+contact_links:
+  - name: BitUnix API docs
+    url: https://www.bitunix.com/api-docs/
+    about: Documentación oficial de la API.
