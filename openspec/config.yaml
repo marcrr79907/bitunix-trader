@@ -1,0 +1,39 @@
+schema: spec-driven
+
+context: |
+  Project: bitunix-trader — read-only CLI over the BitUnix futures API,
+  evolving into a multi-user Django web dashboard.
+  Stack: Python 3.12, requests, rich, SQLite (stdlib), pytest, ruff.
+  Architecture: flat modules in src/ (client, config, db, monitor,
+  journal, alerts), tests in tests/.
+  Testing: python -m pytest (pytest 9, testpaths=tests).
+  Style: ruff line-length 88, rules E/F/I/UP/B, ruff format.
+  Language: Spanish user-facing CLI strings; English code, comments, docs.
+  CI: GitHub Actions (.github/workflows/ci.yml): ruff check, ruff format
+  --check, pytest. Conventional commits, Keep a Changelog, dependabot.
+
+strict_tdd: true
+
+rules:
+  proposal:
+    - Include rollback plan for risky changes
+    - State scope boundaries explicitly (read-only vs order execution)
+  specs:
+    - Use Given/When/Then for scenarios
+    - Use RFC 2119 keywords (MUST, SHALL, SHOULD, MAY)
+  design:
+    - Document architecture decisions with rationale
+    - Note Django app boundaries and data ownership across users
+  tasks:
+    - Group by phase, use hierarchical numbering
+    - Keep tasks completable in one session
+  apply:
+    - Follow existing code patterns
+    tdd: true
+    test_command: "python -m pytest"
+  verify:
+    test_command: "python -m pytest"
+    build_command: "ruff check . && ruff format --check ."
+    coverage_threshold: 0
+  archive:
+    - Warn before merging destructive deltas
