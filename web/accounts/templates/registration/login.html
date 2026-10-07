@@ -1,0 +1,11 @@
+{% extends "registration/base.html" %}
+{% load i18n %}
+
+{% block content %}
+<h1>{% translate "Log in" %}</h1>
+<form method="post">{% csrf_token %}
+  {{ form.as_p }}
+  <input type="submit" value="{% translate 'Log in' %}">
+</form>
+<p><a href="{% url 'password_reset' %}">{% translate "Forgot your password?" %}</a></p>
+{% endblock %}

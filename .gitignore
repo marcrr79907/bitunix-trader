@@ -3,6 +3,7 @@
 
 # Local database (builds your own dataset)
 *.db
+*.sqlite3
 
 # Python
 __pycache__/
