@@ -17,7 +17,7 @@ import pytest
 from cryptography.fernet import Fernet
 
 WEB = Path(__file__).resolve().parent.parent.parent / "web"
-REQUEST_PATH = (WEB / "config", WEB / "accounts", WEB / "trading")
+REQUEST_PATH = (WEB / "config", WEB / "accounts", WEB / "trading", WEB / "market")
 KEY_ENV = "CREDENTIALS_FERNET_KEY"
 
 
@@ -100,6 +100,11 @@ def test_scanner_flags_a_getattr_decrypt(tmp_path):
 def test_scanner_covers_the_trading_app():
     # R13.2: the new data app must stay inside the scanned request path.
     assert WEB / "trading" in REQUEST_PATH
+
+
+def test_scanner_covers_the_market_app():
+    # R13.2 spirit: every request-serving app stays inside the scanned path.
+    assert WEB / "market" in REQUEST_PATH
 
 
 @pytest.mark.django_db

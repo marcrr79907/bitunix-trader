@@ -123,6 +123,20 @@ class BitunixClient:
         # Endpoint ignores `symbols` and returns every pair; filter client-side.
         return self.get(f"{PUBLIC_PREFIX}/funding_rate/batch")
 
+    def kline(self, symbol: str, interval: str = "1m", limit: int = 100) -> list[dict]:
+        params = {"symbol": symbol, "interval": interval, "limit": limit}
+        rows = self.get(f"{PUBLIC_PREFIX}/kline", params)  # unsigned public GET
+        return [
+            {
+                "time": int(r["time"]) // 1000,
+                "open": float(r["open"]),
+                "high": float(r["high"]),
+                "low": float(r["low"]),
+                "close": float(r["close"]),
+            }
+            for r in (rows or [])
+        ]
+
     # --- private account endpoints (read-only) ---
 
     def positions(self, symbol: str | None = None) -> list[dict]:
