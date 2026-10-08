@@ -16,15 +16,12 @@ pythonpath = ["web"]
 DJANGO_SETTINGS_MODULE = "config.settings.dev"
 
 [tool.coverage.run]
-# Measure the code this project owns. `src/` (legacy CLI) is covered
-# incrementally as later changes touch those modules; the web app is gated.
-source = ["web"]
+# Measure both trees. Per-scope gates are authoritative: the web gate keeps
+# the 85% floor on `web/*`, while diff-cover protects changed `src/` lines.
+source = ["web", "src"]
 omit = [
     "web/manage.py",
     "web/config/wsgi.py",
     "web/config/asgi.py",
     "*/migrations/*",
 ]
-
-[tool.coverage.report]
-fail_under = 85
