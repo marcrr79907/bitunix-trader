@@ -1,6 +1,10 @@
 [tool.ruff]
 target-version = "py312"
 line-length = 88
+# SDD artifacts under openspec/ are documentation (prose + illustrative Python
+# snippets), not source. ruff format rewrites embedded code blocks and would
+# otherwise fail --check on every design doc.
+extend-exclude = ["openspec/"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B"]
