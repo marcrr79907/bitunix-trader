@@ -7,38 +7,38 @@ Chain strategy: feature-branch-chain
 
 ## Guard/Edge Matrix (every row = a test in its WU)
 
-- [ ] `kline` maps ms → unix-seconds int + floats (R1)
-- [ ] Empty upstream → `[]` client-side; 200-empty payload endpoint-side (R1/R3)
-- [ ] `BitunixError` surfaces (API code != 0, HTTP != 200) (R1)
-- [ ] Candles sorted ascending + deduped, last wins (R3)
-- [ ] Overlays gap-omitted — `{time, value}` only, no nulls (R3/R4)
-- [ ] sma20 has exactly N−w+1 points (R4)
-- [ ] rsi14 in [0, 100] or point omitted (R4)
-- [ ] 400 invalid interval (not in `INTERVALS`) (R3)
-- [ ] 400 limit outside [1, 200] or non-int (R3)
-- [ ] 502 `{"error": "upstream"}` on `RequestException`; never 500 (R3)
-- [ ] 302 anonymous → login (page + API) (R2/R3)
+- [x] `kline` maps ms → unix-seconds int + floats (R1)
+- [x] Empty upstream → `[]` client-side; 200-empty payload endpoint-side (R1/R3)
+- [x] `BitunixError` surfaces (API code != 0, HTTP != 200) (R1)
+- [x] Candles sorted ascending + deduped, last wins (R3)
+- [x] Overlays gap-omitted — `{time, value}` only, no nulls (R3/R4)
+- [x] sma20 has exactly N−w+1 points (R4)
+- [x] rsi14 in [0, 100] or point omitted (R4)
+- [x] 400 invalid interval (not in `INTERVALS`) (R3)
+- [x] 400 limit outside [1, 200] or non-int (R3)
+- [x] 502 `{"error": "upstream"}` on `RequestException`; never 500 (R3)
+- [ ] 302 anonymous → login (page + API) (R2/R3) — API half done; page half in WU2
 - [ ] CSP present on `/market/` (authenticated) (R6)
 - [ ] CSP absent on `/admin/` (R6)
-- [ ] `/healthz` still 200 (R6)
-- [ ] `/market/kline` matches no order-scanner forbidden fragment (R7)
-- [ ] `src/` framework-free (`tests/test_boundary.py` green) (R7)
-- [ ] No new runtime dep — `requirements.txt` unchanged (R7)
+- [x] `/healthz` still 200 (R6)
+- [ ] `/market/kline` matches no order-scanner forbidden fragment (R7) — verified 2026-10-08, test in Phase 3 run
+- [ ] `src/` framework-free (`tests/test_boundary.py` green) (R7) — verified 2026-10-08
+- [ ] No new runtime dep — `requirements.txt` unchanged (R7) — verified at Phase 3
 - [ ] `chart.js` has NO indicator math (R4)
 
 ## WU1 (PR1) — backend: kline client + market API
 
 Base `feat/market-chart` (tracker). Depends: none. Strict TDD (`python -m pytest`). Headless-verifiable (~300 lines).
 
-- [ ] 1.1 **RED** `tests/test_client_kline.py`: public GET URL/params, no signing; ms→s int + float mapping; API code != 0 → `BitunixError`; HTTP != 200 → `BitunixError`; empty `data` → `[]`. Monkeypatch `requests.get`; no Django.
-- [ ] 1.2 **RED** `tests/web/test_market_api.py` (payload): stub client into `quotes.get_kline_payload` — candles ascending + deduped; overlays `{time, value}` no nulls; sma20 N−w+1 points; rsi14 bounded or omitted.
-- [ ] 1.3 **RED** same file (endpoint): 200 exact shape; 400 invalid interval; 400 limit outside [1,200] / non-int; 400 upstream API reject; 502 on `RequestException`; 302 anonymous. View errors via monkeypatched `market.views.BitunixClient`.
-- [ ] 1.4 **GREEN** `src/client.py`: `kline(symbol, interval="1m", limit=100)` after `funding_rate_batch` — unsigned public GET, one mapping seam (ms→s int, floats), `[]` on empty, `BitunixError` via `_unwrap`. No `startTime`/`endTime`/`type`.
-- [ ] 1.5 **GREEN** `web/market/` app: `__init__.py`, `apps.py`, `quotes.py` (`INTERVALS` + `get_kline_payload` sort/dedupe + `_zip` gap omission), `views.py` (`market_page`, `api_kline`, `chart_js`; `@login_required` + GET-only), `urls.py` (bare names, no `app_name`).
-- [ ] 1.6 **GREEN** `web/config/urls.py`: `include("market.urls")`; `web/config/settings/base.py`: `INSTALLED_APPS += "market"`.
-- [ ] 1.7 **GREEN** `tests/web/test_credentials_mechanism.py`: `REQUEST_PATH += (WEB / "market",)` — scanner completeness.
-- [ ] 1.8 Full suite + `ruff check` green; endpoint usable via curl.
-- [ ] 1.9 **Rollback**: delete `web/market/` + the two new test files; revert `client.py`, `urls.py`, `base.py`, `test_credentials_mechanism.py`. No migrations (A4) — nothing at the DB layer.
+- [x] 1.1 **RED** `tests/test_client_kline.py`: public GET URL/params, no signing; ms→s int + float mapping; API code != 0 → `BitunixError`; HTTP != 200 → `BitunixError`; empty `data` → `[]`. Monkeypatch `requests.get`; no Django.
+- [x] 1.2 **RED** `tests/web/test_market_api.py` (payload): stub client into `quotes.get_kline_payload` — candles ascending + deduped; overlays `{time, value}` no nulls; sma20 N−w+1 points; rsi14 bounded or omitted.
+- [x] 1.3 **RED** same file (endpoint): 200 exact shape; 400 invalid interval; 400 limit outside [1,200] / non-int; 400 upstream API reject; 502 on `RequestException`; 302 anonymous. View errors via monkeypatched `market.views.BitunixClient`.
+- [x] 1.4 **GREEN** `src/client.py`: `kline(symbol, interval="1m", limit=100)` after `funding_rate_batch` — unsigned public GET, one mapping seam (ms→s int, floats), `[]` on empty, `BitunixError` via `_unwrap`. No `startTime`/`endTime`/`type`.
+- [x] 1.5 **GREEN** `web/market/` app: `__init__.py`, `apps.py`, `quotes.py` (`INTERVALS` + `get_kline_payload` sort/dedupe + `_zip` gap omission), `views.py` (`market_page`, `api_kline`, `chart_js`; `@login_required` + GET-only), `urls.py` (bare names, no `app_name`).
+- [x] 1.6 **GREEN** `web/config/urls.py`: `include("market.urls")`; `web/config/settings/base.py`: `INSTALLED_APPS += "market"`.
+- [x] 1.7 **GREEN** `tests/web/test_credentials_mechanism.py`: `REQUEST_PATH += (WEB / "market",)` — scanner completeness.
+- [x] 1.8 Full suite + `ruff check` green; endpoint usable via curl.
+- [x] 1.9 **Rollback**: delete `web/market/` + the two new test files; revert `client.py`, `urls.py`, `base.py`, `test_credentials_mechanism.py`. No migrations (A4) — nothing at the DB layer.
 
 ## WU2 (PR2) — frontend: chart page, WS client, CSP
 
