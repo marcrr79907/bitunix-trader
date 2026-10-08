@@ -8,6 +8,8 @@ scheduler stays a boot-only stub that needs no broker.
 
 from __future__ import annotations
 
+import signal
+
 import pytest
 import redis
 import requests
@@ -206,6 +208,18 @@ def test_worker_main_boots_one_iteration():
 def test_install_signal_handlers_returns_unset_event():
     stop = worker._install_signal_handlers()
     assert not stop.is_set()
+
+
+def test_signal_handler_sets_stop_event():
+    # The installed handler flips the event; invoke it directly (no real signal).
+    original = signal.getsignal(signal.SIGTERM)
+    try:
+        stop = worker._install_signal_handlers()
+        handler = signal.getsignal(signal.SIGTERM)
+        handler(signal.SIGTERM, None)
+        assert stop.is_set()
+    finally:
+        signal.signal(signal.SIGTERM, original)
 
 
 def test_scheduler_boots_one_iteration(fake_redis):
