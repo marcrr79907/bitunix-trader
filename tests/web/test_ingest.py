@@ -225,7 +225,7 @@ def test_fetch_market_keeps_legit_zero_funding_with_present_prices():
 
 
 def test_fetch_market_keeps_ticker_only_row():
-    # No funding payload at all, but a live ticker price → the row survives.
+    # No funding payload at all, but a live ticker price → the ticker survives.
     tickers = [
         {
             "symbol": "BTCUSDT",
@@ -240,17 +240,18 @@ def test_fetch_market_keeps_ticker_only_row():
 
     assert len(market["tickers"]) == 1
     assert market["tickers"][0]["last_price"] == 50000.0
-    # funding dict is still emitted for the row (matches 1:1 mapping); its
-    # funding_rate defaults to 0.0 because the caller maps every kept row.
-    assert len(market["funding"]) == 1
+    # No real funding (mark/index price absent) → no fabricated funding dict.
+    assert market["funding"] == []
 
 
-def test_fetch_market_keeps_mark_price_only_row():
-    # Only a funding payload with mark/index present → row survives.
+def test_fetch_market_keeps_funding_without_ticker():
+    # W2b regression: funding and tickers are independent series. A real
+    # funding payload (markPrice present) with NO ticker row must keep the
+    # funding dict and must NOT fabricate a ticker carrying a None price.
     funding = [
         {
             "symbol": "BTCUSDT",
-            "fundingRate": "0.0001",
+            "fundingRate": "0.0003",
             "fundingInterval": "8",
             "nextFundingTime": str(TS_MS),
             "markPrice": "50001",
@@ -261,7 +262,9 @@ def test_fetch_market_keeps_mark_price_only_row():
     market = fetch_market(StubClient([], funding), ["BTCUSDT"])
 
     assert len(market["funding"]) == 1
+    assert market["funding"][0]["funding_rate"] == 0.0003
     assert market["funding"][0]["mark_price"] == 50001.0
+    assert market["tickers"] == []
 
 
 @pytest.mark.django_db

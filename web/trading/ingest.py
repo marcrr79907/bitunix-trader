@@ -17,47 +17,48 @@ from trading.models import FundingSnapshot, TickerSnapshot
 
 
 def fetch_market(client, symbols) -> dict[str, list[dict]]:
-    """Fetch and split one row per symbol into funding + ticker model dicts.
+    """Fetch and split each row into independent funding + ticker model dicts.
 
     ``src.monitor.fetch_rows`` fabricates one default row per requested symbol,
-    so a symbol absent from the API response comes back with all price fields
-    ``None``. Persisting those would write a false ``0.0`` funding and NULL
-    prices into an immutable ``(symbol, ts)`` series, so a row with no real
-    market data (every price field ``None``) is skipped entirely. The signal is
-    ``None`` prices, never ``funding == 0.0``: a legitimate funding rate can be
-    exactly zero while a missing payload yields ``None``.
+    so a symbol absent from the API response comes back with every price field
+    ``None``. Funding and tickers are independent API series, so presence is
+    decided per series rather than per row:
+
+    * a funding dict is emitted only when the funding payload is real
+      (``mark_price`` or ``index_price`` present — both come from the funding
+      endpoint), never on ``funding_rate == 0.0``, which is a legitimate rate;
+    * a ticker dict is emitted only when ``last_price`` is present.
+
+    A missing series writes nothing instead of a fabricated ``0.0``/``None`` row
+    into an immutable ``(symbol, ts)`` series.
     """
     funding: list[dict] = []
     tickers: list[dict] = []
     for r in fetch_rows(client, symbols):
-        if (
-            r["last_price"] is None
-            and r["mark_price"] is None
-            and r["index_price"] is None
-        ):
-            continue
         ts = datetime.fromtimestamp(r["ts"] / 1000, tz=UTC)
-        funding.append(
-            {
-                "symbol": r["symbol"],
-                "ts": ts,
-                "funding_rate": r["funding"],
-                "mark_price": r["mark_price"],
-                "index_price": r["index_price"],
-                "next_funding_time": r["next_funding_time"],  # raw epoch ms
-                "funding_interval": r["funding_interval"],
-            }
-        )
-        tickers.append(
-            {
-                "symbol": r["symbol"],
-                "ts": ts,
-                "last_price": r["last_price"],
-                "high": r["high"],
-                "low": r["low"],
-                "quote_vol": r["quote_vol"],
-            }
-        )
+        if r["mark_price"] is not None or r["index_price"] is not None:
+            funding.append(
+                {
+                    "symbol": r["symbol"],
+                    "ts": ts,
+                    "funding_rate": r["funding"],
+                    "mark_price": r["mark_price"],
+                    "index_price": r["index_price"],
+                    "next_funding_time": r["next_funding_time"],  # raw epoch ms
+                    "funding_interval": r["funding_interval"],
+                }
+            )
+        if r["last_price"] is not None:
+            tickers.append(
+                {
+                    "symbol": r["symbol"],
+                    "ts": ts,
+                    "last_price": r["last_price"],
+                    "high": r["high"],
+                    "low": r["low"],
+                    "quote_vol": r["quote_vol"],
+                }
+            )
     return {"funding": funding, "tickers": tickers}
 
 
