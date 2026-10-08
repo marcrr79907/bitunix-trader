@@ -61,6 +61,11 @@ def test_ema_window_below_one_all_none():
     assert ema([1, 2, 3], 0) == [None, None, None]
 
 
+def test_ema_window_larger_than_series_all_none():
+    # window > n -> no seed possible -> all None, never raise.
+    assert ema([1, 2, 3], 5) == [None, None, None]
+
+
 def test_ema_length_preserved():
     assert len(ema([1, 2, 3, 4, 5, 6], 4)) == 6
 
@@ -103,6 +108,11 @@ def test_rsi_bounded_zero_to_hundred():
     assert all(v is None or 0.0 <= v <= 100.0 for v in out)
 
 
+def test_rsi_series_shorter_than_window_all_none():
+    # n <= window -> not enough deltas -> all None, never raise.
+    assert rsi([1, 2, 3], 3) == [None, None, None]
+
+
 def test_rsi_empty_returns_empty():
     assert rsi([], 3) == []
 
@@ -140,6 +150,11 @@ def test_atr_first_valid_index_is_window():
 def test_atr_non_negative():
     out = atr([10, 11, 12], [8, 9, 10], [9, 10, 11], 2)
     assert all(v is None or v >= 0.0 for v in out)
+
+
+def test_atr_series_shorter_than_window_all_none():
+    # n <= window -> TR window cannot be filled -> all None, never raise.
+    assert atr([10, 11], [8, 9], [9, 10], 3) == [None, None]
 
 
 def test_atr_empty_returns_empty():
