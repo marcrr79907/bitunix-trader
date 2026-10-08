@@ -173,6 +173,97 @@ def test_fetch_market_empty_symbols_yields_nothing():
     assert persist_market(market["funding"], market["tickers"]) == (0, 0)
 
 
+# --- R3 empty API response: fetch_rows fabricates a default row per symbol; ---
+# --- the ingestion layer must drop rows carrying no real market data.       ---
+
+
+def test_fetch_market_empty_api_response_yields_nothing():
+    market = fetch_market(StubClient([], []), ["BTCUSDT", "ETHUSDT"])
+
+    assert market == {"funding": [], "tickers": []}
+
+
+@pytest.mark.django_db
+def test_persist_market_empty_api_response_is_a_noop():
+    market = fetch_market(StubClient([], []), ["BTCUSDT", "ETHUSDT"])
+
+    assert persist_market(market["funding"], market["tickers"]) == (0, 0)
+    assert FundingSnapshot.objects.count() == 0
+    assert TickerSnapshot.objects.count() == 0
+
+
+def test_fetch_market_keeps_legit_zero_funding_with_present_prices():
+    # funding == 0.0 is legitimate; presence of ANY price field must keep the
+    # row. This is the over-filtering guard: the skip signal is None prices,
+    # never a zero funding rate.
+    tickers = [
+        {
+            "symbol": "BTCUSDT",
+            "lastPrice": "50000",
+            "high": "51000",
+            "low": "49000",
+            "quoteVol": "1",
+        },
+    ]
+    funding = [
+        {
+            "symbol": "BTCUSDT",
+            "fundingRate": "0",
+            "fundingInterval": "8",
+            "nextFundingTime": str(TS_MS),
+            "markPrice": "50001",
+            "indexPrice": "50000",
+        },
+    ]
+
+    market = fetch_market(StubClient(tickers, funding), ["BTCUSDT"])
+
+    assert len(market["funding"]) == 1
+    assert len(market["tickers"]) == 1
+    assert market["funding"][0]["funding_rate"] == 0.0
+    assert market["tickers"][0]["last_price"] == 50000.0
+
+
+def test_fetch_market_keeps_ticker_only_row():
+    # No funding payload at all, but a live ticker price → the row survives.
+    tickers = [
+        {
+            "symbol": "BTCUSDT",
+            "lastPrice": "50000",
+            "high": "51000",
+            "low": "49000",
+            "quoteVol": "1",
+        }
+    ]
+
+    market = fetch_market(StubClient(tickers, []), ["BTCUSDT"])
+
+    assert len(market["tickers"]) == 1
+    assert market["tickers"][0]["last_price"] == 50000.0
+    # funding dict is still emitted for the row (matches 1:1 mapping); its
+    # funding_rate defaults to 0.0 because the caller maps every kept row.
+    assert len(market["funding"]) == 1
+
+
+def test_fetch_market_keeps_mark_price_only_row():
+    # Only a funding payload with mark/index present → row survives.
+    funding = [
+        {
+            "symbol": "BTCUSDT",
+            "fundingRate": "0.0001",
+            "fundingInterval": "8",
+            "nextFundingTime": str(TS_MS),
+            "markPrice": "50001",
+            "indexPrice": "50000",
+        },
+    ]
+
+    market = fetch_market(StubClient([], funding), ["BTCUSDT"])
+
+    assert len(market["funding"]) == 1
+    assert market["funding"][0]["mark_price"] == 50001.0
+
+
 @pytest.mark.django_db
 def test_duplicate_symbol_ts_rejected():
     from datetime import datetime

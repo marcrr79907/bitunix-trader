@@ -17,10 +17,25 @@ from trading.models import FundingSnapshot, TickerSnapshot
 
 
 def fetch_market(client, symbols) -> dict[str, list[dict]]:
-    """Fetch and split one row per symbol into funding + ticker model dicts."""
+    """Fetch and split one row per symbol into funding + ticker model dicts.
+
+    ``src.monitor.fetch_rows`` fabricates one default row per requested symbol,
+    so a symbol absent from the API response comes back with all price fields
+    ``None``. Persisting those would write a false ``0.0`` funding and NULL
+    prices into an immutable ``(symbol, ts)`` series, so a row with no real
+    market data (every price field ``None``) is skipped entirely. The signal is
+    ``None`` prices, never ``funding == 0.0``: a legitimate funding rate can be
+    exactly zero while a missing payload yields ``None``.
+    """
     funding: list[dict] = []
     tickers: list[dict] = []
     for r in fetch_rows(client, symbols):
+        if (
+            r["last_price"] is None
+            and r["mark_price"] is None
+            and r["index_price"] is None
+        ):
+            continue
         ts = datetime.fromtimestamp(r["ts"] / 1000, tz=UTC)
         funding.append(
             {
