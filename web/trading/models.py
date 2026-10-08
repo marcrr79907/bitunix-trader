@@ -13,6 +13,47 @@ from django.conf import settings
 from django.db import models
 
 
+class FundingSnapshot(models.Model):
+    """Global funding snapshot, shared by all users (R1). No owner FK.
+
+    ``next_funding_time`` stays a raw epoch-ms integer; ``ts`` is the poll
+    instant (UTC). The unique ``(symbol, ts)`` makes re-persist a no-op.
+    """
+
+    symbol = models.CharField(max_length=32)
+    ts = models.DateTimeField()
+    funding_rate = models.FloatField(null=True)
+    mark_price = models.FloatField(null=True)
+    index_price = models.FloatField(null=True)
+    next_funding_time = models.BigIntegerField(null=True)
+    funding_interval = models.IntegerField(null=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=["symbol", "ts"], name="uniq_funding_symbol_ts"
+            )
+        ]
+
+
+class TickerSnapshot(models.Model):
+    """Global ticker snapshot, shared by all users (R1). No owner FK."""
+
+    symbol = models.CharField(max_length=32)
+    ts = models.DateTimeField()
+    last_price = models.FloatField(null=True)
+    high = models.FloatField(null=True)
+    low = models.FloatField(null=True)
+    quote_vol = models.FloatField(null=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=["symbol", "ts"], name="uniq_ticker_symbol_ts"
+            )
+        ]
+
+
 class UserOwnedModel(models.Model):
     """Abstract owner-scoped base. Fail-closed: no owner → empty queryset."""
 
