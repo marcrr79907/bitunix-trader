@@ -8,6 +8,7 @@ fails closed when access routes through it. Secrets stay ciphertext-only here;
 
 from __future__ import annotations
 
+from credentials import encrypt
 from django.conf import settings
 from django.db import models
 
@@ -38,6 +39,18 @@ class ExchangeCredential(UserOwnedModel):
     is_active = models.BooleanField(default=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
+
+    def set_secrets(self, api_key: str, api_secret: str) -> None:
+        """Encryption boundary: ciphertext-only columns, never plaintext.
+
+        No ``decrypt_*`` accessor exists by design (R13.3): the model stays
+        key-unaware, and the scanner forbids decryption in request paths.
+        """
+        for value in (api_key, api_secret):
+            if not value or not value.strip():
+                raise ValueError("api_key and api_secret must be non-empty")
+        self.api_key_encrypted = encrypt(api_key)
+        self.api_secret_encrypted = encrypt(api_secret)
 
 
 class Watchlist(UserOwnedModel):
