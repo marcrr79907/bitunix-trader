@@ -17,14 +17,14 @@ Chain strategy: feature-branch-chain
 - [x] 400 invalid interval (not in `INTERVALS`) (R3)
 - [x] 400 limit outside [1, 200] or non-int (R3)
 - [x] 502 `{"error": "upstream"}` on `RequestException`; never 500 (R3)
-- [ ] 302 anonymous → login (page + API) (R2/R3) — API half done; page half in WU2
-- [ ] CSP present on `/market/` (authenticated) (R6)
-- [ ] CSP absent on `/admin/` (R6)
+- [x] 302 anonymous → login (page + API) (R2/R3) — API half done; page half in WU2
+- [x] CSP present on `/market/` (authenticated) (R6)
+- [x] CSP absent on `/admin/` (R6)
 - [x] `/healthz` still 200 (R6)
-- [ ] `/market/kline` matches no order-scanner forbidden fragment (R7) — verified 2026-10-08, test in Phase 3 run
-- [ ] `src/` framework-free (`tests/test_boundary.py` green) (R7) — verified 2026-10-08
-- [ ] No new runtime dep — `requirements.txt` unchanged (R7) — verified at Phase 3
-- [ ] `chart.js` has NO indicator math (R4)
+- [x] `/market/kline` matches no order-scanner forbidden fragment (R7) — verified 2026-10-08, test in Phase 3 run
+- [x] `src/` framework-free (`tests/test_boundary.py` green) (R7) — verified 2026-10-08
+- [x] No new runtime dep — `requirements.txt` unchanged (R7) — verified at Phase 3
+- [x] `chart.js` has NO indicator math (R4)
 
 ## WU1 (PR1) — backend: kline client + market API
 
@@ -44,22 +44,22 @@ Base `feat/market-chart` (tracker). Depends: none. Strict TDD (`python -m pytest
 
 Base WU1 branch. Depends: WU1. Strict TDD. Browser-verifiable (~350 lines).
 
-- [ ] 2.1 **RED** `tests/web/test_market_ux.py`: `/market/` 200 + chart container; home link; anonymous 302; CSP present on `/market/` + absent on `/admin/`; `/healthz` 200. `force_login` pattern (`test_ux.py`).
-- [ ] 2.2 **RED** `tests/web/test_market_e2e.py`: `@pytest.mark.e2e` DOM-only — `LightweightCharts` global defined, canvas exists, no console errors on load (WS errors tolerated).
-- [ ] 2.3 **GREEN** `web/market/templates/market/chart.html`: Variant A chart-first, extends `registration/base.html`, CDN pinned `@5.2.0`, side panel (pairs buttons + interval select + RSI readout).
-- [ ] 2.4 **GREEN** `web/market/templates/market/chart.js` (~120 lines): WS lifecycle per design — bucketing, unsubscribe-BEFORE-subscribe, backoff 1s·2ⁿ cap 60s ±50% jitter, REST refetch on bucket advance (debounce); v5 `addSeries`; NO indicator math.
-- [ ] 2.5 **GREEN** `web/config/middleware.py`: `ContentSecurityPolicyMiddleware` (path-conditional, `CSP_EXEMPT = ("/admin/",)`), last in `MIDDLEWARE` (`base.py`).
-- [ ] 2.6 **GREEN** `web/accounts/templates/accounts/home.html`: replace stub text with `/market/` link.
-- [ ] 2.7 **GREEN** `pyproject.toml`: `e2e` marker + `addopts = "-q -m 'not e2e'"`; `requirements-dev.txt`: `pytest-playwright>=0.5`. CI unchanged.
-- [ ] 2.8 Full suite green (e2e deselected); locally `playwright install chromium` once, then `python -m pytest -m e2e`.
-- [ ] 2.9 **LIVE-VERIFY (apply time)**: WS channel-name map for intervals > 30m (`1h` → `market_kline_60min`?) — only `1min` was spike-verified; correct `chFor()` before sign-off.
-- [ ] 2.10 **Rollback**: revert `home.html`, `middleware.py`, `base.py` MIDDLEWARE, `pyproject.toml`, `requirements-dev.txt`; delete `chart.html`, `chart.js`, UX/E2E suites. WU1 untouched.
+- [x] 2.1 **RED** `tests/web/test_market_ux.py`: `/market/` 200 + chart container; home link; anonymous 302; CSP present on `/market/` + absent on `/admin/`; `/healthz` 200. `force_login` pattern (`test_ux.py`).
+- [x] 2.2 **RED** `tests/web/test_market_e2e.py`: `@pytest.mark.e2e` DOM-only — `LightweightCharts` global defined, canvas exists, no console errors on load (WS errors tolerated).
+- [x] 2.3 **GREEN** `web/market/templates/market/chart.html`: Variant A chart-first, extends `registration/base.html`, CDN pinned `@5.2.0`, side panel (pairs buttons + interval select + RSI readout).
+- [x] 2.4 **GREEN** `web/market/templates/market/chart.js` (~140 lines): WS lifecycle per design — bucketing, unsubscribe-BEFORE-subscribe, backoff 1s·2ⁿ cap 60s ±50% jitter, REST refetch on bucket advance (debounce); v5 `addSeries`; NO indicator math. Plus 20s ping keepalive (live check: server drops idle sockets).
+- [x] 2.5 **GREEN** `web/config/middleware.py`: `ContentSecurityPolicyMiddleware` (path-conditional, `CSP_EXEMPT = ("/admin/",)`), last in `MIDDLEWARE` (`base.py`).
+- [x] 2.6 **GREEN** `web/accounts/templates/accounts/home.html`: replace stub text with `/market/` link.
+- [x] 2.7 **GREEN** `pyproject.toml`: `e2e` marker + `addopts = "-q -m 'not e2e'"`; `requirements-dev.txt`: `pytest-playwright>=0.5`. CI unchanged.
+- [x] 2.8 Full suite green (e2e deselected); locally `playwright install chromium` once, then `python -m pytest -m e2e`. Note: venv playwright pinned 1.62.0 to match cached chromium-1234 (download of v1243 kept failing).
+- [x] 2.9 **LIVE-VERIFY (apply time)**: WS channel-name map for intervals > 30m (`1h` → `market_kline_60min`?) — only `1min` was spike-verified; correct `chFor()` before sign-off. RESOLVED 2026-10-08: official SDK enums + live socket probes confirm the map as designed (60min/2h/1day/3day/1week/1month all push); no `chFor()` change needed. Server needs 20s ping keepalive (added).
+- [x] 2.10 **Rollback**: revert `home.html`, `middleware.py`, `base.py` MIDDLEWARE, `pyproject.toml`, `requirements-dev.txt`; delete `chart.html`, `chart.js`, UX/E2E suites. WU1 untouched.
 
 ## Phase 3 — Verification
 
-- [ ] 3.1 `python -m pytest` green under Strict TDD (e2e deselected by default).
-- [ ] 3.2 `ruff check . && ruff format --check .` green.
-- [ ] 3.3 `tests/test_boundary.py` green; order scanner clean; `requirements.txt` unchanged.
+- [x] 3.1 `python -m pytest` green under Strict TDD (e2e deselected by default).
+- [x] 3.2 `ruff check . && ruff format --check .` green.
+- [x] 3.3 `tests/test_boundary.py` green; order scanner clean; `requirements.txt` unchanged.
 
 ## Review Workload Forecast
 
