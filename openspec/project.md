@@ -25,7 +25,7 @@ Current direction: extend the CLI into a **multi-user Django web dashboard**.
 ## Repository layout
 
 ```
-src/            # flat modules: client, config, db, monitor, journal, alerts
+src/            # flat modules: client, config, db, monitor, journal, alerts, indicators, metrics
 tests/          # pytest suites, one file per module
 openspec/       # SDD artifacts (this directory)
 .github/        # CI, PR/issue templates, dependabot, CODEOWNERS

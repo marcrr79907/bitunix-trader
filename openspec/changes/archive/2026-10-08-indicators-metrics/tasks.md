@@ -54,20 +54,20 @@ Base `feat/indicators-metrics`. Strict TDD: RED → GREEN per function, stdlib o
 
 Base PR1 branch. Config-only; no new test needed.
 
-- [ ] 3.1 `ci.yml` test job: add `fetch-depth: 0` to checkout (merge-base vs `origin/develop`, R2).
-- [ ] 3.2 `ci.yml`: test run → `python -m pytest --cov --cov-report=xml`.
-- [ ] 3.3 `ci.yml`: add `coverage report --include="web/*" --fail-under=85` (web gate, R4).
-- [ ] 3.4 `ci.yml`: add `diff-cover coverage.xml --compare-branch=origin/develop --fail-under=100` (R1).
-- [ ] 3.5 `pyproject.toml`: `source = ["web", "src"]`; drop `fail_under`; keep `omit` (R3).
-- [ ] 3.6 `requirements-dev.txt`: add `diff-cover>=9.0` (dev-only, R5).
-- [ ] 3.7 Verify diff-cover ignores YAML/TOML diffs; if flagged, use `--ignore-errors`/exclude. `coverage.xml` must precede 3.4. Coverage sees `src/` only after 3.5, so PR2's config lines are exercised by PR1's covered src lines.
-- [ ] 3.8 **Rollback**: revert the three config files; PR1 modules stay tested.
+- [x] 3.1 `ci.yml` test job: add `fetch-depth: 0` to checkout (merge-base vs `origin/develop`, R2).
+- [x] 3.2 `ci.yml`: test run → `python -m pytest --cov --cov-report=xml`.
+- [x] 3.3 `ci.yml`: add `coverage report --include="web/*" --fail-under=85` (web gate, R4).
+- [x] 3.4 `ci.yml`: add `diff-cover coverage.xml --compare-branch=origin/develop --fail-under=100` (R1).
+- [x] 3.5 `pyproject.toml`: `source = ["web", "src"]`; drop `fail_under`; keep `omit` (R3).
+- [x] 3.6 `requirements-dev.txt`: add `diff-cover>=9.0` (dev-only, R5).
+- [x] 3.7 Verify diff-cover ignores YAML/TOML diffs; if flagged, use `--ignore-errors`/exclude. `coverage.xml` must precede 3.4. Coverage sees `src/` only after 3.5, so PR2's config lines are exercised by PR1's covered src lines.
+- [x] 3.8 **Rollback**: revert the three config files; PR1 modules stay tested.
 
 ## Phase 4 — Verification
 
-- [ ] 4.1 `python -m pytest` green; `test_boundary.py` + 20 existing tests green.
-- [ ] 4.2 `ruff check . && ruff format --check .` green.
-- [ ] 4.3 Web gate ≥85%; diff-cover 100%; no new runtime dep.
+- [x] 4.1 `python -m pytest` green; `test_boundary.py` + 20 existing tests green.
+- [x] 4.2 `ruff check . && ruff format --check .` green.
+- [x] 4.3 Web gate ≥85%; diff-cover 100%; no new runtime dep.
 
 ## Review Workload Forecast
 
