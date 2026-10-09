@@ -54,6 +54,39 @@ class TickerSnapshot(models.Model):
         ]
 
 
+class Candle(models.Model):
+    """Global OHLC candle, shared by all users (R1). No owner FK.
+
+    Persisted directly from BitUnix, one row per (symbol, interval, time).
+    ``time`` is the candle OPEN in UNIX seconds; ``(symbol, interval, time)``
+    is the idempotency key. The composite index is redundant with the unique
+    constraint on Postgres but is mandated by spec R1.
+    """
+
+    symbol = models.CharField(max_length=32)
+    interval = models.CharField(max_length=8)
+    time = models.BigIntegerField()
+    open = models.FloatField()
+    high = models.FloatField()
+    low = models.FloatField()
+    close = models.FloatField()
+    quote_vol = models.FloatField(null=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=["symbol", "interval", "time"],
+                name="uniq_candle_symbol_interval_time",
+            )
+        ]
+        indexes = [
+            models.Index(
+                fields=["symbol", "interval", "time"],
+                name="ix_candle_symbol_interval_time",
+            )
+        ]
+
+
 class UserOwnedModel(models.Model):
     """Abstract owner-scoped base. Fail-closed: no owner → empty queryset."""
 
