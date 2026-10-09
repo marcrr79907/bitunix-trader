@@ -34,6 +34,7 @@ def api_kline(request: HttpRequest) -> JsonResponse:
     symbol = request.GET.get("symbol", "")
     interval = request.GET.get("interval", "")
     raw_limit = request.GET.get("limit", "")
+    raw_before = request.GET.get("before", "")
 
     if interval not in INTERVALS:
         return JsonResponse({"error": "invalid interval"}, status=400)
@@ -46,8 +47,17 @@ def api_kline(request: HttpRequest) -> JsonResponse:
     if not MIN_LIMIT <= limit <= MAX_LIMIT:
         return JsonResponse({"error": "invalid limit"}, status=400)
 
+    before = None
+    if raw_before:
+        try:
+            before = int(raw_before)
+        except ValueError:
+            return JsonResponse({"error": "invalid before"}, status=400)
+        if before <= 0:
+            return JsonResponse({"error": "invalid before"}, status=400)
+
     try:
-        payload = get_kline_payload(BitunixClient(), symbol, interval, limit)
+        payload = get_kline_payload(BitunixClient(), symbol, interval, limit, before)
     except BitunixError:
         # Upstream rejects the request (API code != 0, e.g. unknown symbol).
         return JsonResponse({"error": "upstream rejected"}, status=400)
