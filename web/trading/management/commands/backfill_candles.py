@@ -99,7 +99,13 @@ def _backfill_series(
             )
         oldest_time = min(r["time"] for r in rows)
         out(f"{series}: page={len(rows)} oldest={oldest_time}")
-        cursor = oldest_time * 1000 - 1
+        new_cursor = oldest_time * 1000 - 1
+        if new_cursor >= cursor:
+            # Defensive: if upstream ignored endTime the page did not advance;
+            # stop instead of hammering the API in an infinite loop.
+            out(f"{series}: no progress (cursor stuck at {cursor}); stopping")
+            break
+        cursor = new_cursor
         if start_ms is not None and oldest_time * 1000 <= start_ms:
             break
         throttle(delay)

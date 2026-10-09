@@ -189,6 +189,21 @@ def test_backfill_start_after_all_data_persists_nothing():
 
 
 @pytest.mark.django_db
+def test_backfill_stops_when_upstream_ignores_endtime():
+    # Defensive: a client that never advances the cursor would loop forever.
+    class StuckClient(SeriesClient):
+        def kline(self, symbol, interval, limit=100, start_time=None, end_time=None):
+            return super().kline(symbol, interval, limit, start_time, end_time=None)
+
+    client = StuckClient({("BTCUSDT", "5m"): [_ts(14), _ts(14, 1)]})
+
+    persisted, _, out = _run(client, end="2023-11-20")
+
+    assert any("no progress" in line for line in out.lines)
+    assert persisted <= 2  # bounded: does not spin
+
+
+@pytest.mark.django_db
 def test_backfill_error_aborts_series_but_continues_next():
     class FlakyClient(SeriesClient):
         def kline(self, symbol, interval, limit=100, start_time=None, end_time=None):
