@@ -9,6 +9,7 @@ scheduler stays a boot-only stub that needs no broker.
 from __future__ import annotations
 
 import signal
+from threading import Event
 
 import pytest
 import redis
@@ -208,6 +209,27 @@ def test_worker_main_boots_one_iteration():
 def test_install_signal_handlers_returns_unset_event():
     stop = worker._install_signal_handlers()
     assert not stop.is_set()
+
+
+@pytest.mark.django_db
+def test_worker_main_default_stop_predicate_is_callable(monkeypatch):
+    # Regression: main() must convert the signal Event into a callable
+    # predicate. Passing the Event itself raised
+    # "TypeError: 'Event' object is not callable" at the first loop check,
+    # crashing the deployed worker.
+    seen = {}
+
+    def fake_run_loop(client, symbols, iterations, stop, sleep):
+        seen["stop"] = stop
+        return 0
+
+    monkeypatch.setattr(worker, "run_loop", fake_run_loop)
+    monkeypatch.setattr(worker, "_install_signal_handlers", lambda: Event())
+
+    worker.main(iterations=1, client=StubClient(), symbols=["BTCUSDT"])
+
+    assert callable(seen["stop"])
+    assert seen["stop"]() is False  # unset Event -> keeps running
 
 
 def test_signal_handler_sets_stop_event():
