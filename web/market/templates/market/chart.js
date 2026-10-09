@@ -39,12 +39,28 @@
   var smaSeries = chart.addSeries(LightweightCharts.LineSeries, { color: "#2962ff" });
   var emaSeries = chart.addSeries(LightweightCharts.LineSeries, { color: "#ff6d00" });
 
+  // Read-only test seam: the dev-only E2E asserts the series grows after a
+  // left-edge pagination fetch (R8) via evaluate, instead of image diffs.
+  window.marketChart = { chart: chart, candleSeries: candleSeries };
+
   var ws = null;
   var sub = null; // {symbol, interval} pending or active
   var retry = 0;
   var pingTimer = null;
   var refetchTimer = null;
   var lastBucket = 0;
+
+  // Infinite scroll: module-level arrays so older pages can be prepended.
+  // The WS live path updates the series directly, so onPush also mirrors the
+  // forming candle into these arrays — otherwise a later setData would clobber
+  // it (R8: live update not clobbered).
+  var allCandles = [];
+  var allSma = [];
+  var allEma = [];
+  var EDGE = 5; // logical bars from the left edge that trigger a load
+  var loadingOlder = false;
+  var hasMore = true;
+  var oldestTime = 0;
 
   var backoff = function () {
     // 1s * 2^n capped at 60s, ±50% jitter (storm guard).
@@ -67,18 +83,100 @@
     return 60;
   };
 
-  var applyPayload = function (payload) {
-    candleSeries.setData(payload.candles);
-    smaSeries.setData(payload.overlays.sma20);
-    emaSeries.setData(payload.overlays.ema20);
-    var rsi = payload.overlays.rsi14;
-    var last = rsi.length > 0 ? rsi[rsi.length - 1].value : null;
-    document.getElementById("rsi").textContent =
-      last === null ? "–" : last.toFixed(2);
-    var candles = payload.candles;
-    lastBucket =
-      candles.length > 0 ? candles[candles.length - 1].time : 0;
+  // Last element of an array, or undefined (used to mirror the live bar).
+  var last = function (arr) {
+    return arr.length ? arr[arr.length - 1] : undefined;
   };
+
+  var applyPayload = function (payload) {
+    allCandles = payload.candles.slice();
+    allSma = payload.overlays.sma20.slice();
+    allEma = payload.overlays.ema20.slice();
+    candleSeries.setData(allCandles);
+    smaSeries.setData(allSma);
+    emaSeries.setData(allEma);
+    var rsi = payload.overlays.rsi14;
+    var lastRsi = rsi.length > 0 ? rsi[rsi.length - 1].value : null;
+    document.getElementById("rsi").textContent =
+      lastRsi === null ? "–" : lastRsi.toFixed(2);
+    lastBucket =
+      allCandles.length > 0 ? allCandles[allCandles.length - 1].time : 0;
+    // Deliberate anchor reset on every full refetch (bucket close): the loaded
+    // window was replaced, so the next left-edge scroll must fetch from its new
+    // floor (R8: bucket-close refetch resets anchors).
+    oldestTime = allCandles.length > 0 ? allCandles[0].time : 0;
+    hasMore = true;
+  };
+
+  // Merge older page into a series, deduped by time (existing newer wins).
+  var mergeSeries = function (older, existing) {
+    var byTime = {};
+    var i;
+    for (i = 0; i < existing.length; i++) byTime[existing[i].time] = existing[i];
+    for (i = 0; i < older.length; i++) {
+      if (!(older[i].time in byTime)) byTime[older[i].time] = older[i];
+    }
+    return Object.keys(byTime)
+      .map(function (t) {
+        return byTime[t];
+      })
+      .sort(function (a, b) {
+        return a.time - b.time;
+      });
+  };
+
+  // Fetch one older page before `oldestTime` and prepend it. Single in-flight
+  // guard; empty page flips hasMore off.
+  var loadOlder = function () {
+    if (loadingOlder || !hasMore || !oldestTime) return;
+    loadingOlder = true;
+    fetch(
+      "/market/api/kline?symbol=" + state.symbol + "&interval=" + state.interval +
+        "&limit=200&before=" + oldestTime
+    )
+      .then(function (r) {
+        if (!r.ok) throw new Error("kline " + r.status);
+        return r.json();
+      })
+      .then(function (p) {
+        if (!p.candles.length) {
+          hasMore = false;
+          return;
+        }
+        var range = chart.timeScale().getVisibleLogicalRange();
+        var before = allCandles.length;
+        allCandles = mergeSeries(p.candles, allCandles);
+        allSma = mergeSeries(p.overlays.sma20, allSma);
+        allEma = mergeSeries(p.overlays.ema20, allEma);
+        var added = allCandles.length - before;
+        if (!added) {
+          hasMore = false;
+          return;
+        }
+        candleSeries.setData(allCandles);
+        smaSeries.setData(allSma);
+        emaSeries.setData(allEma);
+        // Shift the visible range by the prepended count to hold the viewport
+        // (R8: viewport preserved on prepend).
+        if (range) {
+          chart.timeScale().setVisibleLogicalRange({
+            from: range.from + added,
+            to: range.to + added,
+          });
+        }
+        oldestTime = allCandles[0].time;
+      })
+      .catch(function () {
+        /* transient: next edge event retries */
+      })
+      .finally(function () {
+        loadingOlder = false;
+      });
+  };
+
+  chart.timeScale().subscribeVisibleLogicalRangeChange(function (range) {
+    if (range && range.from < EDGE) loadOlder();
+  });
 
   var fetchHistory = function () {
     var url =
@@ -107,13 +205,18 @@
     if (!sub || m.symbol !== state.symbol) return;
     var sec = intervalSec(state.interval);
     var t = bucket(m.ts, sec);
-    candleSeries.update({
+    var bar = {
       time: t,
       open: +m.data.o,
       high: +m.data.h,
       low: +m.data.l,
       close: +m.data.c,
-    });
+    };
+    candleSeries.update(bar);
+    // Mirror the live bar into the array so a later prepend/setData keeps it.
+    var tip = last(allCandles);
+    if (tip && tip.time === t) allCandles[allCandles.length - 1] = bar;
+    else if (!tip || t > tip.time) allCandles.push(bar);
     if (lastBucket && t > lastBucket) {
       lastBucket = t;
       scheduleRefetch(); // candle closed -> overlays catch up
