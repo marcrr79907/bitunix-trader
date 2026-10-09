@@ -178,6 +178,17 @@ def test_backfill_start_bounds_earliest_candle():
 
 
 @pytest.mark.django_db
+def test_backfill_start_after_all_data_persists_nothing():
+    # Whole page is older than --start -> filtered to empty -> break, no persist.
+    client = SeriesClient({("BTCUSDT", "5m"): [_ts(13), _ts(14)]})
+
+    persisted, _, _ = _run(client, start="2023-11-20", end="2023-11-21")
+
+    assert persisted == 0
+    assert Candle.objects.count() == 0
+
+
+@pytest.mark.django_db
 def test_backfill_error_aborts_series_but_continues_next():
     class FlakyClient(SeriesClient):
         def kline(self, symbol, interval, limit=100, start_time=None, end_time=None):
