@@ -25,7 +25,7 @@ def seeded_5m_candles(db):
     from trading.models import Candle
 
     base = int(datetime(2025, 1, 1, tzinfo=UTC).timestamp())
-    for i in range(30):
+    for i in range(250):
         Candle.objects.create(
             symbol="BTCUSDT",
             interval="5m",
@@ -104,3 +104,36 @@ def test_chart_renders_seeded_candles(seeded_5m_candles, browser_page):
     )
     n = page.evaluate("() => window.marketChart.candleSeries.data().length")
     assert n >= 30
+
+
+@p
+def test_chart_infinite_scroll_loads_older_page(seeded_5m_candles, browser_page):
+    # R8: reaching the left edge fetches an older page (`before=`) and prepends
+    # it, growing the series. DOM/network assertions only (no image diff).
+    page, base_url = browser_page
+    before_requests = []
+    page.on(
+        "request",
+        lambda r: before_requests.append(r.url) if "before=" in r.url else None,
+    )
+
+    page.goto(f"{base_url}/market/")
+    page.select_option("#interval", "5m")
+    page.wait_for_function(
+        "() => window.marketChart && window.marketChart.candleSeries.data().length > 0",
+        timeout=10000,
+    )
+    initial = page.evaluate("() => window.marketChart.candleSeries.data().length")
+
+    # Drive the visible range to the left edge to trigger loadOlder().
+    page.evaluate(
+        "() => window.marketChart.chart.timeScale().setVisibleLogicalRange("
+        "{ from: -1, to: 20 })"
+    )
+    page.wait_for_function(
+        f"() => window.marketChart.candleSeries.data().length > {initial}",
+        timeout=10000,
+    )
+    grown = page.evaluate("() => window.marketChart.candleSeries.data().length")
+    assert grown > initial
+    assert any("before=" in u for u in before_requests), before_requests
