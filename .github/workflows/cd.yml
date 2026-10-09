@@ -108,7 +108,7 @@ jobs:
             REG_CREDS=""
           fi
 
-          for svc in web worker scheduler; do
+          for svc in web worker scheduler cron-backfill cron-prune; do
             SVC_ID=$(curl -sf "https://backboard.railway.com/graphql/v2" \
               -H "Project-Access-Token: $TOKEN" \
               -H "Content-Type: application/json" \

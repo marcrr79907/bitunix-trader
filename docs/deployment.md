@@ -19,8 +19,8 @@ verifies whatever autodeploy shipped.
 
 **Target mode — build-once.** Once `RAILWAY_TOKEN_STAGING` / `RAILWAY_TOKEN_PROD`
 exist, the image-deploy step activates automatically and ships the immutable
-GHCR image. Then **disable Railway autodeploy** on `web`, `worker`, `scheduler`
-or the two deploys race.
+GHCR image. Then **disable Railway autodeploy** on `web`, `worker`, `scheduler`,
+`cron-backfill`, `cron-prune` or the two deploys race.
 
 ## Pipeline
 
@@ -30,9 +30,9 @@ or the two deploys race.
 2. **Publish** — on a successful gate, CI builds the image and pushes it to
    GHCR as `ghcr.io/marcr79907/bitunix-trader:<git-sha>`. The deployed artifact
    is exactly the one that passed CI.
-3. **Deploy** — CD points each service (`web`, `worker`, `scheduler`) at that
-   immutable image tag via the Railway GraphQL API, using a project token
-   scoped to one environment.
+3. **Deploy** — CD points each service (`web`, `worker`, `scheduler`,
+   `cron-backfill`, `cron-prune`) at that immutable image tag via the Railway
+   GraphQL API, using a project token scoped to one environment.
 4. **Smoke (L3)** — CD polls `<URL>/healthz` until it returns 200 (or fails).
 
 A production tag must be strict semver (`vX.Y.Z`) and its commit must be an
@@ -71,6 +71,46 @@ environment, not the account.
      `ALLOWED_HOSTS=.up.railway.app,.railway.internal`.
 3. The image source is set by CD on each run; no manual image pinning needed.
 
+## Cron services (`cron-backfill`, `cron-prune`)
+
+Scheduled batch work runs as **Railway native cron services** — container-
+decoupled from `web`/`worker`/`scheduler`, each booting only to run one
+`manage.py` command and exit. Railway cron runs the container on the schedule;
+the command must terminate, so these services MUST NOT run gunicorn, run
+migrations, connect Redis, or bind a port.
+
+| Service | Cron schedule | Start command |
+|---|---|---|
+| `cron-backfill` | `0 * * * *` (hourly) | `python web/manage.py backfill_candles --max-pages 3000` |
+| `cron-prune` | `0 3 * * *` (daily, 03:00) | `python web/manage.py prune_snapshots --older-than 7` |
+
+Both use the production env: `DJANGO_SETTINGS_MODULE=config.settings.prod`,
+`SECRET_KEY`, `CREDENTIALS_FERNET_KEY`, `DATABASE_URL=${{Postgres.DATABASE_URL}}`,
+`DEBUG=false`, `ALLOWED_HOSTS=...`. Do **not** set `PORT`, `REDIS_URL`, a
+gunicorn command, or migrations: `web` is the single migrator and runs against
+the current schema.
+
+**These services must be created in the Railway dashboard** (an ops step; the
+repo only ships the commands, the CD loop entry, and this doc — there is no
+`railway cron` CLI). Create both from the repo image, set the start command and
+Cron Schedule, set the env above, disable GitHub autodeploy on both, then
+trigger each once and confirm its logs.
+
+### Why `--max-pages` and convergence
+
+A full candle backfill is deep (≈9.4k pages at 5m; ≈6.3k for the recent span).
+`--max-pages 3000` bounds each run to a few minutes, far under any platform
+kill window; the command exits cleanly mid-series. The next hourly run resumes
+from `Min(time)` and pulls the frontier forward, so after ~2–3 runs the store
+is caught up and each subsequent run is near-instant. A run without
+`--max-pages` paginates to exhaustion (backward compatible).
+
+### Retention policy
+
+- `FundingSnapshot` / `TickerSnapshot` (30s ticks): **7-day window**, enforced
+  only by `cron-prune` (≈11,520 rows/table/day → steady state ≈80,640/table).
+- `Candle`: **indefinite retention** — `prune_snapshots` never touches it.
+
 ## Why `/healthz` bypasses host validation
 
 Railway's internal healthcheck connects to the container's private IP
@@ -106,8 +146,10 @@ global `trading_candle` table. Each cycle fetches only the just-closed candle
 
 Steady-state growth ≈ **1,709 rows/day** across all intervals and symbols. A
 full one-time backfill (`manage.py backfill_candles`) is ≈ **1.87M rows**
-(~3y × 4 symbols). No prune is scheduled — retention is tracked separately
-(issue #45).
+(~3y × 4 symbols); the hourly `cron-backfill` converges it over a few runs.
+`Candle` has **indefinite retention** — no prune touches it. The 30s tick
+tables (`FundingSnapshot`/`TickerSnapshot`) are bounded to 7 days by the daily
+`cron-prune` job (see above).
 
 ## Known limits (GitHub Free, private repo)
 
