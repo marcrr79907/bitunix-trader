@@ -41,23 +41,62 @@ def _now_ms() -> int:
 
 
 def run(
-    client, symbols, intervals, start, end, dry_run, sleep, out, delay=DEFAULT_SLEEP
+    client,
+    symbols,
+    intervals,
+    start,
+    end,
+    dry_run,
+    sleep,
+    out,
+    delay=DEFAULT_SLEEP,
+    max_pages=None,
 ) -> int:
-    """Backfill every (symbol, interval); return the number of rows persisted."""
+    """Backfill every (symbol, interval); return the number of rows persisted.
+
+    ``max_pages`` caps pages fetched across ALL series (one shared budget). A
+    bounded run stops mid-series and returns what it persisted; the next run
+    resumes from ``Min(time)`` and converges. ``None`` (default) is unlimited.
+    """
     start_ms = _to_ms(start)
     end_ms = _to_ms(end)
     total = 0
+    used = 0
     for symbol in symbols:
         for interval in intervals:
-            total += _backfill_series(
-                client, symbol, interval, start_ms, end_ms, dry_run, sleep, out, delay
+            remaining = None if max_pages is None else max_pages - used
+            if remaining is not None and remaining <= 0:
+                out("budget exhausted")
+                return total
+            persisted, spent = _backfill_series(
+                client,
+                symbol,
+                interval,
+                start_ms,
+                end_ms,
+                dry_run,
+                sleep,
+                out,
+                delay,
+                remaining,
             )
+            total += persisted
+            used += spent
     return total
 
 
 def _backfill_series(
-    client, symbol, interval, start_ms, end_ms, dry_run, throttle, out, delay
-) -> int:
+    client,
+    symbol,
+    interval,
+    start_ms,
+    end_ms,
+    dry_run,
+    throttle,
+    out,
+    delay,
+    page_budget,
+) -> tuple[int, int]:
     series = f"{symbol} {interval}"
     oldest = Candle.objects.filter(symbol=symbol, interval=interval).aggregate(
         Min("time")
@@ -68,7 +107,11 @@ def _backfill_series(
         cursor = end_ms if end_ms is not None else _now_ms()
 
     persisted = 0
+    pages = 0
     while True:
+        if page_budget is not None and pages >= page_budget:
+            out(f"{series}: budget exhausted after {pages} pages")
+            break
         try:
             rows = client.kline(symbol, interval, PAGE_LIMIT, end_time=cursor)
         except (BitunixError, requests.RequestException) as exc:
@@ -77,6 +120,7 @@ def _backfill_series(
             break
         if not rows:
             break
+        pages += 1
         if start_ms is not None:
             rows = [r for r in rows if r["time"] * 1000 >= start_ms]
             if not rows:
@@ -110,7 +154,7 @@ def _backfill_series(
             break
         throttle(delay)
     out(f"{series}: done persisted={persisted}")
-    return persisted
+    return persisted, pages
 
 
 class Command(BaseCommand):
@@ -125,6 +169,7 @@ class Command(BaseCommand):
         parser.add_argument("--end", default=None)
         parser.add_argument("--sleep", type=float, default=DEFAULT_SLEEP)
         parser.add_argument("--dry-run", action="store_true")
+        parser.add_argument("--max-pages", type=int, default=None, dest="max_pages")
 
     def handle(self, *args, **options):
         symbols = options["symbols"] or SYMBOLS
@@ -139,5 +184,6 @@ class Command(BaseCommand):
             sleep=time.sleep,
             out=self.stdout.write,
             delay=options["sleep"],
+            max_pages=options["max_pages"],
         )
         self.stdout.write(f"backfill done: {total} rows")

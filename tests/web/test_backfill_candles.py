@@ -81,8 +81,34 @@ def _run(client, series_intervals=("5m",), **overrides):
         dry_run=overrides.get("dry_run", False),
         sleep=sleep,
         out=out,
+        max_pages=overrides.get("max_pages"),
     )
     return persisted, sleep, out
+
+
+class PagedClient:
+    """Stub serving a finite pool of candles, ``per_page`` rows per fetch."""
+
+    def __init__(self, times: list[int], per_page: int = 1):
+        self._times = sorted(times, reverse=True)
+        self._per_page = per_page
+        self.calls: list[tuple[str, str, int, int | None]] = []
+
+    def kline(self, symbol, interval, limit=100, start_time=None, end_time=None):
+        self.calls.append((symbol, interval, limit, end_time))
+        upper = end_time // 1000 if end_time is not None else 10**12
+        chosen = [t for t in self._times if t <= upper][: self._per_page]
+        return [
+            {
+                "time": t,
+                "open": 1.0,
+                "high": 2.0,
+                "low": 0.5,
+                "close": 1.5,
+                "quote_vol": None,
+            }
+            for t in chosen
+        ]
 
 
 @pytest.mark.django_db
@@ -262,3 +288,76 @@ def test_call_command_wires_bitunix_client(monkeypatch):
     assert client.calls[0][1] == "5m"
     # CLI defaults the page limit to the command constant.
     assert client.calls[0][2] == backfill_candles.PAGE_LIMIT
+
+
+@pytest.mark.django_db
+def test_backfill_max_pages_stops_after_exactly_n_pages():
+    # 20 candles, 1 per page: without a budget it would take 21 fetches.
+    times = [_ts(14, h) for h in range(20)]
+    client = PagedClient(times, per_page=1)
+
+    persisted, _, out = _run(client, max_pages=3, end="2023-11-15")
+
+    assert len(client.calls) == 3
+    assert persisted == 3
+    assert any("budget exhausted" in line for line in out.lines)
+
+
+@pytest.mark.django_db
+def test_backfill_budget_counts_across_intervals_shared():
+    client = PagedClient([_ts(14), _ts(14, 1)], per_page=1)
+
+    _, _, _ = _run(client, series_intervals=("5m", "1h"), max_pages=2)
+
+    # Budget spent on the first series; the second is never fetched.
+    intervals_hit = [c[1] for c in client.calls]
+    assert intervals_hit == ["5m", "5m"]
+
+
+@pytest.mark.django_db
+def test_backfill_second_run_without_budget_converges():
+    times = [_ts(14, h) for h in range(6)]
+    client = PagedClient(times, per_page=1)
+
+    first, _, _ = _run(client, max_pages=2, end="2023-11-15")
+    assert first == 2
+    assert Candle.objects.count() == 2
+
+    # Fresh bounded run resumes from Min(time) and finishes the series.
+    second, _, _ = _run(PagedClient(times, per_page=1), end="2023-11-15")
+    assert second == 4
+    assert Candle.objects.count() == 6
+
+
+@pytest.mark.django_db
+def test_backfill_no_max_pages_exhausts_depth():
+    times = [_ts(14, h) for h in range(5)]
+    client = PagedClient(times, per_page=2)
+
+    persisted, _, _ = _run(client, end="2023-11-15")
+
+    assert persisted == 5
+    assert Candle.objects.count() == 5
+    # 3 data pages + 1 terminating empty page.
+    assert len(client.calls) == 4
+
+
+@pytest.mark.django_db
+def test_call_command_wires_max_pages(monkeypatch):
+    from trading.management.commands import backfill_candles
+
+    times = [_ts(14, h) for h in range(10)]
+    client = PagedClient(times, per_page=1)
+    monkeypatch.setattr(backfill_candles, "BitunixClient", lambda: client)
+
+    call_command(
+        "backfill_candles",
+        symbols=["BTCUSDT"],
+        intervals=["5m"],
+        end="2023-11-15",
+        sleep=0,
+        max_pages=3,
+    )
+
+    assert len(client.calls) == 3
+    assert Candle.objects.count() == 3
