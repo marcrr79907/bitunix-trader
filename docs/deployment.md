@@ -89,6 +89,26 @@ validation; every other route keeps strict validation.
 Migrations run on every `web` boot. Keep schema changes backward-compatible
 (expand/contract) so a rollback to the previous image does not break the DB.
 
+## Candle store volumetry
+
+The worker persists closed OHLC candles for every symbol × interval
+(`trading.candles.CANDLE_INTERVALS`: 5m, 15m, 1h, 2h, 4h, 1d, 1w, 1M) into the
+global `trading_candle` table. Each cycle fetches only the just-closed candle
+(`limit=2`), so growth is bounded and idempotent.
+
+| Interval | bars/sym/yr | ×4 sym/yr | Interval | bars/sym/yr | ×4 sym/yr |
+|---|---|---|---|---|---|
+| 5m | 105,120 | 420,480 | 1d | 365 | 1,460 |
+| 15m | 35,040 | 140,160 | 1w | 52 | 208 |
+| 1h | 8,760 | 35,040 | 1M | 12 | 48 |
+| 2h | 4,380 | 17,520 | **Total** | **155,919** | **623,676** |
+| 4h | 2,190 | 8,760 | | | |
+
+Steady-state growth ≈ **1,709 rows/day** across all intervals and symbols. A
+full one-time backfill (`manage.py backfill_candles`) is ≈ **1.87M rows**
+(~3y × 4 symbols). No prune is scheduled — retention is tracked separately
+(issue #45).
+
 ## Known limits (GitHub Free, private repo)
 
 Branch protection, tag protection and environment protection rules require

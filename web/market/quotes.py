@@ -27,11 +27,17 @@ INTERVALS = (
 )
 
 
+CHART_KEYS = ("time", "open", "high", "low", "close")
+
+
 def get_kline_payload(client, symbol: str, interval: str, limit: int) -> dict:
     candles = sorted(
         {c["time"]: c for c in client.kline(symbol, interval, limit)}.values(),
         key=lambda c: c["time"],  # dedupe by time (last wins) + ascending
     )
+    # Strip to exactly the chart's five keys: the client's quote_vol must never
+    # reach the response (delta spec R1/R3).
+    candles = [{k: c[k] for k in CHART_KEYS} for c in candles]
     times = [c["time"] for c in candles]
     closes = [c["close"] for c in candles]
     return {

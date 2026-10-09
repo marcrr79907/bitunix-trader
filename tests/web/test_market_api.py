@@ -43,6 +43,11 @@ def _row(t, o, h, lo, c):
     }
 
 
+def _row_with_quote_vol(t, o, h, lo, c, qv):
+    """Upstream now carries quoteVol; the payload seam must strip it."""
+    return {**_row(t, o, h, lo, c), "quote_vol": float(qv)}
+
+
 def test_payload_dedupes_and_sorts_ascending_last_wins():
     from market.quotes import get_kline_payload
 
@@ -57,6 +62,23 @@ def test_payload_dedupes_and_sorts_ascending_last_wins():
     times = [c["time"] for c in payload["candles"]]
     assert times == [1700000000, 1700000060]  # ascending, unique
     assert payload["candles"][0]["close"] == 50.0  # LAST duplicate wins
+
+
+def test_payload_strips_quote_vol_to_exactly_five_keys():
+    from market.quotes import get_kline_payload
+
+    rows = [
+        _row_with_quote_vol(1700000000, "10", "10", "10", "10", "123456"),
+        _row_with_quote_vol(1700000060, "1", "1", "1", "2", "999"),
+    ]
+
+    payload = get_kline_payload(StubClient(rows), "BTCUSDT", "1m", 100)
+
+    assert payload["candles"] == [
+        {"time": 1700000000, "open": 10.0, "high": 10.0, "low": 10.0, "close": 10.0},
+        {"time": 1700000060, "open": 1.0, "high": 1.0, "low": 1.0, "close": 2.0},
+    ]
+    assert all("quote_vol" not in c for c in payload["candles"])
 
 
 def test_payload_overlays_are_time_value_pairs_without_nulls():
@@ -125,7 +147,11 @@ def _auth_user(db):
 
 
 def _upstream_rows(n=30):
-    return [_row(t * 60, str(t), str(t + 1), str(t - 1), str(t)) for t in range(n)]
+    # Upstream carries quoteVol; the endpoint must strip it to five keys.
+    return [
+        _row_with_quote_vol(t * 60, str(t), str(t + 1), str(t - 1), str(t), str(t))
+        for t in range(n)
+    ]
 
 
 def test_endpoint_anonymous_redirects_to_login():

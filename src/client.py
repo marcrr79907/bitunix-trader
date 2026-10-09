@@ -123,8 +123,19 @@ class BitunixClient:
         # Endpoint ignores `symbols` and returns every pair; filter client-side.
         return self.get(f"{PUBLIC_PREFIX}/funding_rate/batch")
 
-    def kline(self, symbol: str, interval: str = "1m", limit: int = 100) -> list[dict]:
+    def kline(
+        self,
+        symbol: str,
+        interval: str = "1m",
+        limit: int = 100,
+        start_time: int | None = None,
+        end_time: int | None = None,
+    ) -> list[dict]:
         params = {"symbol": symbol, "interval": interval, "limit": limit}
+        if start_time is not None:
+            params["startTime"] = start_time
+        if end_time is not None:
+            params["endTime"] = end_time
         rows = self.get(f"{PUBLIC_PREFIX}/kline", params)  # unsigned public GET
         return [
             {
@@ -133,6 +144,7 @@ class BitunixClient:
                 "high": float(r["high"]),
                 "low": float(r["low"]),
                 "close": float(r["close"]),
+                "quote_vol": float(r["quoteVol"]) if r.get("quoteVol") else None,
             }
             for r in (rows or [])
         ]

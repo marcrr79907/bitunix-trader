@@ -2,9 +2,11 @@
 
 ``kline()`` is a PUBLIC unsigned GET against ``/api/v1/futures/market/kline``:
 no signing headers hit the wire. Mapping happens once at the seam — ``time``
-ms → unix-seconds int, prices → float. Empty upstream returns ``[]``; HTTP or
-API failure surfaces as ``BitunixError``. ``requests.get`` is monkeypatched;
-no Django.
+ms → unix-seconds int, prices → float, ``quoteVol`` → ``quote_vol`` float
+(missing → ``None``). Optional ``start_time``/``end_time`` pass through as
+epoch-ms ``startTime``/``endTime`` and are omitted when ``None``. Empty
+upstream returns ``[]``; HTTP or API failure surfaces as ``BitunixError``.
+``requests.get`` is monkeypatched; no Django.
 """
 
 from __future__ import annotations
@@ -22,6 +24,8 @@ ROW = {
     "low": "49000",
     "close": "50500",
 }
+
+ROW_WITH_QUOTE_VOL = {**ROW, "quoteVol": "3880565.68"}
 
 
 class FakeResponse:
@@ -92,9 +96,56 @@ def test_kline_maps_ms_to_unix_seconds_and_floats(monkeypatch):
             "high": 51000.0,
             "low": 49000.0,
             "close": 50500.0,
+            "quote_vol": None,  # ROW carries no quoteVol → None, no KeyError
         }
     ]
     assert isinstance(candles[0]["time"], int)
+
+
+def test_kline_maps_quote_vol_when_present(monkeypatch):
+    _capture_get(
+        monkeypatch,
+        FakeResponse(
+            payload={"code": 0, "data": [ROW_WITH_QUOTE_VOL], "msg": "Success"}
+        ),
+    )
+
+    candles = BitunixClient().kline("BTCUSDT", "1m", 100)
+
+    assert candles[0]["quote_vol"] == 3880565.68
+    assert isinstance(candles[0]["quote_vol"], float)
+
+
+def test_kline_range_params_pass_through_when_set(monkeypatch):
+    captured = _capture_get(
+        monkeypatch, FakeResponse(payload={"code": 0, "data": [], "msg": "Success"})
+    )
+
+    BitunixClient().kline(
+        "BTCUSDT", "5m", 200, start_time=1_600_000_000_000, end_time=1_700_000_000_000
+    )
+
+    assert captured["kwargs"]["params"] == {
+        "symbol": "BTCUSDT",
+        "interval": "5m",
+        "limit": 200,
+        "startTime": 1_600_000_000_000,
+        "endTime": 1_700_000_000_000,
+    }
+
+
+def test_kline_range_params_omitted_when_none(monkeypatch):
+    captured = _capture_get(
+        monkeypatch, FakeResponse(payload={"code": 0, "data": [], "msg": "Success"})
+    )
+
+    BitunixClient().kline("BTCUSDT", "5m", 200, start_time=None, end_time=None)
+
+    assert captured["kwargs"]["params"] == {
+        "symbol": "BTCUSDT",
+        "interval": "5m",
+        "limit": 200,
+    }
 
 
 def test_kline_api_code_ne_zero_raises(monkeypatch):
@@ -143,12 +194,18 @@ if __name__ == "__main__":
         test_kline_hits_public_path_unsigned,
         test_kline_http_ne_200_raises,
         test_kline_maps_ms_to_unix_seconds_and_floats,
+        test_kline_maps_quote_vol_when_present,
         test_kline_null_data_returns_empty_list,
+        test_kline_range_params_omitted_when_none,
+        test_kline_range_params_pass_through_when_set,
     )
 
     test_kline_hits_public_path_unsigned(None)
     test_kline_defaults_match_spec(None)
     test_kline_maps_ms_to_unix_seconds_and_floats(None)
+    test_kline_maps_quote_vol_when_present(None)
+    test_kline_range_params_pass_through_when_set(None)
+    test_kline_range_params_omitted_when_none(None)
     test_kline_api_code_ne_zero_raises(None)
     test_kline_http_ne_200_raises(None)
     test_kline_empty_data_returns_empty_list(None)
