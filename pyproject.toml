@@ -15,9 +15,12 @@ select = ["E", "F", "I", "UP", "B"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-addopts = "-q"
+addopts = "-q -m 'not e2e'"
 pythonpath = ["web"]
 DJANGO_SETTINGS_MODULE = "config.settings.dev"
+markers = [
+    "e2e: dev-only browser smoke (Playwright); requires `playwright install chromium`, deselected in CI",
+]
 
 [tool.coverage.run]
 # Measure both trees. Per-scope gates are authoritative: the web gate keeps
