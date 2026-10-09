@@ -91,11 +91,18 @@ def main(
     _bootstrap()
     from src.client import BitunixClient
 
+    # ``run_loop`` expects ``stop`` to be a callable predicate. When none is
+    # injected (the deployed path), install signal handlers and pass the
+    # Event's ``is_set`` bound method — passing the Event itself raised
+    # ``TypeError: 'Event' object is not callable`` in production.
+    if stop is None:
+        stop = _install_signal_handlers().is_set
+
     return run_loop(
         client or BitunixClient(),
         symbols,
         iterations,
-        stop or _install_signal_handlers(),
+        stop,
         sleep,
     )
 
