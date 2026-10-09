@@ -38,11 +38,25 @@ def _bootstrap() -> None:
 
 
 def run_once(client, symbols) -> tuple[int, int]:
-    """Fetch one market snapshot and persist it. Returns (funding, ticker) counts."""
+    """Fetch one market snapshot and persist it. Returns (funding, ticker) counts.
+
+    A closed-candle cycle runs AFTER tick ingestion and is isolated: a candle
+    failure must never degrade funding/ticker persistence or kill the loop.
+    The return contract stays ``(funding, ticker)`` for existing callers.
+    """
+    from trading.candles import fetch_closed_candles, persist_candles
     from trading.ingest import fetch_market, persist_market
 
     market = fetch_market(client, symbols)
-    return persist_market(market["funding"], market["tickers"])
+    counts = persist_market(market["funding"], market["tickers"])
+    try:
+        n_candles = persist_candles(fetch_closed_candles(client, symbols))
+        logger.info("candle cycle ok persisted=%d", n_candles)
+    except (
+        Exception
+    ) as exc:  # ponytail: broad by spec — candle failure must never kill ticks
+        logger.warning("candle cycle failed: %s", exc)
+    return counts
 
 
 def run_loop(client, symbols=None, iterations=None, stop=None, sleep=time.sleep) -> int:

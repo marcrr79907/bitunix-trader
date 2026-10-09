@@ -12,6 +12,8 @@ shorter months; backfill covers history).
 
 from __future__ import annotations
 
+import time
+
 from trading.models import Candle
 
 INTERVAL_SECONDS = {
@@ -26,6 +28,50 @@ INTERVAL_SECONDS = {
 }
 
 CANDLE_INTERVALS = tuple(INTERVAL_SECONDS)
+
+
+def _now_seconds() -> int:
+    """Wall clock in UNIX seconds (seam for deterministic tests)."""
+    return int(time.time())
+
+
+def is_closed(candle_time: int, interval: str, now: int) -> bool:
+    """True when the candle's bucket window has fully elapsed.
+
+    ``candle_time`` is the bucket OPEN in UNIX seconds. A fixed interval is
+    closed once ``now`` reaches open + span, so the still-forming candle is
+    never persisted.
+    """
+    return now >= candle_time + INTERVAL_SECONDS[interval]
+
+
+def fetch_closed_candles(client, symbols, now=None) -> list[dict]:
+    """Fetch the just-closed candle per symbol × interval.
+
+    ``limit=2`` returns the forming candle plus the one that just closed; only
+    closed buckets are kept. Each row is tagged with its ``symbol``/``interval``
+    so the flat list is directly persistable.
+    """
+    now = _now_seconds() if now is None else now
+    closed: list[dict] = []
+    for symbol in symbols:
+        for interval in CANDLE_INTERVALS:
+            rows = client.kline(symbol, interval, 2)
+            for row in rows:
+                if is_closed(row["time"], interval, now):
+                    closed.append(
+                        {
+                            "symbol": symbol,
+                            "interval": interval,
+                            "time": row["time"],
+                            "open": row["open"],
+                            "high": row["high"],
+                            "low": row["low"],
+                            "close": row["close"],
+                            "quote_vol": row["quote_vol"],
+                        }
+                    )
+    return closed
 
 
 def persist_candles(rows) -> int:
