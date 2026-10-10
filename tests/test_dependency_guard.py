@@ -108,6 +108,12 @@ def test_guard_passes_real_tree():
     assert _offenders([WEB, SRC], _allowlist()) == []
 
 
+def test_guard_actually_scans_the_tree():
+    # A guard that scans nothing passes vacuously; assert it saw real files.
+    scanned = sum(1 for root in (WEB, SRC) for _ in root.rglob("*.py"))
+    assert scanned > 10, f"guard scanned only {scanned} files"
+
+
 # --- Allowed roots are not flagged ----------------------------------------
 
 
