@@ -197,6 +197,14 @@ def test_fetch_trades_paginates(user_a):
     assert Trade.for_user(user_a).count() == 150
 
 
+@pytest.mark.django_db
+def test_fetch_trades_empty_first_page_stops(user_a):
+    # L124: an empty first page breaks the loop without persisting.
+    result = sync_user(user_a, StubClient(trades=[]), ts=TS)
+    assert result["trades"] == 0
+    assert Trade.for_user(user_a).count() == 0
+
+
 # --- R3/R13: the module never reaches decrypt ------------------------------
 
 
