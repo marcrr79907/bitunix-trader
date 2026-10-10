@@ -61,6 +61,32 @@ The worker MUST run a real loop polling on `INGEST_POLL_SECONDS` (default 30), b
 
 - GIVEN the stop flag is set, WHEN the loop reaches the next boundary, THEN it exits between cycles and returns 0
 
+### Requirement: R4b — Isolated private-sync step in the cycle
+
+The worker cycle MUST run a private-data-sync step AFTER ticks + candles, in its
+own isolated `try/except` (the candle-cycle pattern). A private-sync failure
+MUST NOT degrade global ingestion nor kill the loop, and the `(funding, ticker)`
+return contract MUST be unchanged. With no active credentials the step MUST be a
+no-op and the cycle MUST still succeed.
+
+#### Scenario: Cycle still ingests beside the private step
+
+- GIVEN a stub market client and the private step
+- WHEN `run_once` runs
+- THEN funding/ticker counts are returned and the private step ran
+
+#### Scenario: Private failure is isolated
+
+- GIVEN the private-sync step raising
+- WHEN `run_once` returns
+- THEN the `(funding, ticker)` contract is preserved and the loop continues
+
+#### Scenario: No active credentials is a no-op
+
+- GIVEN no active credentials
+- WHEN the cycle runs
+- THEN the private step performs no fetch and the cycle returns 0 from `run_loop`
+
 ### Requirement: R5 — Scheduler stays a stub
 
 `web/scheduler.py` MUST remain boot-only; any shared helper (`idle_loop`) MUST stay compatible so both services boot.

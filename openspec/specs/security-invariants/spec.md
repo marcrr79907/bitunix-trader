@@ -71,7 +71,12 @@ No secret (API keys, `SECRET_KEY`, database or Redis credentials) MAY be committ
 
 ### Requirement: R13 — API keys encrypted (Fernet)
 
-User exchange API keys MUST be stored encrypted with Fernet, and decryption MUST occur only in the worker trust zone, never in request-serving code paths. Enforcement is now active: the credential scanner's request path MUST include the new data app, so decrypt-in-request-path is caught.
+User exchange API keys MUST be stored encrypted with Fernet, and decryption MUST
+occur only in the worker trust zone, never in request-serving code paths.
+Enforcement is active AND consumed: `web/trading/sync.py` MUST NOT import or call
+`decrypt` (the credential scanner's request path includes `trading`), while
+`web/worker.py` (outside every scanned request path) owns decryption of ACTIVE
+credentials.
 
 #### Scenario: Keys stored encrypted
 
@@ -81,7 +86,7 @@ User exchange API keys MUST be stored encrypted with Fernet, and decryption MUST
 
 #### Scenario: Decryption confined to worker
 
-- GIVEN the web request-serving code paths
+- GIVEN the web request-serving code paths (including `web/trading/sync.py`)
 - WHEN inspected for plaintext key material
 - THEN no decryption of user credentials occurs there
 
@@ -91,9 +96,26 @@ User exchange API keys MUST be stored encrypted with Fernet, and decryption MUST
 - WHEN a fixture there calls `credentials.decrypt`
 - THEN the scanner reports it as an offender
 
+#### Scenario: sync.py stays decrypt-free
+
+- GIVEN `web/trading/sync.py` and a scanner that flags import, call, bare name, and `getattr("decrypt")`
+- WHEN the scanner scans the request path
+- THEN `sync.py` is not reported as an offender
+
+#### Scenario: Worker decrypts an active credential
+
+- GIVEN an ACTIVE credential and the worker private-sync step
+- WHEN the step runs
+- THEN it calls `credentials.decrypt` on the encrypted columns and the scanner remains green
+
 ### Requirement: R14 — Per-user isolation
 
-User-owned records MUST be scoped to their owner and MUST NOT be readable across accounts. Cross-user access MUST be tested (A ≠ B). Enforcement is via the `for_user(user)` ownership contract plus a scanner that flags unscoped queries on owned models in request-serving code. This holds only while access routes through `for_user` (Django has no row-level security).
+User-owned records MUST be scoped to their owner and MUST NOT be readable across
+accounts. Cross-user access MUST be tested (A ≠ B). Enforcement is via the
+`for_user(user)` ownership contract plus a scanner that flags unscoped queries on
+owned models in request-serving code; `OWNED_MODELS` MUST include
+`PositionSnapshot`, `AccountSnapshot`, and `Trade`. This holds only while access
+routes through `for_user` (Django has no row-level security).
 
 #### Scenario: No cross-user read
 
@@ -104,7 +126,7 @@ User-owned records MUST be scoped to their owner and MUST NOT be readable across
 #### Scenario: for_user denies cross-user lookup
 
 - GIVEN an owned record belonging to A
-- WHEN `for_user(B).get(pk=record.pk)` is called for either owned model
+- WHEN `for_user(B).get(pk=record.pk)` is called for any owned model (including the three new ones)
 - THEN it raises `DoesNotExist`
 
 #### Scenario: Unscoped query guard
