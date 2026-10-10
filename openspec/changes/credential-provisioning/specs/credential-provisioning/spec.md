@@ -11,22 +11,25 @@ columns stay ciphertext; the admin never decrypts. New capability — no prior s
 ### Requirement: CP.1 — Staff-gated admin surface
 
 `ExchangeCredential` MUST be manageable via the Django admin. Access MUST require
-`is_staff` (delegated to Django admin auth; no new auth path). The admin MAY list
-all users' credentials as a **staff trusted surface** — a deliberate operator
-scope analogous to the worker trusted zone (R14.4). This is NOT the per-user
-`for_user` self-service rule; it MUST be documented as a trusted-zone decision.
+`is_staff` **AND** the Django admin model permissions (or superuser) — Django's
+standard admin gate, delegated, no new auth path. The gate is intentionally
+fail-closed: a bare `is_staff=True` user without model permissions is denied
+(403). The admin MAY list all users' credentials as a **staff trusted surface** —
+a deliberate operator scope analogous to the worker trusted zone (R14.4). This is
+NOT the per-user `for_user` self-service rule; it MUST be documented as a
+trusted-zone decision.
 
-#### Scenario: Staff can reach the credential admin
+#### Scenario: Staff with admin access can reach the credential admin
 
-- GIVEN a staff user
+- GIVEN a user with admin access (superuser, or `is_staff` + model permissions)
 - WHEN the credential admin changelist is requested
 - THEN it responds successfully
 
-#### Scenario: Non-staff is denied
+#### Scenario: Non-staff (or staff without permissions) is denied
 
-- GIVEN an authenticated non-staff user
+- GIVEN an authenticated user who is non-staff, or staff without model permissions
 - WHEN the credential admin URL is requested
-- THEN the response redirects to login (302) and exposes no credential data
+- THEN access is denied (redirect to login, or 403) and no credential data is exposed
 
 ### Requirement: CP.2 — Write-only plaintext, ciphertext at rest
 
