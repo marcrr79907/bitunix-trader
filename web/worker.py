@@ -56,7 +56,45 @@ def run_once(client, symbols) -> tuple[int, int]:
         Exception
     ) as exc:  # ponytail: broad by spec — candle failure must never kill ticks
         logger.warning("candle cycle failed: %s", exc)
+    try:
+        n_users = run_private_sync()
+        logger.info("private sync ok users=%d", n_users)
+    except (
+        Exception
+    ) as exc:  # ponytail: broad by spec — private failure must never kill ticks
+        logger.warning("private sync failed: %s", exc)
     return counts
+
+
+def run_private_sync(client_factory=None) -> int:
+    """Trusted-zone private sync: decrypt active creds, fetch, persist (R4).
+
+    ``worker.py`` is outside the credential scanner's request path and the
+    owned-model guard, so it MAY read ``ExchangeCredential`` unscoped and call
+    ``decrypt``. Each user is isolated: one credential's failure is logged and
+    the loop continues (R5). Returns the number of users synced.
+    """
+    from credentials import decrypt
+    from trading.models import ExchangeCredential
+    from trading.sync import sync_user
+
+    from src.client import BitunixClient
+
+    factory = client_factory or BitunixClient
+    synced = 0
+    for cred in ExchangeCredential.objects.filter(is_active=True):
+        try:
+            client = factory(
+                decrypt(cred.api_key_encrypted),
+                decrypt(cred.api_secret_encrypted),
+            )
+            sync_user(cred.user, client)
+            synced += 1
+        except (
+            Exception
+        ) as exc:  # ponytail: per-user isolation by spec (R5) — never abort peers
+            logger.warning("private sync failed user=%s: %s", cred.user_id, exc)
+    return synced
 
 
 def run_loop(client, symbols=None, iterations=None, stop=None, sleep=time.sleep) -> int:

@@ -142,3 +142,66 @@ class Watchlist(UserOwnedModel):
         constraints = [
             models.UniqueConstraint(fields=["user", "symbol"], name="uniq_user_symbol")
         ]
+
+
+class PositionSnapshot(UserOwnedModel):
+    """Per-user open-position snapshot (R1). Mirrors ``src.monitor.position_row``.
+
+    ``ts`` is the poll instant (UTC); ``(user, symbol, ts)`` makes a re-poll the
+    same instant a no-op. All numeric fields are nullable because the API may
+    omit them and a real zero must never be confused with a missing value.
+    """
+
+    symbol = models.CharField(max_length=32)
+    side = models.CharField(max_length=8, null=True)
+    qty = models.FloatField(null=True)
+    avg_open = models.FloatField(null=True)
+    leverage = models.IntegerField(null=True)
+    liq_price = models.FloatField(null=True)
+    upnl = models.FloatField(null=True)
+    margin_rate = models.FloatField(null=True)
+    ts = models.DateTimeField()
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=["user", "symbol", "ts"], name="uniq_position_user_symbol_ts"
+            )
+        ]
+
+
+class AccountSnapshot(UserOwnedModel):
+    """Per-user account balance snapshot (R1). Unique ``(user, ts)``."""
+
+    available = models.FloatField(null=True)
+    cross_upnl = models.FloatField(null=True)
+    ts = models.DateTimeField()
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(fields=["user", "ts"], name="uniq_account_user_ts")
+        ]
+
+
+class Trade(UserOwnedModel):
+    """Per-user history trade (R1). Mirrors ``src.journal.trade_row``.
+
+    ``trade_id`` is the exchange id; uniqueness is per user so two users may
+    share one exchange trade id. ``order_id`` is intentionally not stored.
+    """
+
+    trade_id = models.CharField(max_length=64)
+    symbol = models.CharField(max_length=32)
+    side = models.CharField(max_length=8, null=True)
+    qty = models.FloatField(null=True)
+    price = models.FloatField(null=True)
+    fee = models.FloatField(null=True)
+    realized_pnl = models.FloatField(null=True)
+    ctime = models.BigIntegerField(null=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=["user", "trade_id"], name="uniq_trade_user_trade_id"
+            )
+        ]

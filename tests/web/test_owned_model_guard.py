@@ -14,10 +14,14 @@ from pathlib import Path
 import pytest
 
 WEB = Path(__file__).resolve().parent.parent.parent / "web"
-REQUEST_PATH = (WEB / "config", WEB / "accounts", WEB / "trading")
+# Mirrors the credential scanner's request path: every request-serving app is
+# scanned, ``web/worker.py`` is not (trusted-zone exception, R14.4).
+REQUEST_PATH = (WEB / "config", WEB / "accounts", WEB / "trading", WEB / "market")
 SCANNER_FILE = Path(__file__).resolve()
 
-OWNED_MODELS = frozenset({"ExchangeCredential", "Watchlist"})
+OWNED_MODELS = frozenset(
+    {"ExchangeCredential", "Watchlist", "PositionSnapshot", "AccountSnapshot", "Trade"}
+)
 UNSCOPED_VERBS = frozenset(
     {
         "all",
@@ -74,6 +78,38 @@ def test_scanner_flags_an_unscoped_all_on_the_other_model(tmp_path):
     (tmp_path / "leaky.py").write_text("Watchlist.objects.all()\n")
     (tmp_path / "clean.py").write_text("x = 1\n")
     assert _unscoped_owned_query_offenders(tmp_path) == [str(tmp_path / "leaky.py")]
+
+
+@pytest.mark.parametrize(
+    "query",
+    [
+        "PositionSnapshot.objects.all()",
+        "PositionSnapshot.objects.filter(user=user_a)",
+        "AccountSnapshot.objects.get(pk=1)",
+        "AccountSnapshot.objects.exclude(ts=ts)",
+        "Trade.objects.first()",
+        "Trade.objects.get_or_create(user=user_a, trade_id='T1')",
+    ],
+)
+def test_scanner_flags_the_private_models(tmp_path, query):
+    # R14.3: the 3 new owned models are scoped exactly like credentials/watchlist.
+    (tmp_path / "leaky.py").write_text(f"{query}\n")
+    (tmp_path / "clean.py").write_text("PositionSnapshot.for_user(user_a)\n")
+    assert _unscoped_owned_query_offenders(tmp_path) == [str(tmp_path / "leaky.py")]
+
+
+def test_scanner_allows_for_user_on_the_private_models(tmp_path):
+    (tmp_path / "scoped.py").write_text(
+        "PositionSnapshot.for_user(user_a)\n"
+        "AccountSnapshot.for_user(user_a)\n"
+        "Trade.for_user(user_a)\n"
+    )
+    assert _unscoped_owned_query_offenders(tmp_path) == []
+
+
+def test_request_path_covers_the_market_app():
+    # R14.3 spirit: every request-serving app stays inside the scanned path.
+    assert WEB / "market" in REQUEST_PATH
 
 
 @pytest.mark.parametrize(
