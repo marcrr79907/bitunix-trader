@@ -27,6 +27,9 @@ markers = [
 # the 85% floor on `web/*`, while diff-cover protects changed `src/` lines.
 source = ["web", "src"]
 omit = [
+    # web/manage.py's contract is tests/web/test_manage_boot.py (subprocess
+    # boot, stronger than line coverage — the child process is not
+    # instrumented, so dropping the omit would only add uncovered lines).
     "web/manage.py",
     "web/config/wsgi.py",
     "web/config/asgi.py",
