@@ -15,8 +15,9 @@ Three models MUST inherit `UserOwnedModel` (FK `user` CASCADE, `for_user`) and
 be idempotent via a `(user, …)` `UniqueConstraint`:
 
 - `PositionSnapshot` (mirrors `position_row`): `symbol` Char(32); `side`
-  Char(8) null; `qty`/`avg_open`/`leverage`/`liq_price`/`upnl`/`margin_rate`
-  Float null; `ts` DateTime(UTC). Unique `(user, symbol, ts)`.
+  Char(8) null; `qty`/`avg_open`/`liq_price`/`upnl`/`margin_rate` Float null;
+  `leverage` Integer null (x10/x20…); `ts` DateTime(UTC). Unique
+  `(user, symbol, ts)`.
 - `AccountSnapshot`: `available`/`cross_upnl` Float null; `ts` DateTime(UTC).
   Unique `(user, ts)`.
 - `Trade` (mirrors `trade_row`, no `order_id`): `trade_id` Char(64); `symbol`

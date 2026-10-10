@@ -18,7 +18,7 @@ Three `UserOwnedModel` subclasses (FK CASCADE, `for_user`), additive migration
 
 | Model | Fields | Unique |
 |-------|--------|--------|
-| `PositionSnapshot` | `symbol` Char(32); `side` Char(8) null; `qty`/`avg_open`/`leverage`/`liq_price`/`upnl`/`margin_rate` Float null; `ts` DateTime | `(user, symbol, ts)` `uniq_position_user_symbol_ts` |
+| `PositionSnapshot` | `symbol` Char(32); `side` Char(8) null; `qty`/`avg_open`/`liq_price`/`upnl`/`margin_rate` Float null; `leverage` Integer null; `ts` DateTime | `(user, symbol, ts)` `uniq_position_user_symbol_ts` |
 | `AccountSnapshot` | `available`/`cross_upnl` Float null; `ts` DateTime | `(user, ts)` `uniq_account_user_ts` |
 | `Trade` | `trade_id` Char(64); `symbol` Char(32); `side` Char(8) null; `qty`/`price`/`fee`/`realized_pnl` Float null; `ctime` BigInteger null | `(user, trade_id)` `uniq_trade_user_trade_id` |
 
