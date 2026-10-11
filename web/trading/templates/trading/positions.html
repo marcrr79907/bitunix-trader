@@ -1,0 +1,36 @@
+{% extends "registration/base.html" %}
+
+{% block title %}Positions{% endblock %}
+
+{% block content %}
+<h1>Positions</h1>
+{% if account %}
+<p class="num">Available: <strong>{{ account.available|default:"—" }}</strong>
+   · uPnL cross: <strong>{{ account.cross_upnl|default:"—" }}</strong></p>
+{% endif %}
+{% if rows %}
+<table>
+  <thead>
+    <tr><th>Symbol</th><th>Side</th><th>Qty</th><th>Avg</th><th>Lev</th>
+        <th>Liq</th><th>Dist.</th><th>Margin</th><th>uPnL</th></tr>
+  </thead>
+  <tbody>
+  {% for r in rows %}
+    <tr>
+      <td>{{ r.symbol }}</td>
+      <td>{{ r.side|default:"—" }}</td>
+      <td class="num">{{ r.qty|default:"—" }}</td>
+      <td class="num">{{ r.avg_open|default:"—" }}</td>
+      <td class="num">{{ r.leverage|default:"—" }}</td>
+      <td class="num">{{ r.liq_price|default:"—" }}</td>
+      <td class="num">{% if r.distance is not None %}{{ r.distance|floatformat:1 }}%{% else %}—{% endif %}</td>
+      <td>{% if r.margin_rate is None %}—{% elif r.margin_state == "danger" %}<span class="dn">danger</span>{% else %}ok{% endif %}</td>
+      <td class="num">{% if r.upnl is not None %}{{ r.upnl|floatformat:2 }}{% else %}—{% endif %}</td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% else %}
+<div class="panel"><p>No positions yet. Sync runs in the worker once a credential is active.</p></div>
+{% endif %}
+{% endblock %}
