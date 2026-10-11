@@ -1,0 +1,28 @@
+{% extends "registration/base.html" %}
+
+{% block title %}Journal{% endblock %}
+
+{% block content %}
+<h1>Journal</h1>
+{% if empty %}
+<div class="panel"><p>No trades yet. Sync runs in the worker once a credential is active.</p></div>
+{% else %}
+<div class="panel num">
+  <p>Trades: <strong>{{ trades }}</strong> · Win rate: <strong>{{ win_rate|floatformat:2 }}%</strong>
+     · Net PnL: <strong>{{ net_pnl|floatformat:2 }}</strong></p>
+  <p>Expectancy: <strong>{{ expectancy|floatformat:4 }}</strong>
+     · Profit factor: <strong>{% if profit_factor is not None %}{{ profit_factor|floatformat:2 }}{% else %}∞{% endif %}</strong></p>
+  {% if best %}<p>Best: {{ best.0 }} ({{ best.1|floatformat:2 }}) · Worst: {{ worst.0 }} ({{ worst.1|floatformat:2 }})</p>{% endif %}
+</div>
+{% if per_symbol %}
+<table>
+  <thead><tr><th>Symbol</th><th>Net PnL</th></tr></thead>
+  <tbody>
+  {% for symbol, pnl in per_symbol.items %}
+    <tr><td>{{ symbol }}</td><td class="num">{{ pnl|floatformat:2 }}</td></tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% endif %}
+{% endif %}
+{% endblock %}
