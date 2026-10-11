@@ -119,7 +119,7 @@ Overlay values MUST come from `src/indicators.py` server-side; math MUST NOT be 
 
 ### Requirement: R5 — Live candles over browser WS
 
-Page JS MUST connect to `wss://fapi.bitunix.com/public/`, subscribe `market_kline_<interval>`, update the FORMING candle in place via interval bucketing (no duplicate times), unsubscribe BEFORE subscribing on interval/symbol switch, reconnect with exponential backoff capped at a fixed maximum, resubscribing on reopen. Verified by dev-only E2E assertions, not image diffs. The two live-candle scenarios MUST be driven via `page.route_web_socket` (no live network/CDN); reconnect is accepted as inspection-verified (single pure capped expression).
+Page JS MUST connect to `wss://fapi.bitunix.com/public/`, subscribe `market_kline_<interval>`, update the FORMING candle in place via interval bucketing (no duplicate times), unsubscribe BEFORE subscribing on interval/symbol switch, reconnect with exponential backoff capped at a fixed maximum, resubscribing on reopen. Verified by dev-only E2E assertions, not image diffs. The two live-candle scenarios MUST be driven via `page.route_web_socket` (no live network/CDN); reconnect is accepted as inspection-verified (single pure capped expression). **Consistency (fix #68):** the live path MUST use a single writer (`series.update()`), MUST NOT issue a periodic full-series `setData()`, and the candle bucket timestamp MUST equal the exchange candle `time` (1w = Monday 00:00 UTC, 1M = calendar month start) — the client MUST NOT invent a divergent timeline. Bucket/ordering math MUST live in a pure, framework-free core (`chart-core.js`) exercised by `node --test`.
 
 #### Scenario: Forming candle updates in place
 
@@ -200,7 +200,7 @@ Market pages MUST carry `Content-Security-Policy` allowing `connect-src wss://fa
 
 ### Requirement: R8 — Infinite-scroll history in the chart
 
-`chart.js` MUST detect when the visible logical range nears the left edge and fetch `before=<oldest loaded time>`; on response it MUST prepend older candles+overlays (deduped by `time`, existing newer entry wins), then preserve the viewport by shifting the logical range by the prepended count. It MUST keep a single in-flight guard (no duplicate concurrent loads) and MUST NOT clobber WS live updates. The bucket-close refetch MUST deliberately reset pagination anchors. Verified by dev-only DOM E2E assertions, not image diffs.
+`chart.js` MUST detect when the visible logical range nears the left edge and fetch `before=<oldest loaded time>`; on response it MUST prepend older candles+overlays (deduped by `time`, existing newer entry wins), then preserve the viewport by shifting the logical range by the prepended count. It MUST keep a single in-flight guard (no duplicate concurrent loads) and MUST NOT clobber WS live updates. The bucket-close refetch MUST deliberately reset pagination anchors. Verified by dev-only DOM E2E assertions, not image diffs. **Consistency (fix #68):** pagination MUST use `setData` with a MERGE (never replace), so already-loaded older candles and the live tip are preserved.
 
 #### Scenario: Left-edge scroll loads older page
 
