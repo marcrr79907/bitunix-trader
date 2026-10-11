@@ -1,9 +1,30 @@
 <!DOCTYPE html>
 <html lang="en">
-<head><meta charset="utf-8"><title>{% block title %}Accounts{% endblock %}</title></head>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}bitunix-trader{% endblock %}</title>
+  <link rel="stylesheet" href="{% url 'theme_css' %}">
+  {% block head %}{% endblock %}
+</head>
 <body>
-<main>
-{% block content %}{% endblock %}
-</main>
+  <header class="topbar">
+    <span class="brand">bitunix-trader</span>
+    <nav aria-label="Primary">
+      <a href="{% url 'market_page' %}"{% if request.resolver_match.url_name == 'market_page' %} aria-current="page"{% endif %}>Market</a>
+      <a href="/positions/">Positions</a>
+      <a href="/journal/">Journal</a>
+    </nav>
+    {% if user.is_authenticated %}
+      <span class="whoami">{{ user.email }}</span>
+      <form method="post" action="{% url 'logout' %}">{% csrf_token %}<button type="submit">Log out</button></form>
+    {% else %}
+      <a href="{% url 'login' %}">Log in</a>
+    {% endif %}
+  </header>
+  <main>
+  {% block content %}{% endblock %}
+  </main>
+  {% block scripts %}{% endblock %}
 </body>
 </html>

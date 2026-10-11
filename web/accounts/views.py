@@ -92,3 +92,25 @@ def signup(request: HttpRequest, token: str) -> HttpResponse:
     else:
         form = SignupForm()
     return render(request, "accounts/signup.html", {"form": form, "invite": invite})
+
+
+@require_http_methods(["GET"])
+def theme_css(request: HttpRequest) -> HttpResponse:
+    """Serve the design-system stylesheet same-origin as text/css (public).
+
+    A stylesheet protects nothing; gating it would 302 the login page's CSS.
+    Mirrors ``market.views.chart_js`` (no staticfiles in prod, zero build).
+    """
+    return HttpResponse(
+        render(request, "registration/theme.css").content,
+        content_type="text/css",
+    )
+
+
+@require_http_methods(["GET"])
+def invite_js(request: HttpRequest) -> HttpResponse:
+    """Same-origin JS for the invite page (replaces the inline onclick)."""
+    return HttpResponse(
+        render(request, "accounts/invite.js").content,
+        content_type="text/javascript",
+    )
