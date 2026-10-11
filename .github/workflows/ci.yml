@@ -69,6 +69,23 @@ jobs:
       - name: Patch coverage gate
         run: diff-cover coverage.xml --compare-branch=origin/develop --fail-under=100
 
+  js-core:
+    name: L1 chart core (node --test)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+
+      - name: Set up Node
+        uses: actions/setup-node@1d0ff469b7ec7b3cb9d8673fde0c81c44821de2a # v4.2.0
+        with:
+          node-version: "22"
+
+      - name: Chart core unit tests (pure JS)
+        run: node --test "tests/js/**/*.test.js"
+
   core-isolation:
     name: L1 core imports without Django
     runs-on: ubuntu-latest
