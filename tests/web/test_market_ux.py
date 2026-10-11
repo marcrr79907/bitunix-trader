@@ -50,6 +50,15 @@ def test_chart_js_served_as_javascript(logged_in_client):
     assert b"market_kline" in response.content  # WS channel prefix
 
 
+def test_chart_core_served_as_javascript(client):
+    # Pure core is same-origin and NOT auth-gated (it holds no state/secrets).
+    response = client.get("/market/chart-core.js")
+    assert response.status_code == 200
+    assert response["Content-Type"] == "text/javascript"
+    assert b"bucketTime" in response.content
+    assert b"upsertCandle" in response.content
+
+
 def test_home_links_to_market_page(logged_in_client):
     response = logged_in_client.get("/")
     assert response.status_code == 200

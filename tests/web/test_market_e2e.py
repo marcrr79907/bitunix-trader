@@ -241,3 +241,52 @@ def test_ws_same_bucket_updates_in_place(seeded_5m_candles, browser_page):
     )
     assert after == n + 1
     assert last_after == t
+
+
+@p
+def test_ws_stream_never_calls_setdata(seeded_5m_candles, browser_page):
+    # R5 (fix #68): during the live stream the adapter MUST use update() only.
+    # A periodic setData was the root cause of the flicker/phantom candles.
+    page, base_url = browser_page
+    holder = {}
+
+    def handler(ws_route):
+        holder["route"] = ws_route
+
+    page.route_web_socket("wss://fapi.bitunix.com/**", handler)
+    page.goto(f"{base_url}/market/")
+    page.select_option("#interval", "5m")
+    page.wait_for_function(
+        "() => window.marketChart && window.marketChart.candleSeries.data().length > 0",
+        timeout=10000,
+    )
+
+    # Spy on setData AFTER the initial history load, then drive several pushes.
+    page.evaluate(
+        "() => { const s = window.marketChart.candleSeries;"
+        " window.__setDataCalls = 0; const orig = s.setData.bind(s);"
+        " s.setData = function(){ window.__setDataCalls++;"
+        " return orig.apply(s, arguments); }; }"
+    )
+    n = page.evaluate("() => window.marketChart.candleSeries.data().length")
+    last_time = page.evaluate(
+        "() => window.marketChart.candleSeries.data().slice(-1)[0].time"
+    )
+    for i in range(1, 5):
+        t = last_time + 300 * i
+        holder["route"].send(
+            json.dumps(
+                {
+                    "symbol": "BTCUSDT",
+                    "ts": t * 1000,
+                    "data": {"o": 1.0, "h": 2.0, "l": 0.5, "c": 1.5},
+                }
+            )
+        )
+        page.wait_for_function(
+            f"() => window.marketChart.candleSeries.data().length === {n + i}",
+            timeout=5000,
+        )
+
+    calls = page.evaluate("() => window.__setDataCalls")
+    assert calls == 0, f"setData called {calls} times during the live stream"
