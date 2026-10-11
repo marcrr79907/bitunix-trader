@@ -14,6 +14,8 @@ from accounts import views
 
 urlpatterns = [
     path("", views.home, name="home"),
+    path("theme.css", views.theme_css, name="theme_css"),
+    path("invite.js", views.invite_js, name="invite_js"),
     path(
         "login/",
         auth_views.LoginView.as_view(template_name="registration/login.html"),

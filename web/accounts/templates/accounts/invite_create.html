@@ -13,6 +13,10 @@
 <h2>Share this link</h2>
 <p>Send it to the invitee. It is single-use and expires.</p>
 <p><code>{{ signup_url }}</code></p>
-<input type="text" value="{{ signup_url }}" readonly onclick="this.select()">
+<input type="text" id="signup-url" value="{{ signup_url }}" readonly>
 {% endif %}
+{% endblock %}
+
+{% block scripts %}
+{% if signup_url %}<script src="{% url 'invite_js' %}"></script>{% endif %}
 {% endblock %}
