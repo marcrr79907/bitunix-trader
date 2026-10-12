@@ -110,7 +110,7 @@ def test_find_order_blocks_is_ordered_by_index():
 
 def test_find_fvg_bullish():
     assert find_fvg(FVG_BULL_HIGHS, FVG_BULL_LOWS) == [
-        FVG("bullish", 1, top=10.0, bottom=11.0)
+        FVG("bullish", 1, top=11.0, bottom=10.0)
     ]
 
 

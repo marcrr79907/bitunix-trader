@@ -69,7 +69,7 @@ OB_DOJI: OHLC = (
 )
 
 # --- fair value gaps -----------------------------------------------------
-# i=1 bullish: highs[0]=10 < lows[2]=11 -> top=10, bottom=11, gap 1.
+# i=1 bullish: highs[0]=10 < lows[2]=11 -> top=11, bottom=10, gap 1.
 FVG_BULL_HIGHS = [10.0, 10.0, 12.0]
 FVG_BULL_LOWS = [8.0, 8.0, 11.0]
 

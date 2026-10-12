@@ -81,10 +81,10 @@ find_order_blocks: guard n=len(closes); if n==0 or len(opens|highs|lows)!=n or l
 
 find_fvg: guard n<3 or len(lows)!=n -> []
   for i in 1..n-2:
-    if highs[i-1] < lows[i+1]:        top,bottom,kind = highs[i-1],lows[i+1],"bullish"
+    if highs[i-1] < lows[i+1]:        top,bottom,kind = lows[i+1],highs[i-1],"bullish"
     elif lows[i-1] > highs[i+1]:      top,bottom,kind = lows[i-1],highs[i+1],"bearish"
     else: continue
-    if top-bottom >= min_gap: emit FVG(kind,i,top,bottom)   # kinds mutually exclusive; index-ordered
+    if top-bottom >= min_gap: emit FVG(kind,i,top,bottom)   # top>=bottom by construction; index-ordered
 
 find_equal_highs_lows: for kind in ("high","low"):
     same=[s for s in swings if s.kind==kind]     # B1 contract: ascending index

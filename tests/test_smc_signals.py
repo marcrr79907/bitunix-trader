@@ -197,11 +197,11 @@ def test_find_setups_direction_follows_the_latest_event():
 
 
 def test_find_setups_uses_fvg_when_no_order_block_exists():
-    # No OB (all bullish) -> the bullish FVG provides the entry zone. The
-    # entry/stop follow the frozen pseudo-code (`entry = zone.top`); for a
-    # bullish FVG the field assignment puts `top` below `bottom`.
+    # No OB (all bullish) -> the bullish FVG provides the entry zone. A bullish
+    # FVG has `top` above `bottom` (the gap), so `entry = zone.top` is above
+    # `stop = zone.bottom - sl_buffer`. The range extreme gives rr >= min_rr.
     out = find_setups(*FVG_ONLY_LONG, [], FVG_ONLY_BOS, range_=FVG_ONLY_RANGE)
-    assert out == [Setup("long", 11.0, 13.0, 5.0, 3.0, 3, 2)]
+    assert out == [Setup("long", 13.0, 11.0, 100.0, 43.5, 3, 2)]
 
 
 def test_find_setups_stale_zones_outside_lookback_are_ignored():
