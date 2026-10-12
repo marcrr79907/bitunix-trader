@@ -23,5 +23,10 @@ urlpatterns = [
         views.drawing_core_js,
         name="market_drawing_core_js",
     ),
+    path(
+        "market/smc-overlay-core.js",
+        views.smc_overlay_core_js,
+        name="market_smc_overlay_core_js",
+    ),
     path("market/chart.js", views.chart_js, name="market_chart_js"),
 ]

@@ -313,3 +313,12 @@ def drawing_core_js(request: HttpRequest) -> HttpResponse:
         render(request, "market/drawing-core.js").content,
         content_type="text/javascript",
     )
+
+
+@require_http_methods(["GET"])
+def smc_overlay_core_js(request: HttpRequest) -> HttpResponse:
+    """Serve the pure SMC overlay mapping same-origin (no state; not auth-gated)."""
+    return HttpResponse(
+        render(request, "market/smc-overlay-core.js").content,
+        content_type="text/javascript",
+    )

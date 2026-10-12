@@ -68,6 +68,39 @@ def test_drawing_core_served_as_javascript(client):
     assert b"fibLevels" in response.content
 
 
+def test_smc_overlay_core_served_as_javascript(client):
+    # Pure SMC overlay mapping is same-origin and NOT auth-gated (no state).
+    response = client.get("/market/smc-overlay-core.js")
+    assert response.status_code == 200
+    assert response["Content-Type"] == "text/javascript"
+    assert b"visibleFamilies" in response.content
+    assert b"setupMarkers" in response.content
+
+
+def test_market_page_includes_smc_core_and_toggles(logged_in_client):
+    # R7/R11: the page loads the core same-origin and exposes one toggle per
+    # family via data-family (no inline handler).
+    response = logged_in_client.get("/market/")
+    assert response.status_code == 200
+    assert b"market_smc_overlay_core_js" in response.content or (
+        b"smc-overlay-core.js" in response.content
+    )
+    families = (b"swings", b"structure", b"order_blocks", b"fvg", b"range", b"setups")
+    for family in families:
+        assert b'data-family="' + family + b'"' in response.content
+
+
+def test_market_page_has_no_inline_script_or_handler(logged_in_client):
+    # R11: no inline script and no inline event handler (CSP-safe).
+    import re
+
+    response = logged_in_client.get("/market/")
+    body = response.content.decode()
+    inline_scripts = re.findall(r"<script(?![^>]*\bsrc=)[^>]*>", body)
+    assert inline_scripts == [], inline_scripts
+    assert not re.search(r"\son[a-z]+\s*=", body), "inline handler found"
+
+
 def test_home_links_to_market_page(logged_in_client):
     response = logged_in_client.get("/")
     assert response.status_code == 200
