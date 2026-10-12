@@ -16,3 +16,6 @@ OB_LOOKBACK = 10  # bars scanned back for the opposite order-block candle
 FVG_MIN_GAP = 0.0  # minimum gap size (price units) to emit an FVG
 EQ_TOLERANCE = 0.0  # max |Δprice| for two swings to be an equal level
 SWEEP_LOOKBACK = 20  # bars a prior swing stays sweepable
+
+# --- B2 range -------------------------------------------------------------
+RANGE_LOOKBACK = 50  # bars in the fixed dealing-range window
