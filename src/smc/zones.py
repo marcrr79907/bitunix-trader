@@ -112,7 +112,7 @@ def find_fvg(
     out: list[FVG] = []
     for i in range(1, n - 1):
         if highs[i - 1] < lows[i + 1]:
-            top, bottom, kind = highs[i - 1], lows[i + 1], "bullish"
+            top, bottom, kind = lows[i + 1], highs[i - 1], "bullish"
         elif lows[i - 1] > highs[i + 1]:
             top, bottom, kind = lows[i - 1], highs[i + 1], "bearish"
         else:

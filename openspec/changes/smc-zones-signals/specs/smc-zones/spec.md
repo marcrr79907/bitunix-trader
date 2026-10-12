@@ -56,9 +56,10 @@ emitted (never raise). Output MUST be ordered by `index`.
 ### Requirement: R2 — Fair value gaps (3-candle rule)
 
 `find_fvg(highs, lows, *, min_gap=FVG_MIN_GAP)` MUST scan `i = 1..n-2`. A bullish
-FVG at `i` requires `highs[i-1] < lows[i+1]`, with zone `top=highs[i-1]`,
-`bottom=lows[i+1]`. A bearish FVG requires `lows[i-1] > highs[i+1]`, with zone
-`top=lows[i-1]`, `bottom=highs[i+1]`. A gap MUST be emitted only when
+FVG at `i` requires `highs[i-1] < lows[i+1]`, with zone `top=lows[i+1]`
+(the upper edge), `bottom=highs[i-1]` (the lower edge). A bearish FVG requires
+`lows[i-1] > highs[i+1]`, with zone `top=lows[i-1]`, `bottom=highs[i+1]`. `top`
+MUST be `>=` `bottom` in both cases. A gap MUST be emitted only when
 `(top - bottom) >= min_gap`. `index` MUST be the middle bar `i`. Output MUST be
 ordered by `index`. Raw, unfilled gaps only — mitigation/fill tracking is out of
 scope.
