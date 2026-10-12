@@ -28,6 +28,7 @@ OWNED_MODELS = frozenset(
         "Trade",
         "ChartLayout",
         "Drawing",
+        "AlertRule",
     }
 )
 UNSCOPED_VERBS = frozenset(
@@ -99,6 +100,8 @@ def test_scanner_flags_an_unscoped_all_on_the_other_model(tmp_path):
         "Trade.objects.get_or_create(user=user_a, trade_id='T1')",
         "ChartLayout.objects.all()",
         "Drawing.objects.all()",
+        "AlertRule.objects.all()",
+        "AlertRule.objects.filter(is_active=True)",
     ],
 )
 def test_scanner_flags_the_private_models(tmp_path, query):
