@@ -228,3 +228,35 @@ class ChartLayout(UserOwnedModel):
                 name="uniq_layout_user_symbol_interval",
             )
         ]
+
+
+class Drawing(UserOwnedModel):
+    """Per-user chart annotation collection (R14, R1): one row per shape.
+
+    Unlike ``ChartLayout`` (one row per chart), a chart holds **many** drawings,
+    so there is **no unique constraint** on ``(user, symbol, interval)`` — only
+    an index for the filtered read. ``kind`` is one of ``Kind``; ``points`` is a
+    per-kind JSON object and ``style`` a JSON object (see design schemas).
+    """
+
+    class Kind(models.TextChoices):
+        HLINE = "hline"
+        TRENDLINE = "trendline"
+        FIB = "fib"
+        RECT = "rect"
+        TEXT = "text"
+
+    symbol = models.CharField(max_length=32)
+    interval = models.CharField(max_length=8)
+    kind = models.CharField(max_length=16, choices=Kind.choices)
+    points = models.JSONField(default=dict)
+    style = models.JSONField(default=dict)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        indexes = [
+            models.Index(
+                fields=["user", "symbol", "interval"],
+                name="ix_drawing_user_sym_interval",
+            )
+        ]
