@@ -26,6 +26,11 @@ from trading.models import Candle, Drawing
 
 from src import indicators
 from src.client import BitunixError
+from src.smc.range import dealing_range
+from src.smc.signals import find_setups
+from src.smc.structure import find_structure, label_swings
+from src.smc.swings import find_swings
+from src.smc.zones import find_fvg, find_order_blocks
 
 logger = logging.getLogger(__name__)
 
@@ -427,6 +432,39 @@ def _ctx_rows(rows: list[dict]) -> dict:
     }
 
 
+def _fetch_window(
+    client, symbol: str, interval: str, want: int, before: int | None = None
+) -> list[dict]:
+    """Newest ``want`` candles ``< before`` (ascending) via the shared seam.
+
+    DB-first with upstream gap-fill: read ``Candle`` for the requested window,
+    call BitUnix only when the DB is short, merge with DB winning on duplicate
+    ``time``. The un-stripped rows (``quote_vol`` retained) are returned so
+    both kline and SMC can build over the same window. Re-raises upstream
+    failures when the DB holds nothing (view maps: BitunixError → 400,
+    RequestException → 502); degraded ``[]`` upstream otherwise.
+    """
+    db = _db_rows(symbol, interval, before, want)
+
+    upstream: list[dict] = []
+    if len(db) < want:
+        end_ms = (before if before is not None else _now_seconds()) * 1000
+        try:
+            upstream = client.kline(
+                symbol, interval, min(want, MAX_UPSTREAM), end_time=end_ms
+            )
+        except (BitunixError, requests.RequestException):
+            if not db:
+                raise
+            logger.warning("kline degraded symbol=%s interval=%s", symbol, interval)
+            upstream = []
+
+    # Merge, DB wins on duplicate ``time`` (the durable record is authoritative).
+    merged = {c["time"]: c for c in upstream}
+    merged.update({c["time"]: c for c in db})
+    return sorted(merged.values(), key=lambda c: c["time"])[-want:]
+
+
 def get_kline_payload(
     client,
     symbol: str,
@@ -447,26 +485,7 @@ def get_kline_payload(
         WARMUP_BASE,
         max(REGISTRY[name]["warmup"](params) for name, params in indicators),
     )
-    want = limit + warmup
-    db = _db_rows(symbol, interval, before, want)
-
-    upstream: list[dict] = []
-    if len(db) < want:
-        end_ms = (before if before is not None else _now_seconds()) * 1000
-        try:
-            upstream = client.kline(
-                symbol, interval, min(want, MAX_UPSTREAM), end_time=end_ms
-            )
-        except (BitunixError, requests.RequestException):
-            if not db:
-                raise  # view maps: BitunixError -> 400, RequestException -> 502
-            logger.warning("kline degraded symbol=%s interval=%s", symbol, interval)
-            upstream = []
-
-    # Merge, DB wins on duplicate ``time`` (the durable record is authoritative).
-    merged = {c["time"]: c for c in upstream}
-    merged.update({c["time"]: c for c in db})
-    rows_full = sorted(merged.values(), key=lambda c: c["time"])[-want:]
+    rows_full = _fetch_window(client, symbol, interval, limit + warmup, before)
 
     # Build indicator series over the whole warm window, using un-stripped rows
     # so quote_vol is available to the volume pane (R3).
@@ -501,3 +520,144 @@ def _zip(times, values):
         for t, v in zip(times, values, strict=False)
         if v is not None
     ]
+
+
+# --- SMC overlay payload (R1/R2/R3) -----------------------------------------
+#
+# Read-only market analysis: run the frozen ``src/smc/`` chain ONCE over the
+# same DB-first window as kline and resolve every bar ``index`` → candle
+# ``time`` server-side. No ``index``/``anchor`` key is ever emitted; the JS
+# merely draws. SMC is market data — no ``for_user``, no write.
+
+
+def _time_at(times: list[int], index: int) -> int | None:
+    """Resolve a bar index to its candle time, or ``None`` when off-window."""
+    return times[index] if 0 <= index < len(times) else None
+
+
+def _serialize_smc(
+    rows: list[dict],
+    symbol: str,
+    interval: str,
+    swings,
+    labeled,
+    structure,
+    obs,
+    fvgs,
+    range_,
+    setups,
+) -> dict:
+    """Serialize the frozen chain, resolving every index → candle ``time``.
+
+    Pure: records in, frozen JSON out. Records with an off-window index are
+    skipped defensively — the payload never carries a raw bar index.
+    """
+    times = [c["time"] for c in rows]
+    labels = {(item.kind, item.index): item.label for item in labeled}
+
+    out_swings = [
+        {
+            "kind": s.kind,
+            "time": times[s.index],
+            "price": s.price,
+            "label": labels.get((s.kind, s.index)),
+        }
+        for s in swings
+        if _time_at(times, s.index) is not None
+    ]
+    out_structure = [
+        {
+            "kind": e.kind,
+            "time": times[e.index],
+            "price": e.price,
+            "direction": e.direction,
+            "trend": e.trend,
+        }
+        for e in structure
+        if _time_at(times, e.index) is not None
+    ]
+    out_obs = [
+        {
+            "kind": ob.kind,
+            "time": times[ob.index],
+            "top": ob.top,
+            "bottom": ob.bottom,
+            "anchor_time": times[ob.anchor],
+        }
+        for ob in obs
+        if _time_at(times, ob.index) is not None
+        and _time_at(times, ob.anchor) is not None
+    ]
+    out_fvgs = [
+        {
+            "kind": g.kind,
+            "time": times[g.index],
+            "top": g.top,
+            "bottom": g.bottom,
+        }
+        for g in fvgs
+        if _time_at(times, g.index) is not None
+    ]
+    out_range = (
+        {
+            "high": range_.high,
+            "low": range_.low,
+            "equilibrium": range_.equilibrium,
+            "time": times[range_.index],
+        }
+        if range_ is not None and _time_at(times, range_.index) is not None
+        else None
+    )
+    out_setups = [
+        {
+            "direction": s.direction,
+            "time": times[s.index],
+            "entry": s.entry,
+            "stop": s.stop,
+            "take_profit": s.take_profit,
+            "rr": s.rr,
+            "score": s.score,
+        }
+        for s in setups
+        if _time_at(times, s.index) is not None
+    ]
+    return {
+        "symbol": symbol,
+        "interval": interval,
+        "swings": out_swings,
+        "structure": out_structure,
+        "order_blocks": out_obs,
+        "fvgs": out_fvgs,
+        "range": out_range,
+        "setups": out_setups,
+    }
+
+
+def get_smc_payload(client, symbol: str, interval: str, limit: int) -> dict:
+    """Run the frozen SMC chain over the newest ``limit`` candles (no warm-up).
+
+    Uses the shared ``_fetch_window`` seam (``want == limit``) so the SMC
+    window matches the chart's ``candles[-limit:]`` exactly. Raises like
+    ``get_kline_payload`` (view maps: BitunixError → 400, RequestException →
+    502); thin windows degrade to empty arrays + ``range:null``, never 500.
+    """
+    rows = _fetch_window(client, symbol, interval, limit)
+    if len(rows) < 3:
+        # Below three candles no chain can compute; frozen empty shape (R4).
+        return _serialize_smc(rows, symbol, interval, [], [], [], [], [], None, [])
+
+    opens = [c["open"] for c in rows]
+    highs = [c["high"] for c in rows]
+    lows = [c["low"] for c in rows]
+    closes = [c["close"] for c in rows]
+
+    swings = find_swings(highs, lows)
+    labeled = label_swings(swings)
+    structure = find_structure(highs, lows, closes)
+    obs = find_order_blocks(opens, highs, lows, closes, structure)
+    fvgs = find_fvg(highs, lows)
+    range_ = dealing_range(highs, lows)
+    setups = find_setups(opens, highs, lows, closes, swings, structure, range_=range_)
+    return _serialize_smc(
+        rows, symbol, interval, swings, labeled, structure, obs, fvgs, range_, setups
+    )
