@@ -21,6 +21,9 @@ PURE_MODULES = (
     "smc/config.py",
     "smc/swings.py",
     "smc/structure.py",
+    "smc/zones.py",
+    "smc/range.py",
+    "smc/signals.py",
 )
 
 
