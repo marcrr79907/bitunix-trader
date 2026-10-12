@@ -20,6 +20,7 @@ from market.quotes import (
     DEFAULT_LAYOUT,
     INTERVALS,
     get_kline_payload,
+    get_smc_payload,
     parse_drawing,
     parse_indicators,
     parse_layout_indicators,
@@ -80,6 +81,41 @@ def api_kline(request: HttpRequest) -> JsonResponse:
         return JsonResponse({"error": "upstream rejected"}, status=400)
     except requests.RequestException:
         # Network failure (timeout, conn refused) — an upstream problem.
+        return JsonResponse({"error": "upstream"}, status=502)
+
+    return JsonResponse(payload)
+
+
+@login_required
+@require_http_methods(["GET"])
+def api_smc(request: HttpRequest) -> JsonResponse:
+    """Read-only SMC analysis for one candle window (R12, market-global).
+
+    Validates ``symbol``/``interval``/``limit`` BEFORE any work, then runs the
+    frozen ``src/smc/`` chain over the same DB-first window as ``api_kline``.
+    SMC is market data — no ``for_user`` scoping, no write. Thin windows degrade
+    to empty arrays + ``range:null`` (200); upstream failure mirrors ``api_kline``.
+    """
+    symbol = request.GET.get("symbol", "")
+    interval = request.GET.get("interval", "")
+    raw_limit = request.GET.get("limit", "")
+
+    if interval not in INTERVALS:
+        return JsonResponse({"error": "invalid interval"}, status=400)
+    if not symbol:
+        return JsonResponse({"error": "symbol required"}, status=400)
+    try:
+        limit = int(raw_limit) if raw_limit else 200
+    except ValueError:
+        return JsonResponse({"error": "invalid limit"}, status=400)
+    if not MIN_LIMIT <= limit <= MAX_LIMIT:
+        return JsonResponse({"error": "invalid limit"}, status=400)
+
+    try:
+        payload = get_smc_payload(BitunixClient(), symbol, interval, limit)
+    except BitunixError:
+        return JsonResponse({"error": "upstream rejected"}, status=400)
+    except requests.RequestException:
         return JsonResponse({"error": "upstream"}, status=502)
 
     return JsonResponse(payload)
@@ -275,5 +311,14 @@ def drawing_core_js(request: HttpRequest) -> HttpResponse:
     """Serve the pure drawing geometry same-origin (no state; not auth-gated)."""
     return HttpResponse(
         render(request, "market/drawing-core.js").content,
+        content_type="text/javascript",
+    )
+
+
+@require_http_methods(["GET"])
+def smc_overlay_core_js(request: HttpRequest) -> HttpResponse:
+    """Serve the pure SMC overlay mapping same-origin (no state; not auth-gated)."""
+    return HttpResponse(
+        render(request, "market/smc-overlay-core.js").content,
         content_type="text/javascript",
     )

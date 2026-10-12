@@ -58,6 +58,12 @@ code{font-family:var(--mono); background:var(--surface); padding:1px 5px; border
 .indicators label{display:flex; align-items:center; gap:var(--sp-2); cursor:pointer}
 .indicators input[type=checkbox]{accent-color:var(--accent)}
 
+/* SMC overlay family toggles */
+.smc{display:flex; flex-direction:column; gap:var(--sp-1);
+  margin:0; border:1px solid var(--border); border-radius:var(--r); padding:var(--sp-2) var(--sp-3)}
+.smc label{display:flex; align-items:center; gap:var(--sp-2); cursor:pointer}
+.smc input[type=checkbox]{accent-color:var(--accent)}
+
 /* drawings toolbar + panel list */
 .drawings{display:flex; flex-wrap:wrap; gap:var(--sp-2);
   margin:0; border:1px solid var(--border); border-radius:var(--r); padding:var(--sp-2) var(--sp-3)}

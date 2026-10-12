@@ -15,6 +15,8 @@ Deselected by default via addopts; CI never downloads a browser.
 from __future__ import annotations
 
 import json
+import math
+from datetime import UTC, datetime
 
 import pytest
 
@@ -22,25 +24,47 @@ pytest.importorskip("playwright.sync_api", reason="pytest-playwright not install
 
 p = pytest.mark.e2e
 
+# Boot key is (SYMBOLS[0], "1m") = (BTCUSDT, "1m"); 1m is NOT persisted, so
+# pinning a deterministic window requires switching to a persisted interval.
+_SEED_BASE = int(datetime(2025, 1, 1, tzinfo=UTC).timestamp())
+
+
+def _seed_5m(symbol: str, *, amp: float = 4.0, phase: float = 0.0) -> None:
+    """Persist 250 deterministic VARIED 5m candles for ``symbol``.
+
+    Varied OHLC (not a constant close) is required so the RSI/MACD panes and
+    the SMC chain have real signal to compute over the DB window — a constant
+    series yields an all-``None`` RSI and no swings/structure/zones. Seeding
+    happens BEFORE any Playwright context (sync ORM rule).
+    """
+    from trading.models import Candle
+
+    for i in range(250):
+        close = 100.0 + amp * math.sin(i / 3.0 + phase) + 3.0 * math.sin(i / 23.0)
+        open_ = close - 0.6 * math.cos(i / 3.0 + phase)
+        high = max(open_, close) + 1.0
+        low = min(open_, close) - 1.0
+        Candle.objects.create(
+            symbol=symbol,
+            interval="5m",
+            time=_SEED_BASE + i * 300,
+            open=round(open_, 4),
+            high=round(high, 4),
+            low=round(low, 4),
+            close=round(close, 4),
+        )
+
 
 @pytest.fixture
 def seeded_5m_candles(db):
-    """Seed persisted 5m candles before any Playwright (sync) context starts."""
-    from datetime import UTC, datetime
+    """Seed persisted, VARIED 5m candles before any Playwright context starts."""
+    _seed_5m("BTCUSDT")
 
-    from trading.models import Candle
 
-    base = int(datetime(2025, 1, 1, tzinfo=UTC).timestamp())
-    for i in range(250):
-        Candle.objects.create(
-            symbol="BTCUSDT",
-            interval="5m",
-            time=base + i * 300,
-            open=1.0,
-            high=2.0,
-            low=0.5,
-            close=1.5,
-        )
+@pytest.fixture
+def seeded_eth_5m_candles(db):
+    """Seed a distinct persisted 5m window for the switch target (ETHUSDT)."""
+    _seed_5m("ETHUSDT", phase=1.0)
 
 
 @pytest.fixture
@@ -689,5 +713,166 @@ def test_failed_drawings_fetch_is_non_fatal(browser_page):
     page.goto(f"{base_url}/market/")
     _wait_ready(page)
     assert page.evaluate("() => window.marketChart.drawings") == []
+    script_errors = [e for e in errors if "net::" not in e and "WebSocket" not in e]
+    assert script_errors == [], f"console errors: {script_errors}"
+
+
+# --- SMC overlay (R6/R7/R8/R9) ----------------------------------------------
+#
+# DOM/network assertions only (no image diffs). The read-only seam
+# ``window.marketChart.smc`` holds the raw fetched payload (R9 parity), and
+# ``window.marketChart.smcCounts`` holds the per-family drawn-record counts.
+# VariedOHLC 5m candles are seeded BEFORE the Playwright context so the frozen
+# chain has real swings/structure/zones/range/setups to compute (a constant
+# series yields empty families). Boot key (BTCUSDT, "1m") is not persisted, so
+# every deterministic assertion runs on the persisted "5m" key.
+
+
+def _smc_bodies(page):
+    """Collect /market/api/smc response bodies keyed by query string."""
+    bodies: dict[str, dict] = {}
+
+    def handler(response):
+        if "/market/api/smc" not in response.url:
+            return
+        try:
+            bodies[response.url.split("?", 1)[1]] = response.json()
+        except Exception:  # noqa: BLE001 - a non-JSON body is simply not recorded
+            pass
+
+    page.on("response", handler)
+    return bodies
+
+
+@p
+def test_smc_boot_fetches_overlay_once(seeded_5m_candles, browser_page):
+    # R6/R8: boot issues exactly ONE smc request for the boot key, sharing the
+    # history window (limit=HISTORY_LIMIT=200), before ``ready`` flips.
+    page, base_url = browser_page
+    smc_requests = []
+    page.on(
+        "request",
+        lambda r: smc_requests.append(r.url) if "/market/api/smc" in r.url else None,
+    )
+    page.goto(f"{base_url}/market/")
+    _wait_ready(page)
+    assert len(smc_requests) == 1, smc_requests
+    assert "symbol=BTCUSDT" in smc_requests[0]
+    assert "interval=1m" in smc_requests[0]
+    assert "limit=200" in smc_requests[0]
+
+
+@p
+def test_smc_renders_all_six_families_and_seam_matches_payload(
+    seeded_5m_candles, browser_page
+):
+    # R6/R9: over the seeded 5m window all six families draw (seam counts > 0)
+    # and ``window.marketChart.smc`` deep-equals the fetched response body.
+    page, base_url = browser_page
+    bodies = _smc_bodies(page)
+    page.goto(f"{base_url}/market/")
+    _wait_ready(page)
+    page.select_option("#interval", "5m")
+    page.wait_for_function(
+        "() => window.marketChart.smc && window.marketChart.smc.interval === '5m'",
+        timeout=10000,
+    )
+    seam = page.evaluate("() => window.marketChart.smc")
+    fetched = bodies["symbol=BTCUSDT&interval=5m&limit=200"]
+    # Payload <-> drawn parity (R9): the seam IS the fetched body.
+    assert seam == fetched
+
+    counts = page.evaluate("() => window.marketChart.smcCounts")
+    for family in ("swings", "structure", "order_blocks", "fvg", "range", "setups"):
+        assert counts[family] > 0, (family, counts)
+    # The pure core maps the seam payload to setup markers (R6 render contract).
+    markers = page.evaluate(
+        "() => window.SmcOverlayCore.setupMarkers(window.marketChart.smc,"
+        " window.marketChart.smcToggles).length"
+    )
+    assert markers == counts["setups"]
+
+
+@p
+def test_smc_toggle_hides_family_without_refetch(seeded_5m_candles, browser_page):
+    # R7: unchecking a family re-renders from the fetched payload (seam counts
+    # change) and MUST NOT issue a new smc request (no refetch).
+    page, base_url = browser_page
+    page.goto(f"{base_url}/market/")
+    _wait_ready(page)
+    page.select_option("#interval", "5m")
+    page.wait_for_function(
+        "() => window.marketChart.smc && window.marketChart.smc.interval === '5m'",
+        timeout=10000,
+    )
+    before = page.evaluate("() => window.marketChart.smcCounts")
+    requests = []
+    page.on(
+        "request",
+        lambda r: requests.append(r.url) if "/market/api/smc" in r.url else None,
+    )
+    page.locator('.smc-toggle[data-family="swings"]').uncheck()
+    page.wait_for_function(
+        "() => window.marketChart.smcCounts.swings === 0",
+        timeout=5000,
+    )
+    after = page.evaluate("() => window.marketChart.smcCounts")
+    assert requests == [], f"toggle triggered an smc refetch: {requests}"
+    # Only the toggled family changed; the payload itself is untouched.
+    assert after["swings"] == 0
+    for family in ("structure", "order_blocks", "fvg", "range", "setups"):
+        assert after[family] == before[family], (family, before, after)
+
+    # Toggling setups off empties the marker array without a refetch.
+    page.locator('.smc-toggle[data-family="setups"]').uncheck()
+    page.wait_for_function(
+        "() => window.marketChart.smcCounts.setups === 0",
+        timeout=5000,
+    )
+    markers = page.evaluate(
+        "() => window.SmcOverlayCore.setupMarkers(window.marketChart.smc,"
+        " window.marketChart.smcToggles).length"
+    )
+    assert markers == 0
+    assert requests == []
+
+
+@p
+def test_smc_switch_refetches_for_new_key(
+    seeded_5m_candles, seeded_eth_5m_candles, browser_page
+):
+    # R8: switchTo(symbol, interval) refetches smc for the NEW key and the seam
+    # reflects it (markers re-created from the new payload), with no JS errors.
+    # A symbol switch keeps the boot interval ("1m", unpersisted → upstream);
+    # immediately selecting "5m" leaves the persisted (ETHUSDT, 5m) as the last
+    # generation, so the assertion is deterministic and DB-backed.
+    page, base_url = browser_page
+    errors = []
+    page.on(
+        "console",
+        lambda msg: errors.append(msg.text) if msg.type == "error" else None,
+    )
+    page.goto(f"{base_url}/market/")
+    _wait_ready(page)
+    assert page.evaluate("() => window.marketChart.smc.symbol") == "BTCUSDT"
+
+    smc_requests = []
+    page.on(
+        "request",
+        lambda r: smc_requests.append(r.url) if "/market/api/smc" in r.url else None,
+    )
+    page.locator('.pair[data-symbol="ETHUSDT"]').click()
+    page.select_option("#interval", "5m")
+    page.wait_for_function(
+        "() => window.marketChart.smc && window.marketChart.smc.symbol === 'ETHUSDT'"
+        " && window.marketChart.smc.interval === '5m'",
+        timeout=10000,
+    )
+    # A fresh fetch for the new key was issued (not a reused old payload).
+    assert any("symbol=ETHUSDT" in u and "interval=5m" in u for u in smc_requests), (
+        smc_requests
+    )
+    counts = page.evaluate("() => window.marketChart.smcCounts")
+    assert counts["swings"] > 0 and counts["setups"] > 0, counts
     script_errors = [e for e in errors if "net::" not in e and "WebSocket" not in e]
     assert script_errors == [], f"console errors: {script_errors}"

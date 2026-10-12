@@ -1385,3 +1385,374 @@ def test_drawings_post_non_object_body_is_400():
     response = USER.post(DRAWINGS_URL, data="[1, 2]", content_type="application/json")
     assert response.status_code == 400
     assert "error" in response.json()
+
+
+# --- R12: SMC overlay endpoint + payload seam (Slice 1) ---------------------
+
+SMC_URL = "/market/api/smc"
+
+# Top-level keys are frozen by the spec (no ``index`` anywhere).
+SMC_KEYS = {
+    "symbol",
+    "interval",
+    "swings",
+    "structure",
+    "order_blocks",
+    "fvgs",
+    "range",
+    "setups",
+}
+
+
+def _smc_rows():
+    """Deterministic zigzag (48 bars) exercising the whole frozen chain.
+
+    Six rising peak/trough legs (4 bars each) yield confirmed swings, HH/HL
+    labels, BOS events, order blocks, FVGs, a dealing range and one long setup.
+    """
+    peaks = [110, 112, 116, 118, 124, 126]
+    troughs = [100, 102, 104, 108, 110, 112]
+    seq = []
+    for peak, trough in zip(peaks, troughs, strict=True):
+        seq.append((peak, "up"))
+        seq.append((trough, "down"))
+    rows = []
+    prev = 100.0
+    t = 0
+    for price, direction in seq:
+        for s in range(4):
+            v = prev + (price - prev) * (s / 4)
+            hi, lo = v + 0.5, v - 0.5
+            o, c = (hi - 0.1, lo + 0.1) if direction == "down" else (lo + 0.1, hi - 0.1)
+            rows.append(_row(t * 60, o, hi, lo, c))
+            t += 1
+        prev = price
+    return rows
+
+
+def _all_keys(obj):
+    """Every dict key anywhere in a nested payload (for leak checks)."""
+    keys = set()
+    if isinstance(obj, dict):
+        for k, v in obj.items():
+            keys.add(k)
+            keys |= _all_keys(v)
+    elif isinstance(obj, list):
+        for item in obj:
+            keys |= _all_keys(item)
+    return keys
+
+
+# --- payload layer: get_smc_payload with a stub client ----------------------
+
+
+def test_smc_payload_exact_top_level_shape():
+    from market.quotes import get_smc_payload
+
+    payload = get_smc_payload(StubClient(_smc_rows()), "BTCUSDT", "1m", 48)
+
+    assert set(payload) == SMC_KEYS
+    assert payload["symbol"] == "BTCUSDT"
+    assert payload["interval"] == "1m"
+    assert isinstance(payload["range"], dict)
+
+
+def test_smc_payload_no_index_or_anchor_key_leaks():
+    from market.quotes import get_smc_payload
+
+    payload = get_smc_payload(StubClient(_smc_rows()), "BTCUSDT", "1m", 48)
+
+    keys = _all_keys(payload)
+    assert "index" not in keys
+    assert "anchor" not in keys  # only ``anchor_time`` is emitted
+    assert "anchor_time" in keys
+
+
+def test_smc_payload_times_are_window_members():
+    from market.quotes import get_smc_payload
+
+    rows = _smc_rows()
+    payload = get_smc_payload(StubClient(rows), "BTCUSDT", "1m", 48)
+    times = {c["time"] for c in rows}
+
+    emitted = (
+        [r["time"] for r in payload["swings"]]
+        + [r["time"] for r in payload["structure"]]
+        + [r["time"] for r in payload["order_blocks"]]
+        + [r["anchor_time"] for r in payload["order_blocks"]]
+        + [r["time"] for r in payload["fvgs"]]
+        + [r["time"] for r in payload["setups"]]
+        + [payload["range"]["time"]]
+    )
+    assert emitted
+    assert all(t in times for t in emitted)
+
+
+def test_smc_payload_index_resolved_to_candle_time():
+    from market.quotes import get_smc_payload
+
+    rows = _smc_rows()
+    payload = get_smc_payload(StubClient(rows), "BTCUSDT", "1m", 48)
+
+    # First BOS is at bar 19 (-> time 1140) anchored on OB at bar 15 (-> 900).
+    assert payload["structure"][0] == {
+        "kind": "bos",
+        "time": 19 * 60,
+        "price": 112.5,
+        "direction": "bullish",
+        "trend": "up",
+    }
+    ob = payload["order_blocks"][0]
+    assert ob == {
+        "kind": "bullish",
+        "time": 15 * 60,
+        "top": 105.0,
+        "bottom": 104.0,
+        "anchor_time": 19 * 60,
+    }
+
+
+def test_smc_payload_label_null_for_first_of_each_kind():
+    from market.quotes import get_smc_payload
+
+    payload = get_smc_payload(StubClient(_smc_rows()), "BTCUSDT", "1m", 48)
+
+    first_high = next(s for s in payload["swings"] if s["kind"] == "high")
+    first_low = next(s for s in payload["swings"] if s["kind"] == "low")
+    assert first_high["label"] is None  # first-of-kind: label_swings omits it
+    assert first_low["label"] is None
+    labels = {s["label"] for s in payload["swings"]}
+    assert {"HH", "HL"} <= labels
+
+
+def test_smc_payload_swing_shape_exact():
+    from market.quotes import get_smc_payload
+
+    payload = get_smc_payload(StubClient(_smc_rows()), "BTCUSDT", "1m", 48)
+
+    assert payload["swings"]
+    assert all(set(s) == {"kind", "time", "price", "label"} for s in payload["swings"])
+    assert all(s["kind"] in ("high", "low") for s in payload["swings"])
+
+
+def test_smc_payload_setup_shape_and_fields():
+    from market.quotes import get_smc_payload
+
+    payload = get_smc_payload(StubClient(_smc_rows()), "BTCUSDT", "1m", 48)
+
+    assert payload["setups"]
+    setup = payload["setups"][-1]
+    assert set(setup) == {
+        "direction",
+        "time",
+        "entry",
+        "stop",
+        "take_profit",
+        "rr",
+        "score",
+    }
+    assert setup["direction"] == "long"
+    assert setup["time"] == 44 * 60
+
+
+def test_smc_payload_empty_window_is_empty_arrays_and_null_range():
+    from market.quotes import get_smc_payload
+
+    payload = get_smc_payload(StubClient([]), "BTCUSDT", "1m", 48)
+
+    assert payload == {
+        "symbol": "BTCUSDT",
+        "interval": "1m",
+        "swings": [],
+        "structure": [],
+        "order_blocks": [],
+        "fvgs": [],
+        "range": None,
+        "setups": [],
+    }
+
+
+def test_smc_payload_fewer_than_three_candles_stays_empty():
+    from market.quotes import get_smc_payload
+
+    payload = get_smc_payload(StubClient(_smc_rows()[:2]), "BTCUSDT", "1m", 48)
+
+    assert payload["swings"] == []
+    assert payload["range"] is None
+
+
+def test_smc_payload_want_equals_limit_without_warmup():
+    from market.quotes import get_smc_payload
+
+    client = StubClient(_smc_rows())
+
+    get_smc_payload(client, "BTCUSDT", "1m", 30)
+
+    assert client.calls[0]["limit"] == 30  # SMC asks for exactly ``limit``
+
+
+def test_smc_payload_full_db_window_never_calls_upstream():
+    from market.quotes import get_smc_payload
+
+    _seed_series(20)
+    client = StubClient([_row(1, "1", "1", "1", "1")])
+
+    payload = get_smc_payload(client, "BTCUSDT", PERSISTED, 10)
+
+    assert client.calls == []
+    assert set(payload) == SMC_KEYS
+
+
+def test_smc_payload_db_rows_survive_upstream_failure():
+    import requests
+    from market.quotes import get_smc_payload
+
+    _seed_series(5)
+    client = StubClient([], error=requests.ConnectionError("boom"))
+
+    payload = get_smc_payload(client, "BTCUSDT", PERSISTED, 10)
+
+    assert set(payload) == SMC_KEYS  # degraded, never raised
+
+
+def test_smc_payload_empty_db_reraises_upstream_failure():
+    import requests
+    from market.quotes import get_smc_payload
+
+    client = StubClient([], error=requests.ConnectionError("boom"))
+
+    with pytest.raises(requests.ConnectionError):
+        get_smc_payload(client, "BTCUSDT", PERSISTED, 10)
+
+
+# --- endpoint layer: /market/api/smc contract -------------------------------
+
+
+def test_smc_endpoint_anonymous_redirects_to_login():
+    response = ANON.get(f"{SMC_URL}?symbol=BTCUSDT&interval=1m")
+    assert response.status_code == 302
+    assert response.url.startswith("/login/")
+
+
+def test_smc_endpoint_missing_symbol_is_400():
+    response = USER.get(f"{SMC_URL}?interval=1m")
+    assert response.status_code == 400
+    assert "error" in response.json()
+
+
+def test_smc_endpoint_invalid_interval_is_400():
+    response = USER.get(f"{SMC_URL}?symbol=BTCUSDT&interval=2s")
+    assert response.status_code == 400
+    assert "error" in response.json()
+
+
+def test_smc_endpoint_limit_outside_range_is_400():
+    url = f"{SMC_URL}?symbol=BTCUSDT&interval=1m&limit={{}}"
+    assert USER.get(url.format(0)).status_code == 400
+    assert USER.get(url.format(201)).status_code == 400
+    assert USER.get(url.format("abc")).status_code == 400
+
+
+def test_smc_endpoint_default_limit_is_200(monkeypatch):
+    from market import views
+
+    captured = {}
+
+    def _fake(client, symbol, interval, limit):
+        captured.update(symbol=symbol, interval=interval, limit=limit)
+        return {"symbol": symbol, "interval": interval}
+
+    monkeypatch.setattr(views, "get_smc_payload", _fake)
+
+    response = USER.get(f"{SMC_URL}?symbol=BTCUSDT&interval=1m")
+
+    assert response.status_code == 200
+    assert captured["limit"] == 200
+
+
+def test_smc_endpoint_200_exact_shape(monkeypatch):
+    from market import views
+
+    monkeypatch.setattr(views, "BitunixClient", lambda: StubClient(_smc_rows()))
+
+    response = USER.get(f"{SMC_URL}?symbol=BTCUSDT&interval=1m&limit=48")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert set(body) == SMC_KEYS
+    assert "index" not in _all_keys(body)
+
+
+def test_smc_endpoint_upstream_reject_without_db_is_400(monkeypatch):
+    from market import views
+
+    from src.client import BitunixError
+
+    def reject():
+        raise BitunixError(70014, "symbol not exist")
+
+    monkeypatch.setattr(views, "BitunixClient", lambda: (_ for _ in ()).throw(reject()))
+
+    response = USER.get(f"{SMC_URL}?symbol=NOSUCHUSDT&interval=1m")
+    assert response.status_code == 400
+    assert response.json() == {"error": "upstream rejected"}
+
+
+def test_smc_endpoint_empty_db_transport_fail_is_502(monkeypatch):
+    import requests
+    from market import views
+
+    client = StubClient([], error=requests.ConnectionError("connection refused"))
+    monkeypatch.setattr(views, "BitunixClient", lambda: client)
+
+    response = USER.get(f"{SMC_URL}?symbol=BTCUSDT&interval={PERSISTED}")
+
+    assert response.status_code == 502
+    assert response.json() == {"error": "upstream"}
+
+
+def test_smc_endpoint_db_rows_with_transport_fail_is_200(monkeypatch):
+    import requests
+    from market import views
+
+    _seed_series(5)
+    client = StubClient([], error=requests.ConnectionError("connection refused"))
+    monkeypatch.setattr(views, "BitunixClient", lambda: client)
+
+    response = USER.get(f"{SMC_URL}?symbol=BTCUSDT&interval={PERSISTED}&limit=10")
+
+    assert response.status_code == 200
+    assert set(response.json()) == SMC_KEYS
+
+
+def test_smc_endpoint_unknown_symbol_with_db_rows_is_200(monkeypatch):
+    from market import views
+
+    from src.client import BitunixError
+
+    _seed_series(5)
+    client = StubClient([], error=BitunixError(70014, "symbol not exist"))
+    monkeypatch.setattr(views, "BitunixClient", lambda: client)
+
+    response = USER.get(f"{SMC_URL}?symbol=BTCUSDT&interval={PERSISTED}&limit=10")
+
+    assert response.status_code == 200  # degraded over the DB rows, never 5xx
+
+
+def test_smc_endpoint_is_market_global_not_per_user(monkeypatch):
+    from django.contrib.auth import get_user_model
+    from market import views
+
+    monkeypatch.setattr(views, "BitunixClient", lambda: StubClient(_smc_rows()))
+
+    url = f"{SMC_URL}?symbol=BTCUSDT&interval=1m&limit=48"
+    body_a = USER.get(url).json()
+
+    b_client = Client()
+    b = get_user_model().objects.create_user(
+        email="smc-b@example.com", password="pw-123456"
+    )
+    b_client.force_login(b)
+    body_b = b_client.get(url).json()
+
+    assert body_a == body_b  # R5: no per-user scoping/filtering

@@ -9,6 +9,7 @@ from market import views
 urlpatterns = [
     path("market/", views.market_page, name="market_page"),
     path("market/api/kline", views.api_kline, name="market_api_kline"),
+    path("market/api/smc", views.api_smc, name="market_api_smc"),
     path("market/api/layout", views.api_layout, name="market_api_layout"),
     path("market/api/drawings", views.api_drawings, name="market_api_drawings"),
     path(
@@ -21,6 +22,11 @@ urlpatterns = [
         "market/drawing-core.js",
         views.drawing_core_js,
         name="market_drawing_core_js",
+    ),
+    path(
+        "market/smc-overlay-core.js",
+        views.smc_overlay_core_js,
+        name="market_smc_overlay_core_js",
     ),
     path("market/chart.js", views.chart_js, name="market_chart_js"),
 ]

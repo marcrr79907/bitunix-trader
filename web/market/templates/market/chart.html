@@ -48,6 +48,15 @@
     </fieldset>
     <h2>RSI (14)</h2>
     <p id="rsi" aria-live="polite">–</p>
+    <h2 id="smc-heading">SMC overlay</h2>
+    <fieldset class="smc" aria-labelledby="smc-heading">
+      <label><input type="checkbox" class="smc-toggle" data-family="swings" checked> Swings</label>
+      <label><input type="checkbox" class="smc-toggle" data-family="structure" checked> Structure</label>
+      <label><input type="checkbox" class="smc-toggle" data-family="order_blocks" checked> Order blocks</label>
+      <label><input type="checkbox" class="smc-toggle" data-family="fvg" checked> FVG</label>
+      <label><input type="checkbox" class="smc-toggle" data-family="range" checked> Range</label>
+      <label><input type="checkbox" class="smc-toggle" data-family="setups" checked> Setups</label>
+    </fieldset>
     <h2 id="drawings-heading">Drawings</h2>
     <fieldset class="drawings" aria-labelledby="drawings-heading">
       <button type="button" class="draw-tool" data-kind="hline">H-line</button>
@@ -75,5 +84,6 @@
 <script src="https://unpkg.com/lightweight-charts@5.2.0/dist/lightweight-charts.standalone.production.js"></script>
 <script src="{% url 'market_chart_core_js' %}"></script>
 <script src="{% url 'market_drawing_core_js' %}"></script>
+<script src="{% url 'market_smc_overlay_core_js' %}"></script>
 <script src="{% url 'market_chart_js' %}"></script>
 {% endblock %}
