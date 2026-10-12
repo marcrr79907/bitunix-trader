@@ -108,13 +108,38 @@ def run_private_sync(client_factory=None) -> int:
 
 
 def on_fired(rule, detail: dict) -> None:
-    """D1 sink stub: log only. D2 re-binds this module seam (R8)."""
-    logger.info(
-        "alert fired rule=%s user=%s symbol=%s",
-        rule.pk,
-        rule.user_id,
-        rule.symbol,
-    )
+    """D2 sink: format a ``detail``-only message and send it via Telegram (R8).
+
+    Self-guarded (R7): any formatting/delivery failure is logged and swallowed
+    so the evaluation loop and its peers are never disturbed. At-most-once is
+    owned by D1 (``run_alert_rules`` stamps ``last_fired_at`` before calling
+    here); this sink adds no dedup and no retry. The Telegram secret lives only
+    in the worker trust zone — ``src.alerts`` is imported at call time.
+    """
+    try:
+        import json
+
+        from src.alerts import send_telegram
+
+        chat_id = rule.telegram_chat_id or config.TELEGRAM_CHAT_ID
+        condition = json.dumps(
+            detail["condition"], sort_keys=True, separators=(",", ":")
+        )
+        bar = datetime.fromtimestamp(detail["edge_time"], tz=UTC).isoformat()
+        text = (
+            f"🚨 Alert {detail['symbol']} {detail['interval']}\n"
+            f"Condition: {condition}\n"
+            f"Bar: {bar}"
+        )
+        if not chat_id:
+            logger.warning("alert fired rule=%s but no telegram chat id", rule.pk)
+            return
+        if send_telegram(text, chat_id=chat_id):
+            logger.info("alert delivered rule=%s chat=%s", rule.pk, chat_id)
+        else:
+            logger.warning("alert delivery failed rule=%s chat=%s", rule.pk, chat_id)
+    except Exception as exc:  # ponytail: broad by spec (R8) — sink never escapes
+        logger.warning("alert sink failed rule=%s: %s", rule.pk, exc)
 
 
 def run_alert_rules(on_fired_sink=None) -> int:
