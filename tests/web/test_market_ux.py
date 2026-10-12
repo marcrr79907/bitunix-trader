@@ -59,6 +59,15 @@ def test_chart_core_served_as_javascript(client):
     assert b"upsertCandle" in response.content
 
 
+def test_drawing_core_served_as_javascript(client):
+    # Pure drawing geometry is same-origin and NOT auth-gated (no state).
+    response = client.get("/market/drawing-core.js")
+    assert response.status_code == 200
+    assert response["Content-Type"] == "text/javascript"
+    assert b"hlinePath" in response.content
+    assert b"fibLevels" in response.content
+
+
 def test_home_links_to_market_page(logged_in_client):
     response = logged_in_client.get("/")
     assert response.status_code == 200

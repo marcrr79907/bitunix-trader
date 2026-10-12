@@ -268,3 +268,12 @@ def chart_core_js(request: HttpRequest) -> HttpResponse:
         render(request, "market/chart-core.js").content,
         content_type="text/javascript",
     )
+
+
+@require_http_methods(["GET"])
+def drawing_core_js(request: HttpRequest) -> HttpResponse:
+    """Serve the pure drawing geometry same-origin (no state; not auth-gated)."""
+    return HttpResponse(
+        render(request, "market/drawing-core.js").content,
+        content_type="text/javascript",
+    )

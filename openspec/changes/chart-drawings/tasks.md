@@ -44,12 +44,12 @@ Base: PR2 branch; deps WU2. Rollback: restore `chart.js`/`chart.html`; delete `d
 
 Note: JS is **outside the Python patch gate** (`diff-cover` covers Python only). `drawing-core.js` MUST be UMD pure geometry covered by `node --test`; Playwright E2E is the integration/adapter net (DOM seam + network assertions, no image diffs).
 
-- [ ] 3.1 **RED** `tests/js/drawing-core.test.js` (`node --test`): per-kind path builders (`hlinePath`/`trendlinePath`/`fibLevels`/`rectPath`), hit-test math, off-bar `null` guard skips leg. Acceptance: fails before 3.2, green after.
-- [ ] 3.2 **GREEN** `web/market/templates/market/drawing-core.js` (NEW UMD): pure geometry + null guards, no chart import. Acceptance: `node --test` green.
-- [ ] 3.3 **RED** `test_market_e2e.py`: seed via endpoint → boot attaches N primitives (`window.marketChart.drawings` seam + POST/GET network); click → POST fired; delete-by-id → DELETE fired; interval switch clears then reloads; failed fetch → no drawings, no error. Acceptance: red first, green after 3.4/3.5.
-- [ ] 3.4 **GREEN** `chart.js`: one `DrawingPrimitive` per kind (`paneViews`/`draw` via `useMediaCoordinateSpace`, `autoscaleInfo` for rays/rects, `attached({requestUpdate})`); attach on boot after `buildChart` + on `switchTo` (clear previous); `subscribeClick`/`subscribeCrosshairMove` → `drawing-core` → POST → attach; `state.tool`; `window.marketChart.drawings` seam. Acceptance: 3.3 green.
-- [ ] 3.5 **GREEN** `chart.html`: `<fieldset class="drawings">` of `<button type="button" class="draw-tool" data-kind=…>` + delete list (mirrors `.pair`); CSP-safe `addEventListener`; **text input via native `<dialog>`** (locked, proposal-recommended); CSRF meta reused. Acceptance: 3.3 green; no inline handler.
-- [ ] 3.6 **REFACTOR** E2E green; no console errors; DOM-only assertions.
+- [x] 3.1 **RED** `tests/js/drawing-core.test.js` (`node --test`): per-kind path builders (`hlinePath`/`trendlinePath`/`fibLevels`/`rectPath`), hit-test math, off-bar `null` guard skips leg. Acceptance: fails before 3.2, green after.
+- [x] 3.2 **GREEN** `web/market/templates/market/drawing-core.js` (NEW UMD): pure geometry + null guards, no chart import. Acceptance: `node --test` green.
+- [x] 3.3 **RED** `test_market_e2e.py`: seed via endpoint → boot attaches N primitives (`window.marketChart.drawings` seam + POST/GET network); click → POST fired; delete-by-id → DELETE fired; interval switch clears then reloads; failed fetch → no drawings, no error. Acceptance: red first, green after 3.4/3.5.
+- [x] 3.4 **GREEN** `chart.js`: one `DrawingPrimitive` per kind (`paneViews`/`draw` via `useMediaCoordinateSpace`, `autoscaleInfo` for rays/rects, `attached({requestUpdate})`); attach on boot after `buildChart` + on `switchTo` (clear previous); `subscribeClick`/`subscribeCrosshairMove` → `drawing-core` → POST → attach; `state.tool`; `window.marketChart.drawings` seam. Acceptance: 3.3 green.
+- [x] 3.5 **GREEN** `chart.html`: `<fieldset class="drawings">` of `<button type="button" class="draw-tool" data-kind=…>` + delete list (mirrors `.pair`); CSP-safe `addEventListener`; **text input via native `<dialog>`** (locked, proposal-recommended); CSRF meta reused. Acceptance: 3.3 green; no inline handler.
+- [x] 3.6 **REFACTOR** E2E green; no console errors; DOM-only assertions.
 
 ## Phase 4 — Verification
 

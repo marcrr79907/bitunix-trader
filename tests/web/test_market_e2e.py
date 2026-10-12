@@ -525,3 +525,169 @@ def test_toggle_adds_and_removes_panes(seeded_5m_candles, browser_page):
     assert any("indicators=" in u and "macd" in u for u in kline_requests), (
         kline_requests
     )
+
+
+@pytest.fixture
+def seeded_drawings(e2e_user):
+    """Seed drawings for the boot key (BTCUSDT, 1m) BEFORE the browser context.
+
+    One hline + one rect (a full-width primitive with autoscaleInfo). Boot uses
+    ``(SYMBOLS[0], "1m")`` = ``(BTCUSDT, "1m")``.
+    """
+    from trading.models import Drawing
+
+    Drawing.objects.create(
+        user=e2e_user,
+        symbol="BTCUSDT",
+        interval="1m",
+        kind="hline",
+        points={"price": 50000.0},
+        style={"color": "#2962ff", "lineWidth": 1},
+    )
+    Drawing.objects.create(
+        user=e2e_user,
+        symbol="BTCUSDT",
+        interval="1m",
+        kind="rect",
+        points={"p1": {"time": 1, "price": 1.0}, "p2": {"time": 2, "price": 2.0}},
+        style={"color": "#26a69a", "fill": True},
+    )
+    return e2e_user
+
+
+@pytest.fixture
+def per_interval_drawings(e2e_user):
+    """Drawings on (BTCUSDT,1m) and (BTCUSDT,5m): a switch must clear + reload."""
+    from trading.models import Drawing
+
+    Drawing.objects.create(
+        user=e2e_user,
+        symbol="BTCUSDT",
+        interval="1m",
+        kind="hline",
+        points={"price": 1.0},
+        style={},
+    )
+    Drawing.objects.create(
+        user=e2e_user,
+        symbol="BTCUSDT",
+        interval="5m",
+        kind="hline",
+        points={"price": 2.0},
+        style={},
+    )
+    return e2e_user
+
+
+@p
+def test_boot_restores_saved_drawings(seeded_drawings, browser_page):
+    # R7: saved drawings for the active key attach on boot and the seam lists them.
+    page, base_url = browser_page
+    page.goto(f"{base_url}/market/")
+    _wait_ready(page)
+    page.wait_for_function(
+        "() => window.marketChart.drawings && window.marketChart.drawings.length === 2",
+        timeout=10000,
+    )
+    kinds = page.evaluate("() => window.marketChart.drawings.map((d) => d.kind)")
+    assert sorted(kinds) == ["hline", "rect"]
+
+
+@p
+def test_click_with_tool_fires_post(seeded_5m_candles, browser_page):
+    # R7: with a tool active, a chart click converts to a point and POSTs the shape.
+    # Candles are seeded so the price scale has a range (else coordinateToPrice
+    # returns null and the create is correctly skipped).
+    page, base_url = browser_page
+    posts = []
+    page.on(
+        "request",
+        lambda r: (
+            posts.append(r)
+            if r.method == "POST" and "/market/api/drawings" in r.url
+            else None
+        ),
+    )
+    page.goto(f"{base_url}/market/")
+    _wait_ready(page)
+    page.select_option("#interval", "5m")
+    page.wait_for_function(
+        "() => window.marketChart && window.marketChart.candleSeries.data().length > 0",
+        timeout=10000,
+    )
+    page.locator('.draw-tool[data-kind="hline"]').click()
+    canvas = page.locator("#chart canvas").first
+    canvas.scroll_into_view_if_needed()
+    box = canvas.bounding_box()
+    page.mouse.click(box["x"] + box["width"] / 2, box["y"] + box["height"] / 2)
+    page.wait_for_function(
+        "() => window.marketChart.drawings && window.marketChart.drawings.length === 1",
+        timeout=10000,
+    )
+    assert len(posts) == 1, [r.url for r in posts]
+    body = json.loads(posts[0].post_data or "{}")
+    assert body["kind"] == "hline"
+    assert body["symbol"] == "BTCUSDT"
+    assert body["interval"] == "5m"
+    assert "price" in body["points"]
+
+
+@p
+def test_delete_from_panel_fires_delete(seeded_drawings, browser_page):
+    # R7: the panel list deletes by id -> DELETE /market/api/drawings/<id>.
+    page, base_url = browser_page
+    deletes = []
+    page.on(
+        "request",
+        lambda r: (
+            deletes.append(r)
+            if r.method == "DELETE" and "/market/api/drawings/" in r.url
+            else None
+        ),
+    )
+    page.goto(f"{base_url}/market/")
+    _wait_ready(page)
+    page.wait_for_function(
+        "() => window.marketChart.drawings && window.marketChart.drawings.length === 2",
+        timeout=10000,
+    )
+    page.locator("#drawing-list .drawing-del").first.click()
+    page.wait_for_function(
+        "() => window.marketChart.drawings && window.marketChart.drawings.length === 1",
+        timeout=10000,
+    )
+    assert len(deletes) == 1, [r.url for r in deletes]
+
+
+@p
+def test_switch_clears_then_loads_drawings(per_interval_drawings, browser_page):
+    # R7: switching interval clears the previous key's shapes and loads the new.
+    page, base_url = browser_page
+    page.goto(f"{base_url}/market/")
+    _wait_ready(page)
+    assert page.evaluate("() => window.marketChart.drawings.length") == 1
+    assert page.evaluate("() => window.marketChart.drawings[0].points.price") == 1.0
+
+    page.select_option("#interval", "5m")
+    page.wait_for_function(
+        "() => window.marketChart.drawings.length === 1"
+        " && window.marketChart.drawings[0].points.price === 2.0",
+        timeout=10000,
+    )
+
+
+@p
+def test_failed_drawings_fetch_is_non_fatal(browser_page):
+    # R7: a failing drawings fetch renders the chart with no drawings, no error.
+    page, base_url = browser_page
+    page.route("**/market/api/drawings?*", lambda route: route.abort())
+    errors = []
+    page.on(
+        "console",
+        lambda msg: errors.append(msg.text) if msg.type == "error" else None,
+    )
+    page.goto(f"{base_url}/market/")
+    _wait_ready(page)
+    assert page.evaluate("() => window.marketChart.drawings") == []
+    script_errors = [e for e in errors if "net::" not in e and "WebSocket" not in e]
+    assert script_errors == [], f"console errors: {script_errors}"

@@ -16,11 +16,13 @@
   "use strict";
 
   var Core = window.ChartCore;
+  var Draw = window.DrawingCore;
   var SYMBOLS = {{ symbols|safe }};
   var WS_URL = "wss://fapi.bitunix.com/public/";
   var REFETCH_DELAY = 1500;
   var SAVE_DELAY = 500; // debounce for the layout PUT (R5)
   var LAYOUT_URL = "/market/api/layout";
+  var DRAWINGS_URL = "/market/api/drawings";
 
   // REST interval -> BitUnix WS channel (live-verified 2026-10-08).
   var CHANNELS = {
@@ -140,6 +142,7 @@
     interval: "1m",
     indicators: readIndicators(),
     params: readParams(),
+    tool: null, // active drawing tool ("hline"|"trendline"|"fib"|"rect"|"text")
   };
 
   var el = document.getElementById("chart");
@@ -152,7 +155,13 @@
 
   // Read-only test seam (DOM assertions, no image diffs). ``ready`` flips true
   // once the async boot has applied the layout and built the chart.
-  window.marketChart = { chart: null, candleSeries: null, panes: {}, ready: false };
+  window.marketChart = {
+    chart: null,
+    candleSeries: null,
+    panes: {},
+    ready: false,
+    drawings: [],
+  };
 
   var ws = null;
   var sub = null; // {symbol, interval} pending or active
@@ -238,6 +247,11 @@
     window.marketChart.chart = chart;
     window.marketChart.candleSeries = candleSeries;
     window.marketChart.panes = panes;
+
+    // Drawings live on the primitive layer (own canvas), so a rebuild must
+    // re-attach them — no series setData/update involved (#68 preserved).
+    attachAllDrawings();
+    chart.subscribeClick(onChartClick);
 
     chart.timeScale().subscribeVisibleLogicalRangeChange(function (range) {
       if (range && range.from < EDGE) loadOlder();
@@ -457,6 +471,329 @@
     }, SAVE_DELAY);
   };
 
+  // --- drawings (R6/R7) --------------------------------------------------------
+  //
+  // Drawings render on a series PRIMITIVE (its own canvas layer) — never via
+  // setData/update — so the #68 single-write-path stays intact. Geometry comes
+  // from the pure drawing-core.js; this adapter only maps coordinates, fetches,
+  // and owns the DOM.
+
+  var drawingListEl = document.getElementById("drawing-list");
+  var drawToolButtons = Array.prototype.slice.call(
+    document.querySelectorAll(".draw-tool"),
+  );
+  var cancelToolButton = document.querySelector(".draw-cancel");
+  var textDialog = document.getElementById("text-dialog");
+  var textDialogInput = document.getElementById("text-dialog-input");
+
+  var currentDrawings = []; // rows loaded for the active (symbol, interval)
+  var attached = []; // [{id, prim}] — the primitives currently on the series
+  var drawGen = 0; // monotonic guard against a stale drawings fetch
+  var pendingAnchor = null; // first click of a two-point drawing
+
+  var enc = encodeURIComponent;
+
+  // Price range so a full-width ray / rect is not clipped on pan/zoom (R6).
+  var priceRangeFor = function (row) {
+    var prices = [];
+    if (typeof row.points.price === "number") prices.push(row.points.price);
+    ["p1", "p2"].forEach(function (k) {
+      var p = row.points[k];
+      if (p && typeof p.price === "number") prices.push(p.price);
+    });
+    if (!prices.length) return null;
+    return {
+      priceRange: {
+        minValue: Math.min.apply(null, prices),
+        maxValue: Math.max.apply(null, prices),
+      },
+    };
+  };
+
+  // Pure canvas draws for one shape. ``map`` = {x(time), y(price)}; null means
+  // off-bar / off-scale and the leg is skipped rather than thrown (R6).
+  var renderShape = function (ctx, size, row, map) {
+    var color = row.style.color || "#2962ff";
+    var width = row.style.lineWidth || 1;
+    var kind = row.kind;
+    ctx.save();
+    ctx.strokeStyle = color;
+    ctx.fillStyle = color;
+    ctx.lineWidth = width;
+
+    if (kind === "hline") {
+      var y = map.y(row.points.price);
+      if (y !== null && y !== undefined) {
+        ctx.beginPath();
+        ctx.moveTo(0, y);
+        ctx.lineTo(size.width, y);
+        ctx.stroke();
+      }
+    } else if (kind === "trendline") {
+      var t = Draw.trendlinePath(row, map);
+      if (t.a && t.b) {
+        ctx.beginPath();
+        ctx.moveTo(t.a.x, t.a.y);
+        ctx.lineTo(t.b.x, t.b.y);
+        ctx.stroke();
+      }
+    } else if (kind === "fib") {
+      var f = Draw.fibPath(row, map, row.style.levels);
+      ctx.font = "11px sans-serif";
+      f.levels.forEach(function (l) {
+        if (l.y === null || l.y === undefined) return;
+        ctx.beginPath();
+        ctx.moveTo(f.x1, l.y);
+        ctx.lineTo(f.x2, l.y);
+        ctx.stroke();
+        ctx.fillText(l.ratio + "  " + l.price, f.x1, l.y - 2);
+      });
+    } else if (kind === "rect") {
+      var r = Draw.rectPath(row, map);
+      if (r) {
+        if (row.style.fill) {
+          ctx.globalAlpha = 0.15;
+          ctx.fillRect(r.left, r.top, r.width, r.height);
+          ctx.globalAlpha = 1;
+        }
+        ctx.strokeRect(r.left, r.top, r.width, r.height);
+      }
+    } else if (kind === "text") {
+      var tx = Draw.textPath(row, map);
+      if (tx.x !== null && tx.x !== undefined && tx.y !== null && tx.y !== undefined) {
+        ctx.font = (row.style.fontSize || 14) + "px sans-serif";
+        ctx.fillText(tx.text, tx.x, tx.y);
+      }
+    }
+    ctx.restore();
+  };
+
+  // One v5 ISeriesPrimitive per drawing (paneViews + autoscaleInfo + lifecycle).
+  var makeDrawingPrimitive = function (row) {
+    var ctx = { chart: null, series: null, requestUpdate: null };
+    var map = {
+      x: function (time) {
+        return ctx.chart ? ctx.chart.timeScale().timeToCoordinate(time) : null;
+      },
+      y: function (price) {
+        return ctx.series ? ctx.series.priceToCoordinate(price) : null;
+      },
+    };
+    return {
+      attached: function (params) {
+        ctx.chart = params.chart;
+        ctx.series = params.series;
+        ctx.requestUpdate = params.requestUpdate;
+      },
+      detached: function () {
+        ctx.chart = null;
+        ctx.series = null;
+      },
+      paneViews: function () {
+        return [
+          {
+            renderer: function () {
+              return {
+                draw: function (target) {
+                  target.useMediaCoordinateSpace(function (scope) {
+                    renderShape(scope.context, scope.mediaSize, row, map);
+                  });
+                },
+              };
+            },
+          },
+        ];
+      },
+      autoscaleInfo: function () {
+        return priceRangeFor(row);
+      },
+    };
+  };
+
+  var renderDrawingList = function () {
+    if (!drawingListEl) return;
+    drawingListEl.textContent = "";
+    currentDrawings.forEach(function (row) {
+      var li = document.createElement("li");
+      var label = row.kind + " #" + row.id;
+      var btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "drawing-del";
+      btn.dataset.id = row.id;
+      btn.textContent = "× " + label;
+      btn.addEventListener("click", function () { deleteDrawing(row.id); });
+      li.appendChild(btn);
+      drawingListEl.appendChild(li);
+    });
+  };
+
+  // Re-attach every loaded drawing to the CURRENT candleSeries (used after a
+  // rebuild and after a load). Always rebuilds the primitive list (R7). Before
+  // the first buildChart (candleSeries === null) it only publishes the seam and
+  // list; buildChart re-attaches once the series exists.
+  var attachAllDrawings = function () {
+    attached.forEach(function (p) {
+      if (candleSeries) candleSeries.detachPrimitive(p.prim);
+    });
+    attached = [];
+    if (candleSeries) {
+      currentDrawings.forEach(function (row) {
+        var prim = makeDrawingPrimitive(row);
+        candleSeries.attachPrimitive(prim);
+        attached.push({ id: row.id, prim: prim });
+      });
+    }
+    window.marketChart.drawings = currentDrawings.slice();
+    renderDrawingList();
+  };
+
+  var loadDrawings = function (symbol, interval) {
+    var mine = ++drawGen;
+    var url = DRAWINGS_URL + "?symbol=" + enc(symbol) + "&interval=" + enc(interval);
+    return fetch(url)
+      .then(function (r) {
+        if (!r.ok) throw new Error("drawings " + r.status);
+        return r.json();
+      })
+      .then(function (body) {
+        if (mine !== drawGen) return;
+        currentDrawings = (body.drawings || []).map(Draw.fromApi).filter(Boolean);
+        attachAllDrawings();
+      })
+      .catch(function () {
+        // A failed fetch is non-fatal: the chart renders with no drawings (R7).
+        if (mine !== drawGen) return;
+        currentDrawings = [];
+        attachAllDrawings();
+      });
+  };
+
+  // Load the active key's drawings then attach them to the CURRENT series
+  // (called AFTER buildChart, per R7: layout -> build -> drawings -> attach).
+  var refreshDrawings = function () {
+    return loadDrawings(state.symbol, state.interval);
+  };
+
+  var createDrawing = function (kind, points, style) {
+    var body = {
+      symbol: state.symbol,
+      interval: state.interval,
+      kind: kind,
+      points: points,
+      style: style,
+    };
+    fetch(DRAWINGS_URL, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "X-CSRFToken": csrfToken() },
+      body: JSON.stringify(body),
+    })
+      .then(function (r) {
+        if (!r.ok) throw new Error("drawings " + r.status);
+        return r.json();
+      })
+      .then(function (saved) {
+        var row = Draw.fromApi({
+          id: saved.id,
+          kind: saved.kind,
+          points: saved.points,
+          style: saved.style,
+        });
+        if (!row) return;
+        currentDrawings.push(row);
+        attachAllDrawings();
+      })
+      .catch(function () { /* in-session create failed; nothing to do */ });
+  };
+
+  var deleteDrawing = function (id) {
+    fetch(DRAWINGS_URL + "/" + id, {
+      method: "DELETE",
+      headers: { "X-CSRFToken": csrfToken() },
+    })
+      .then(function () {
+        currentDrawings = currentDrawings.filter(function (d) { return d.id !== id; });
+        attachAllDrawings();
+      })
+      .catch(function () { /* keep the row on a failed delete */ });
+  };
+
+  var syncToolButtons = function () {
+    drawToolButtons.forEach(function (btn) {
+      var on = btn.dataset.kind === state.tool;
+      btn.setAttribute("aria-pressed", on ? "true" : "false");
+      btn.classList.toggle("active", on);
+    });
+    if (el) el.classList.toggle("drawing", !!state.tool);
+  };
+
+  // A chart click in tool mode -> create a shape. hline needs only a price;
+  // two-point kinds collect an anchor then a second click; text opens a dialog.
+  var onChartClick = function (param) {
+    if (!state.tool || !param || !param.point || !candleSeries) return;
+    var price = candleSeries.coordinateToPrice(param.point.y);
+    if (price === null || price === undefined) return;
+    var kind = state.tool;
+
+    if (kind === "hline") {
+      createDrawing("hline", { price: price }, Draw.defaultStyle("hline"));
+      return;
+    }
+    if (param.time === undefined || param.time === null) return; // off-bar anchor
+    if (kind === "text") {
+      pendingAnchor = { time: param.time, price: price };
+      if (textDialog) {
+        textDialogInput.value = "";
+        textDialog.showModal();
+      } else {
+        createDrawing("text", { time: param.time, price: price, text: "note" },
+          Draw.defaultStyle("text"));
+        pendingAnchor = null;
+      }
+      return;
+    }
+    // trendline | fib | rect: first click sets the anchor, second finalizes.
+    if (pendingAnchor === null) {
+      pendingAnchor = { time: param.time, price: price };
+      return;
+    }
+    createDrawing(
+      kind,
+      { p1: pendingAnchor, p2: { time: param.time, price: price } },
+      Draw.defaultStyle(kind),
+    );
+    pendingAnchor = null;
+  };
+
+  drawToolButtons.forEach(function (btn) {
+    btn.addEventListener("click", function () {
+      var kind = btn.dataset.kind;
+      state.tool = state.tool === kind ? null : kind;
+      pendingAnchor = null;
+      syncToolButtons();
+    });
+  });
+  if (cancelToolButton) {
+    cancelToolButton.addEventListener("click", function () {
+      state.tool = null;
+      pendingAnchor = null;
+      syncToolButtons();
+    });
+  }
+  if (textDialog) {
+    textDialog.addEventListener("close", function () {
+      var text = (textDialogInput.value || "").trim();
+      if (textDialog.returnValue === "ok" && pendingAnchor && text) {
+        createDrawing(
+          "text",
+          { time: pendingAnchor.time, price: pendingAnchor.price, text: text },
+          Draw.defaultStyle("text"),
+        );
+      }
+      pendingAnchor = null;
+      textDialogInput.value = "";
+    });
+  }
+
   // --- controls ----------------------------------------------------------------
 
   // A config change (toggle/param) is legitimate to rebuild (setData path); the
@@ -477,13 +814,23 @@
     var mine = ++gen;
     state.symbol = symbol;
     state.interval = interval;
+    state.tool = null;
+    pendingAnchor = null;
+    syncToolButtons();
+    currentDrawings = []; // clear immediately: shapes never cross keys (R7)
+    drawGen++; // invalidate any in-flight drawings fetch for the old key
     lastBucket = 0;
     if (ws && ws.readyState === 1) sendSubscribe({ symbol: symbol, interval: interval });
     else sub = { symbol: symbol, interval: interval };
-    // Load THIS chart's layout before history (R4); fallback keeps DOM defaults.
+    // Load THIS chart's layout first (R4), then build + attach its drawings
+    // (R7: layout -> build -> drawings -> attach). A failed drawings fetch is
+    // non-fatal (resolves with []) so the chart still renders.
     loadLayout(symbol, interval).then(function () {
       if (mine !== gen) return; // a newer switch won the race
       buildChart();
+      return refreshDrawings();
+    }).then(function () {
+      if (mine !== gen) return;
       fetchHistory();
     });
   };
@@ -501,8 +848,10 @@
   toggles.forEach(function (t) { t.addEventListener("change", rebuild); });
   paramInputs.forEach(function (el) { el.addEventListener("change", rebuild); });
 
-  // Async boot (R4): layout FIRST, then build + connect + history. On failure
-  // the DOM defaults drive the chart — never blank.
+  // Async boot (R4/R7): layout -> build -> connect -> drawings -> history, all
+  // sequential so no two API fetches race the session (the E2E live server is
+  // single-session). A failed drawings fetch is non-fatal. ``ready`` flips only
+  // after the drawings resolve so tests can read the seam deterministically.
   var boot = function () {
     var mine = ++gen;
     loadLayout(state.symbol, state.interval).then(function () {
@@ -510,6 +859,9 @@
       buildChart();
       sub = { symbol: state.symbol, interval: state.interval };
       connect();
+      return refreshDrawings();
+    }).then(function () {
+      if (mine !== gen) return;
       fetchHistory();
       window.marketChart.ready = true;
     });

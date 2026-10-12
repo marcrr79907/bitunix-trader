@@ -17,5 +17,10 @@ urlpatterns = [
         name="market_api_drawing_detail",
     ),
     path("market/chart-core.js", views.chart_core_js, name="market_chart_core_js"),
+    path(
+        "market/drawing-core.js",
+        views.drawing_core_js,
+        name="market_drawing_core_js",
+    ),
     path("market/chart.js", views.chart_js, name="market_chart_js"),
 ]
