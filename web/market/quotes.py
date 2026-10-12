@@ -22,7 +22,7 @@ from collections.abc import Mapping
 
 import requests
 from trading.candles import CANDLE_INTERVALS
-from trading.models import Candle
+from trading.models import Candle, Drawing
 
 from src import indicators
 from src.client import BitunixError
@@ -326,6 +326,65 @@ def _validate_layout_params(token: str, params) -> dict:
     ):
         raise ValueError("invalid macd params: macd_fast MUST be < macd_slow")
     return params
+
+
+# --- drawings (R2/R4/R5) -----------------------------------------------------
+#
+# Drawing kinds mirror ``Drawing.Kind`` (the model is the source of truth); the
+# pure validator below is the API's contract. ``points`` is ONE JSON object per
+# kind (see design schemas), validated BEFORE any write — a breach raises
+# ``ValueError`` and the view maps it to 400.
+DRAWING_KINDS = frozenset(Drawing.Kind.values)
+
+# Numeric field check: a real number, never a bool (``True`` is an ``int``).
+_NUM = (int, float)
+
+
+def _is_number(value) -> bool:
+    return isinstance(value, _NUM) and not isinstance(value, bool)
+
+
+def _parse_point(point, *, require_time: bool, where: str) -> None:
+    """Validate a ``{time,price}`` anchor in place; raise ``ValueError``."""
+    if not isinstance(point, dict):
+        raise ValueError(f"invalid {where} point")
+    if require_time and not isinstance(point.get("time"), int):
+        raise ValueError(f"invalid {where} time")
+    if not _is_number(point.get("price")):
+        raise ValueError(f"invalid {where} price")
+
+
+def parse_drawing(kind, points, style) -> tuple[dict, dict]:
+    """Validate a drawing payload; raise ``ValueError`` on any breach (R4/R5).
+
+    ``kind`` MUST be one of ``DRAWING_KINDS``; ``points`` MUST match the kind's
+    object schema and ``style`` MUST be an object. The validated ``(points,
+    style)`` are returned verbatim (no defaults injected) so a stored row
+    round-trips unchanged.
+    """
+    if kind not in DRAWING_KINDS:
+        raise ValueError(f"unknown kind: {kind}")
+    if not isinstance(points, dict):
+        raise ValueError("points must be an object")
+    if not isinstance(style, dict):
+        raise ValueError("style must be an object")
+
+    if kind == "hline":
+        if not _is_number(points.get("price")):
+            raise ValueError("invalid hline price")
+    elif kind in ("trendline", "fib", "rect"):
+        if set(points) != {"p1", "p2"}:
+            raise ValueError(f"{kind} requires exactly two points")
+        _parse_point(points["p1"], require_time=True, where=f"{kind} p1")
+        _parse_point(points["p2"], require_time=True, where=f"{kind} p2")
+    elif kind == "text":
+        if not isinstance(points.get("time"), int):
+            raise ValueError("invalid text time")
+        if not _is_number(points.get("price")):
+            raise ValueError("invalid text price")
+        if not isinstance(points.get("text"), str) or not points["text"].strip():
+            raise ValueError("text requires a label")
+    return points, style
 
 
 def _now_seconds() -> int:
