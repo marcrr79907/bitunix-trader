@@ -23,6 +23,7 @@ PURE_MODULES = (
     "smc/structure.py",
     "smc/zones.py",
     "smc/range.py",
+    "smc/signals.py",
 )
 
 

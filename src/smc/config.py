@@ -19,3 +19,9 @@ SWEEP_LOOKBACK = 20  # bars a prior swing stays sweepable
 
 # --- B2 range -------------------------------------------------------------
 RANGE_LOOKBACK = 50  # bars in the fixed dealing-range window
+
+# --- B2 signals -----------------------------------------------------------
+SL_BUFFER = 0.0  # price offset added beyond the stop-loss distal edge
+MIN_RR = 2.0  # minimum reward:risk for a Setup to be emitted
+MIN_CONFLUENCE = 3  # minimum 0..4 confluence score to emit a Setup
+MIN_RR_TP_R = 3.0  # fixed-R multiple for the take-profit fallback
