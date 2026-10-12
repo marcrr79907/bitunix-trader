@@ -28,7 +28,7 @@ Cross-user reads MUST be denied for ALL owned models. Using
 `for_user(other).get(pk=<this user's row pk>)` MUST raise `DoesNotExist`; a
 lookup that bypasses `for_user` MUST NOT be used by request-serving code.
 (Delivered with: `ExchangeCredential`, `Watchlist`, `PositionSnapshot`,
-`AccountSnapshot`, `Trade`, `ChartLayout`, `Drawing`.)
+`AccountSnapshot`, `Trade`, `ChartLayout`, `Drawing`, `AlertRule`.)
 
 #### Scenario: A cannot read B's ExchangeCredential
 
@@ -72,13 +72,19 @@ lookup that bypasses `for_user` MUST NOT be used by request-serving code.
 - WHEN `for_user(B).get(pk=row.pk)` is called
 - THEN it raises `DoesNotExist`
 
+#### Scenario: A cannot read B's AlertRule
+
+- GIVEN an `AlertRule` owned by A
+- WHEN `for_user(B).get(pk=rule.pk)` is called
+- THEN it raises `DoesNotExist`
+
 ### Requirement: R14.3 — Unscoped-query guard
 
 Request-serving code MUST NOT use unscoped queries (`.objects.all()`,
 `.objects.get()`, `.objects.filter()`) on owned models. A scanner MUST flag such
 usage; `OWNED_MODELS` MUST include `ExchangeCredential`, `Watchlist`,
-`PositionSnapshot`, `AccountSnapshot`, `Trade`, `ChartLayout`, and `Drawing`. The
-mechanism holds only while all access routes through `for_user`.
+`PositionSnapshot`, `AccountSnapshot`, `Trade`, `ChartLayout`, `Drawing`, and
+`AlertRule`. The mechanism holds only while all access routes through `for_user`.
 
 #### Scenario: Scanner flags an unscoped query
 
@@ -98,6 +104,12 @@ mechanism holds only while all access routes through `for_user`.
 - WHEN the guard scans it
 - THEN the scanner reports the offender (proves `Drawing` is in `OWNED_MODELS`)
 
+#### Scenario: Scanner flags an unscoped AlertRule query
+
+- GIVEN a fixture calling `AlertRule.objects.all()` in the request path
+- WHEN the guard scans it
+- THEN the scanner reports the offender (proves `AlertRule` is in `OWNED_MODELS`)
+
 #### Scenario: Scoped query passes the guard
 
 - GIVEN request-serving code calling `for_user(user)` on an owned model
@@ -112,10 +124,10 @@ mechanism holds only while all access routes through `for_user`.
 
 ### Requirement: R14.4 — Worker trusted-zone exception
 
-The worker MAY read all users' credentials unscoped and persist private data for
-every user. This is a trusted-zone operation and MUST NOT be treated as a
-cross-tenant user read. No `for_user` scoping MUST be required for worker-zone
-access.
+The worker MAY read all users' credentials and alert rules unscoped and persist
+private data for every user. This is a trusted-zone operation and MUST NOT be
+treated as a cross-tenant user read. No `for_user` scoping MUST be required for
+worker-zone access; the R14.3 scanner MUST NOT apply to `web/worker.py`.
 
 #### Scenario: Worker reads across users legitimately
 
@@ -128,3 +140,9 @@ access.
 - GIVEN active credentials for several users
 - WHEN the worker private-sync step runs
 - THEN it writes each user's rows without `for_user` scoping and this is legitimate
+
+#### Scenario: Worker reads all users' rules unscoped
+
+- GIVEN active `AlertRule`s owned by several users
+- WHEN `run_alert_rules` reads `AlertRule.objects.filter(is_active=True)` in `web/worker.py`
+- THEN all rules are readable and the owned-model guard reports no offender
