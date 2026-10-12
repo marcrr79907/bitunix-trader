@@ -8,9 +8,13 @@ Two layers:
 - Endpoint: contract tests over ``/market/api/kline`` — view errors are
   exercised via a monkeypatched ``market.views.BitunixClient``; anonymous
   redirect and the 200/400/502 matrix.
+- Layout: contract tests over ``/market/api/layout`` (R2/R3) — per-user layout
+  GET/PUT, default-on-miss, upsert, validation-before-write, CSRF, A≠B.
 """
 
 from __future__ import annotations
+
+import json
 
 import pytest
 import requests
@@ -150,16 +154,18 @@ def test_payload_empty_upstream_is_200_empty_arrays():
 
 ANON = Client()
 USER = Client()
+AUTH_USER = None  # set by the autouse fixture; the user logged into USER
 
 
 @pytest.fixture(autouse=True)
 def _auth_user(db):
+    global AUTH_USER
     from django.contrib.auth import get_user_model
 
-    user = get_user_model().objects.create_user(
+    AUTH_USER = get_user_model().objects.create_user(
         email="market@example.com", password="pw-123456"
     )
-    USER.force_login(user)
+    USER.force_login(AUTH_USER)
 
 
 def _upstream_rows(n=30):
@@ -834,3 +840,254 @@ def test_endpoint_param_overrides_reach_the_builder(monkeypatch):
     assert response.status_code == 200
     sma = response.json()["overlays"]["sma"]
     assert sma and all(p["value"] is not None for p in sma)
+
+
+# --- WU2: chart layout endpoint (R2/R3) -------------------------------------
+
+LAYOUT_URL = "/market/api/layout"
+DEFAULT_LAYOUT = [
+    {"token": "sma"},
+    {"token": "ema"},
+    {"token": "rsi"},
+]
+
+
+def _put_layout(client, payload):
+    return client.put(
+        LAYOUT_URL, data=json.dumps(payload), content_type="application/json"
+    )
+
+
+def test_layout_anonymous_get_redirects_to_login():
+    response = ANON.get(f"{LAYOUT_URL}?symbol=BTCUSDT&interval=1m")
+    assert response.status_code == 302
+    assert response.url.startswith("/login/")
+
+
+def test_layout_anonymous_put_redirects_to_login():
+    response = _put_layout(
+        ANON,
+        {"symbol": "BTCUSDT", "interval": "1m", "indicators": DEFAULT_LAYOUT},
+    )
+    assert response.status_code == 302
+    assert response.url.startswith("/login/")
+
+
+def test_layout_get_without_row_returns_default_not_404():
+    response = USER.get(f"{LAYOUT_URL}?symbol=BTCUSDT&interval=1m")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["symbol"] == "BTCUSDT"
+    assert body["interval"] == "1m"
+    assert body["indicators"] == DEFAULT_LAYOUT
+    assert body["exists"] is False
+
+
+def test_layout_put_then_get_returns_saved_set():
+    indicators = [
+        {"token": "sma", "params": {"sma_len": 50}},
+        {"token": "macd"},
+    ]
+    put = _put_layout(
+        USER, {"symbol": "BTCUSDT", "interval": "1m", "indicators": indicators}
+    )
+    assert put.status_code == 200
+    assert put.json()["exists"] is True
+
+    body = USER.get(f"{LAYOUT_URL}?symbol=BTCUSDT&interval=1m").json()
+    assert body["indicators"] == indicators
+    assert body["exists"] is True
+
+
+def test_layout_put_upserts_one_row_for_the_same_key():
+    from trading.models import ChartLayout
+
+    _put_layout(
+        USER, {"symbol": "BTCUSDT", "interval": "1m", "indicators": DEFAULT_LAYOUT}
+    )
+    _put_layout(
+        USER,
+        {"symbol": "BTCUSDT", "interval": "1m", "indicators": [{"token": "volume"}]},
+    )
+
+    rows = list(ChartLayout.for_user(AUTH_USER))
+    assert len(rows) == 1
+    assert rows[0].indicators == [{"token": "volume"}]
+
+
+def test_layout_put_invalid_token_is_400_and_writes_nothing():
+    from trading.models import ChartLayout
+
+    response = _put_layout(
+        USER,
+        {"symbol": "BTCUSDT", "interval": "1m", "indicators": [{"token": "notreal"}]},
+    )
+
+    assert response.status_code == 400
+    assert "error" in response.json()
+    assert ChartLayout.objects.count() == 0
+
+
+def test_layout_put_invalid_param_is_400_and_writes_nothing():
+    from trading.models import ChartLayout
+
+    response = _put_layout(
+        USER,
+        {
+            "symbol": "BTCUSDT",
+            "interval": "1m",
+            "indicators": [{"token": "rsi", "params": {"rsi_len": "abc"}}],
+        },
+    )
+
+    assert response.status_code == 400
+    assert "error" in response.json()
+    assert ChartLayout.objects.count() == 0
+
+
+def test_layout_get_missing_symbol_is_400():
+    assert USER.get(f"{LAYOUT_URL}?interval=1m").status_code == 400
+
+
+def test_layout_get_invalid_interval_is_400():
+    assert USER.get(f"{LAYOUT_URL}?symbol=BTCUSDT&interval=2s").status_code == 400
+
+
+def test_layout_put_missing_symbol_is_400():
+    response = _put_layout(USER, {"interval": "1m", "indicators": []})
+    assert response.status_code == 400
+
+
+def test_layout_put_invalid_interval_is_400():
+    response = _put_layout(
+        USER, {"symbol": "BTCUSDT", "interval": "2s", "indicators": []}
+    )
+    assert response.status_code == 400
+
+
+def test_layout_put_requires_csrf():
+    # A CSRF-enforcing client (no token) MUST reject the write with 403.
+    enforcing = Client(enforce_csrf_checks=True)
+    enforcing.force_login(AUTH_USER)
+    response = enforcing.put(
+        LAYOUT_URL,
+        data=json.dumps(
+            {"symbol": "BTCUSDT", "interval": "1m", "indicators": DEFAULT_LAYOUT}
+        ),
+        content_type="application/json",
+    )
+    assert response.status_code == 403
+
+
+def test_layout_isolation_b_get_never_sees_a():
+    from trading.models import ChartLayout
+
+    ChartLayout.objects.create(
+        user=AUTH_USER,
+        symbol="BTCUSDT",
+        interval="1m",
+        indicators=[{"token": "volume"}],
+    )
+
+    from django.contrib.auth import get_user_model
+
+    b_client = Client()
+    b = get_user_model().objects.create_user(
+        email="b@example.com", password="pw-123456"
+    )
+    b_client.force_login(b)
+
+    body = b_client.get(f"{LAYOUT_URL}?symbol=BTCUSDT&interval=1m").json()
+    assert body["indicators"] == DEFAULT_LAYOUT
+    assert body["exists"] is False
+
+
+def test_layout_isolation_b_put_does_not_touch_a_row():
+    from trading.models import ChartLayout
+
+    a_row = ChartLayout.objects.create(
+        user=AUTH_USER,
+        symbol="BTCUSDT",
+        interval="1m",
+        indicators=[{"token": "volume"}],
+    )
+
+    from django.contrib.auth import get_user_model
+
+    b_client = Client()
+    b = get_user_model().objects.create_user(
+        email="b2@example.com", password="pw-123456"
+    )
+    b_client.force_login(b)
+
+    _put_layout(
+        b_client,
+        {"symbol": "BTCUSDT", "interval": "1m", "indicators": [{"token": "rsi"}]},
+    )
+
+    a_row.refresh_from_db()
+    assert a_row.indicators == [{"token": "volume"}]  # A untouched
+    assert ChartLayout.for_user(b).count() == 1  # B owns its own row
+    assert ChartLayout.for_user(AUTH_USER).count() == 1
+
+
+def test_layout_put_invalid_json_is_400():
+    response = USER.put(LAYOUT_URL, data="not-json", content_type="application/json")
+    assert response.status_code == 400
+    assert "error" in response.json()
+
+
+def test_layout_put_non_object_body_is_400():
+    response = USER.put(LAYOUT_URL, data="[1, 2]", content_type="application/json")
+    assert response.status_code == 400
+    assert "error" in response.json()
+
+
+# --- parse_layout_indicators: pure validation seam (R2) ---------------------
+
+
+def test_parse_layout_indicators_preserves_shape_and_validates_params():
+    from market.quotes import parse_layout_indicators
+
+    out = parse_layout_indicators(
+        [
+            {"token": "sma", "params": {"sma_len": 50}},
+            {"token": "bollinger", "params": {"bb_len": 20, "bb_std": 2.5}},
+            {"token": "macd", "params": {"macd_fast": 12, "macd_slow": 26}},
+        ]
+    )
+
+    assert out == [
+        {"token": "sma", "params": {"sma_len": 50}},
+        {"token": "bollinger", "params": {"bb_len": 20, "bb_std": 2.5}},
+        {"token": "macd", "params": {"macd_fast": 12, "macd_slow": 26}},
+    ]
+
+
+def test_parse_layout_indicators_drops_duplicate_tokens():
+    from market.quotes import parse_layout_indicators
+
+    out = parse_layout_indicators([{"token": "rsi"}, {"token": "rsi"}])
+    assert out == [{"token": "rsi"}]
+
+
+@pytest.mark.parametrize(
+    "bad",
+    [
+        "sma",  # not a list
+        [123],  # entry not a dict
+        [{"token": "notreal"}],  # unknown token
+        [{"token": "sma", "params": "x"}],  # params not a dict
+        [{"token": "sma", "params": {"nope": 1}}],  # unknown param key
+        [{"token": "sma", "params": {"sma_len": 0}}],  # below range
+        [{"token": "sma", "params": {"sma_len": True}}],  # bool is not an int
+        [{"token": "bollinger", "params": {"bb_std": 0}}],  # float <= 0
+        [{"token": "macd", "params": {"macd_fast": 30, "macd_slow": 5}}],  # fast>=slow
+    ],
+)
+def test_parse_layout_indicators_rejects_bad_input(bad):
+    from market.quotes import parse_layout_indicators
+
+    with pytest.raises(ValueError):
+        parse_layout_indicators(bad)
