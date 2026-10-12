@@ -13,6 +13,7 @@ import pytest
 from django.db import IntegrityError, transaction
 from trading.models import (
     AccountSnapshot,
+    AlertRule,
     ChartLayout,
     Drawing,
     ExchangeCredential,
@@ -266,3 +267,77 @@ def test_drawing_owner_is_required():
     with pytest.raises(IntegrityError):
         with transaction.atomic():
             Drawing.objects.create(symbol="BTCUSDT", interval="1m", kind="hline")
+
+
+@pytest.mark.django_db
+def test_alert_rule_cross_user_get_denied(user_a, user_b):
+    # R14.2: B cannot read A's rule through the scoped accessor.
+    rule = AlertRule.objects.create(
+        user=user_a, symbol="BTCUSDT", interval="1h", condition={"type": "price"}
+    )
+
+    with pytest.raises(AlertRule.DoesNotExist):
+        AlertRule.for_user(user_b).get(pk=rule.pk)
+
+    assert AlertRule.for_user(user_a).get(pk=rule.pk) == rule
+    assert AlertRule.for_user(user_b).count() == 0
+
+
+@pytest.mark.django_db
+def test_alert_rule_for_user_scopes_to_the_owner(user_a, user_b):
+    AlertRule.objects.create(user=user_a, symbol="BTCUSDT", interval="1h")
+    assert AlertRule.for_user(user_a).count() == 1
+    assert AlertRule.for_user(user_b).count() == 0
+
+
+@pytest.mark.django_db
+def test_alert_rule_collection_coexists(user_a):
+    # R1: a rule is a collection — many rows on the same (symbol, interval),
+    # no unique constraint, so a second create never trips IntegrityError.
+    first = AlertRule.objects.create(
+        user=user_a, symbol="BTCUSDT", interval="1h", condition={"type": "price"}
+    )
+    second = AlertRule.objects.create(
+        user=user_a, symbol="BTCUSDT", interval="1h", condition={"type": "smc_setup"}
+    )
+
+    assert first.pk != second.pk
+    assert AlertRule.for_user(user_a).count() == 2
+
+
+@pytest.mark.django_db
+def test_alert_rule_defaults_and_json_round_trip(user_a):
+    condition = {"type": "indicator", "name": "rsi", "op": "above", "level": 70}
+    AlertRule.objects.create(
+        user=user_a, symbol="BTCUSDT", interval="1h", condition=condition
+    )
+
+    saved = AlertRule.for_user(user_a).get(symbol="BTCUSDT")
+    assert saved.condition == condition
+    assert saved.is_active is True
+    assert saved.last_fired_at is None
+
+
+@pytest.mark.django_db
+def test_alert_rule_last_fired_at_nullable_and_settable(user_a):
+    rule = AlertRule.objects.create(user=user_a, symbol="BTCUSDT", interval="1h")
+    assert rule.last_fired_at is None
+
+    rule.last_fired_at = TS
+    rule.save(update_fields=["last_fired_at"])
+    assert AlertRule.for_user(user_a).get(pk=rule.pk).last_fired_at == TS
+
+
+@pytest.mark.django_db
+def test_alert_rule_owner_is_required():
+    # no user-less rows: the owner FK is mandatory.
+    with pytest.raises(IntegrityError):
+        with transaction.atomic():
+            AlertRule.objects.create(symbol="BTCUSDT", interval="1h")
+
+
+def test_alert_rule_index_and_no_unique_constraint():
+    # R1: index on (user, is_active); a collection has NO unique constraint.
+    names = {idx.name for idx in AlertRule._meta.indexes}
+    assert "ix_alertrule_user_active" in names
+    assert AlertRule._meta.constraints == []

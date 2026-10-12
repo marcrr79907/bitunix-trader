@@ -260,3 +260,32 @@ class Drawing(UserOwnedModel):
                 name="ix_drawing_user_sym_interval",
             )
         ]
+
+
+class AlertRule(UserOwnedModel):
+    """Per-user alert rule (issue #76, Fase D1), evaluated deterministically.
+
+    A pure, framework-free engine evaluates ``condition`` over a window of closed
+    candles and reports the false→true edge; the worker records the fired bar in
+    ``last_fired_at``, which doubles as the dedup key. D1 defines and evaluates
+    only — it never notifies or orders (D2 owns delivery). Like ``Drawing`` a
+    rule is a **collection** (many rules per ``(user, symbol, interval)``), so
+    there is **no unique constraint** — only an index on ``(user, is_active)``
+    for the active-rule read. ``interval`` is matched against the worker's
+    ``CANDLE_INTERVALS`` at evaluation time (only persisted closed candles are
+    deterministic).
+    """
+
+    symbol = models.CharField(max_length=32)
+    interval = models.CharField(max_length=8)
+    condition = models.JSONField(default=dict)
+    is_active = models.BooleanField(default=True)
+    last_fired_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        indexes = [
+            models.Index(
+                fields=["user", "is_active"],
+                name="ix_alertrule_user_active",
+            )
+        ]
