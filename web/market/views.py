@@ -14,12 +14,13 @@ from django.contrib.auth.decorators import login_required
 from django.http import HttpRequest, HttpResponse, JsonResponse
 from django.shortcuts import render
 from django.views.decorators.http import require_http_methods
-from trading.models import ChartLayout
+from trading.models import ChartLayout, Drawing
 
 from market.quotes import (
     DEFAULT_LAYOUT,
     INTERVALS,
     get_kline_payload,
+    parse_drawing,
     parse_indicators,
     parse_layout_indicators,
 )
@@ -164,6 +165,94 @@ def _put_layout(request: HttpRequest) -> JsonResponse:
 
 
 @login_required
+@require_http_methods(["GET", "POST"])
+def api_drawings(request: HttpRequest) -> JsonResponse:
+    """Per-user drawing collection (R2): GET lists, POST creates.
+
+    All access routes through ``Drawing.for_user`` — no unscoped query in this
+    request path (R14.3). GET never 404s (an empty key returns ``[]``). POST
+    validates the payload BEFORE writing; a bad body → 400 with no row created.
+    """
+    if request.method == "POST":
+        return _post_drawing(request)
+
+    symbol = request.GET.get("symbol", "")
+    interval = request.GET.get("interval", "")
+    if not symbol:
+        return JsonResponse({"error": "symbol required"}, status=400)
+    if interval not in INTERVALS:
+        return JsonResponse({"error": "invalid interval"}, status=400)
+
+    rows = Drawing.for_user(request.user).filter(symbol=symbol, interval=interval)
+    return JsonResponse(
+        {
+            "symbol": symbol,
+            "interval": interval,
+            "drawings": [
+                {"id": d.id, "kind": d.kind, "points": d.points, "style": d.style}
+                for d in rows
+            ],
+        }
+    )
+
+
+def _post_drawing(request: HttpRequest) -> JsonResponse:
+    try:
+        body = json.loads(request.body or b"{}")
+    except json.JSONDecodeError:
+        return JsonResponse({"error": "invalid JSON"}, status=400)
+    if not isinstance(body, dict):
+        return JsonResponse({"error": "invalid body"}, status=400)
+
+    symbol = body.get("symbol", "")
+    interval = body.get("interval", "")
+    if not symbol:
+        return JsonResponse({"error": "symbol required"}, status=400)
+    if interval not in INTERVALS:
+        return JsonResponse({"error": "invalid interval"}, status=400)
+    try:
+        points, style = parse_drawing(
+            body.get("kind"), body.get("points"), body.get("style")
+        )
+    except ValueError as exc:
+        return JsonResponse({"error": str(exc)}, status=400)
+
+    # for_user filters; it does NOT inject the owner (A2 gotcha) — pass user.
+    drawing = Drawing.for_user(request.user).create(
+        user=request.user,
+        symbol=symbol,
+        interval=interval,
+        kind=body["kind"],
+        points=points,
+        style=style,
+    )
+    return JsonResponse(
+        {
+            "id": drawing.id,
+            "kind": drawing.kind,
+            "points": drawing.points,
+            "style": drawing.style,
+        },
+        status=201,
+    )
+
+
+@login_required
+@require_http_methods(["DELETE"])
+def api_drawing_detail(request: HttpRequest, id: int) -> HttpResponse:
+    """DELETE one drawing by id (R2/R3): scoped via ``for_user``.
+
+    A miss — including another user's id — resolves to nothing → 404, so
+    existence is never leaked (no id-only lookup).
+    """
+    drawing = Drawing.for_user(request.user).filter(pk=id).first()
+    if drawing is None:
+        return JsonResponse({"error": "not found"}, status=404)
+    drawing.delete()
+    return HttpResponse(status=204)
+
+
+@login_required
 @require_http_methods(["GET"])
 def chart_js(request: HttpRequest) -> HttpResponse:
     return HttpResponse(
@@ -177,5 +266,14 @@ def chart_core_js(request: HttpRequest) -> HttpResponse:
     """Serve the pure chart core same-origin (no state; not auth-gated)."""
     return HttpResponse(
         render(request, "market/chart-core.js").content,
+        content_type="text/javascript",
+    )
+
+
+@require_http_methods(["GET"])
+def drawing_core_js(request: HttpRequest) -> HttpResponse:
+    """Serve the pure drawing geometry same-origin (no state; not auth-gated)."""
+    return HttpResponse(
+        render(request, "market/drawing-core.js").content,
         content_type="text/javascript",
     )

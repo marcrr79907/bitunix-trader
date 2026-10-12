@@ -1091,3 +1091,297 @@ def test_parse_layout_indicators_rejects_bad_input(bad):
 
     with pytest.raises(ValueError):
         parse_layout_indicators(bad)
+
+
+# --- WU2: drawings CRUD endpoint (R2/R3/R4/R5) ------------------------------
+
+DRAWINGS_URL = "/market/api/drawings"
+
+
+def _post_drawing(client, payload):
+    return client.post(
+        DRAWINGS_URL, data=json.dumps(payload), content_type="application/json"
+    )
+
+
+def _drawing_body(**overrides):
+    body = {
+        "symbol": "BTCUSDT",
+        "interval": "1m",
+        "kind": "hline",
+        "points": {"price": 50000.0},
+        "style": {"color": "#f00", "lineWidth": 1},
+    }
+    body.update(overrides)
+    return body
+
+
+def test_drawings_anonymous_get_redirects_to_login():
+    response = ANON.get(f"{DRAWINGS_URL}?symbol=BTCUSDT&interval=1m")
+    assert response.status_code == 302
+    assert response.url.startswith("/login/")
+
+
+def test_drawings_anonymous_post_redirects_to_login():
+    response = _post_drawing(ANON, _drawing_body())
+    assert response.status_code == 302
+    assert response.url.startswith("/login/")
+
+
+def test_drawings_anonymous_delete_redirects_to_login():
+    response = ANON.delete(f"{DRAWINGS_URL}/1")
+    assert response.status_code == 302
+    assert response.url.startswith("/login/")
+
+
+def test_drawings_get_empty_returns_empty_list_not_404():
+    from trading.models import Drawing
+
+    response = USER.get(f"{DRAWINGS_URL}?symbol=BTCUSDT&interval=1m")
+
+    assert response.status_code == 200
+    assert response.json() == {"symbol": "BTCUSDT", "interval": "1m", "drawings": []}
+    assert Drawing.objects.count() == 0
+
+
+def test_drawings_get_missing_symbol_is_400():
+    assert USER.get(f"{DRAWINGS_URL}?interval=1m").status_code == 400
+
+
+def test_drawings_get_invalid_interval_is_400():
+    assert USER.get(f"{DRAWINGS_URL}?symbol=BTCUSDT&interval=2s").status_code == 400
+
+
+def test_drawings_post_then_get_lists_the_row_with_id():
+    response = _post_drawing(USER, _drawing_body())
+
+    assert response.status_code == 201
+    created = response.json()
+    assert created["kind"] == "hline"
+    assert created["points"] == {"price": 50000.0}
+    assert created["style"] == {"color": "#f00", "lineWidth": 1}
+    assert isinstance(created["id"], int)
+
+    body = USER.get(f"{DRAWINGS_URL}?symbol=BTCUSDT&interval=1m").json()
+    assert body["drawings"] == [
+        {
+            "id": created["id"],
+            "kind": "hline",
+            "points": {"price": 50000.0},
+            "style": {"color": "#f00", "lineWidth": 1},
+        }
+    ]
+
+
+def test_drawings_get_lists_only_the_requested_key():
+    _post_drawing(USER, _drawing_body())
+    _post_drawing(
+        USER,
+        _drawing_body(
+            kind="trendline",
+            points={
+                "p1": {"time": 1, "price": 1.0},
+                "p2": {"time": 2, "price": 2.0},
+            },
+        ),
+    )
+    _post_drawing(USER, _drawing_body(symbol="ETHUSDT"))
+
+    body = USER.get(f"{DRAWINGS_URL}?symbol=BTCUSDT&interval=1m").json()
+    assert len(body["drawings"]) == 2
+    assert {d["kind"] for d in body["drawings"]} == {"hline", "trendline"}
+
+
+def test_drawings_many_per_key_coexist_without_unique_violation():
+    from trading.models import Drawing
+
+    first = _post_drawing(USER, _drawing_body())
+    second = _post_drawing(USER, _drawing_body())
+
+    assert first.status_code == 201 and second.status_code == 201
+    assert first.json()["id"] != second.json()["id"]
+    assert Drawing.objects.count() == 2
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        _drawing_body(kind="notreal"),  # kind outside DRAWING_KINDS
+        _drawing_body(interval="7m"),  # interval outside INTERVALS
+        _drawing_body(symbol=""),  # empty symbol
+        _drawing_body(points={"nope": 1}),  # malformed point (missing price)
+        _drawing_body(kind="trendline", points={"p1": {"time": 1, "price": 1.0}}),
+        _drawing_body(
+            kind="trendline",
+            points={
+                "p1": {"time": 1, "price": 1.0},
+                "p2": {"time": 2, "price": 2.0},
+                "p3": {"time": 3, "price": 3.0},
+            },
+        ),
+        _drawing_body(style="not-an-object"),  # style not an object
+        _drawing_body(kind="text", points={"time": 1, "price": 1.0}),  # no label
+    ],
+)
+def test_drawings_post_invalid_payload_is_400_and_writes_nothing(payload):
+    from trading.models import Drawing
+
+    response = _post_drawing(USER, payload)
+
+    assert response.status_code == 400
+    assert "error" in response.json()
+    assert Drawing.objects.count() == 0
+
+
+def test_drawings_post_invalid_json_is_400():
+    response = USER.post(DRAWINGS_URL, data="not-json", content_type="application/json")
+    assert response.status_code == 400
+    assert "error" in response.json()
+
+
+def test_drawings_post_requires_csrf():
+    enforcing = Client(enforce_csrf_checks=True)
+    enforcing.force_login(AUTH_USER)
+    response = enforcing.post(
+        DRAWINGS_URL,
+        data=json.dumps(_drawing_body()),
+        content_type="application/json",
+    )
+    assert response.status_code == 403
+
+
+def test_drawings_delete_own_removes_the_row():
+    created = _post_drawing(USER, _drawing_body()).json()
+
+    response = USER.delete(f"{DRAWINGS_URL}/{created['id']}")
+    assert response.status_code in (200, 204)
+
+    body = USER.get(f"{DRAWINGS_URL}?symbol=BTCUSDT&interval=1m").json()
+    assert body["drawings"] == []
+
+
+def test_drawings_delete_miss_is_404():
+    assert USER.delete(f"{DRAWINGS_URL}/999999").status_code == 404
+
+
+def test_drawings_delete_requires_csrf():
+    created = _post_drawing(USER, _drawing_body()).json()
+    enforcing = Client(enforce_csrf_checks=True)
+    enforcing.force_login(AUTH_USER)
+    response = enforcing.delete(f"{DRAWINGS_URL}/{created['id']}")
+    assert response.status_code == 403
+
+
+def test_drawings_isolation_b_get_never_sees_a():
+    from django.contrib.auth import get_user_model
+
+    _post_drawing(USER, _drawing_body())
+
+    b_client = Client()
+    b = get_user_model().objects.create_user(
+        email="db@example.com", password="pw-123456"
+    )
+    b_client.force_login(b)
+
+    body = b_client.get(f"{DRAWINGS_URL}?symbol=BTCUSDT&interval=1m").json()
+    assert body["drawings"] == []
+
+
+def test_drawings_isolation_b_delete_of_a_id_is_404_and_a_unchanged():
+    from django.contrib.auth import get_user_model
+    from trading.models import Drawing
+
+    created = _post_drawing(USER, _drawing_body()).json()
+    a_row = Drawing.objects.get(pk=created["id"])
+
+    b_client = Client()
+    b = get_user_model().objects.create_user(
+        email="db2@example.com", password="pw-123456"
+    )
+    b_client.force_login(b)
+
+    response = b_client.delete(f"{DRAWINGS_URL}/{created['id']}")
+    assert response.status_code == 404
+    assert Drawing.objects.filter(pk=a_row.pk).exists()  # A's row untouched
+
+
+# --- parse_drawing: pure validation seam (R4/R5) ----------------------------
+
+
+@pytest.mark.parametrize(
+    ("kind", "points", "style"),
+    [
+        ("hline", {"price": 50000.0}, {"color": "#f00", "lineWidth": 1}),
+        (
+            "trendline",
+            {"p1": {"time": 1, "price": 1.0}, "p2": {"time": 2, "price": 2.0}},
+            {"color": "#0f0", "lineWidth": 2},
+        ),
+        (
+            "fib",
+            {"p1": {"time": 1, "price": 1.0}, "p2": {"time": 2, "price": 2.0}},
+            {"color": "#00f", "lineWidth": 1, "levels": [0.382, 0.618]},
+        ),
+        (
+            "rect",
+            {"p1": {"time": 1, "price": 1.0}, "p2": {"time": 2, "price": 2.0}},
+            {"color": "#ff0", "lineWidth": 1, "fill": "#ff04"},
+        ),
+        ("text", {"time": 1, "price": 1.0, "text": "hello"}, {"color": "#fff"}),
+    ],
+)
+def test_parse_drawing_accepts_each_kind(kind, points, style):
+    from market.quotes import parse_drawing
+
+    out_points, out_style = parse_drawing(kind, points, style)
+    assert out_points == points
+    assert out_style == style
+
+
+@pytest.mark.parametrize(
+    ("kind", "points", "style"),
+    [
+        ("notreal", {"price": 1.0}, {}),  # kind outside DRAWING_KINDS
+        ("hline", {}, {}),  # missing price
+        ("hline", {"price": "x"}, {}),  # price not numeric
+        ("trendline", {"p1": {"time": 1, "price": 1.0}}, {}),  # one point
+        (
+            "trendline",
+            {"p1": {"time": 1, "price": 1.0}, "p2": {"time": 2}},  # p2 missing price
+            {},
+        ),
+        (
+            "trendline",
+            {"p1": "x", "p2": {"time": 2, "price": 2.0}},
+            {},
+        ),  # point not obj
+        (
+            "trendline",
+            {"p1": {"time": "x", "price": 1.0}, "p2": {"time": 2, "price": 2.0}},
+            {},
+        ),  # time not int
+        (
+            "fib",
+            {"p1": {"time": 1, "price": 1.0}},  # one point
+            {},
+        ),
+        ("rect", {"p1": {"time": 1, "price": 1.0}}, {}),  # one point
+        ("text", {"time": 1, "price": 1.0}, {}),  # no label
+        ("text", {"time": 1, "price": 1.0, "text": ""}, {}),  # empty label
+        ("text", {"time": "x", "price": 1.0, "text": "hi"}, {}),  # time not int
+        ("text", {"time": 1, "price": "x", "text": "hi"}, {}),  # price not numeric
+        ("hline", {"price": 1.0}, "not-an-object"),  # style not an object
+        ("hline", "not-an-object", {}),  # points not an object
+    ],
+)
+def test_parse_drawing_rejects_bad_input(kind, points, style):
+    from market.quotes import parse_drawing
+
+    with pytest.raises(ValueError):
+        parse_drawing(kind, points, style)
+
+
+def test_drawings_post_non_object_body_is_400():
+    response = USER.post(DRAWINGS_URL, data="[1, 2]", content_type="application/json")
+    assert response.status_code == 400
+    assert "error" in response.json()
