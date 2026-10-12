@@ -14,8 +14,15 @@ from django.contrib.auth.decorators import login_required
 from django.http import HttpRequest, HttpResponse, JsonResponse
 from django.shortcuts import render
 from django.views.decorators.http import require_http_methods
+from trading.models import ChartLayout
 
-from market.quotes import INTERVALS, get_kline_payload, parse_indicators
+from market.quotes import (
+    DEFAULT_LAYOUT,
+    INTERVALS,
+    get_kline_payload,
+    parse_indicators,
+    parse_layout_indicators,
+)
 from src.client import BitunixClient, BitunixError
 from src.config import SYMBOLS
 
@@ -75,6 +82,85 @@ def api_kline(request: HttpRequest) -> JsonResponse:
         return JsonResponse({"error": "upstream"}, status=502)
 
     return JsonResponse(payload)
+
+
+@login_required
+@require_http_methods(["GET", "PUT"])
+def api_layout(request: HttpRequest) -> JsonResponse:
+    """Per-user chart layout (R2/R3): GET reads, PUT upserts, one row per key.
+
+    All access routes through ``ChartLayout.for_user`` — no unscoped query in
+    this request path (R14.3). A GET miss returns the built-in default set with
+    ``exists:false`` (never 404). A PUT validates the payload BEFORE writing;
+    an unknown token or bad param → 400 with no row touched.
+    """
+    if request.method == "PUT":
+        return _put_layout(request)
+
+    symbol = request.GET.get("symbol", "")
+    interval = request.GET.get("interval", "")
+    if not symbol:
+        return JsonResponse({"error": "symbol required"}, status=400)
+    if interval not in INTERVALS:
+        return JsonResponse({"error": "invalid interval"}, status=400)
+
+    saved = (
+        ChartLayout.for_user(request.user)
+        .filter(symbol=symbol, interval=interval)
+        .first()
+    )
+    if saved is None:
+        return JsonResponse(
+            {
+                "symbol": symbol,
+                "interval": interval,
+                "indicators": DEFAULT_LAYOUT,
+                "exists": False,
+            }
+        )
+    return JsonResponse(
+        {
+            "symbol": saved.symbol,
+            "interval": saved.interval,
+            "indicators": saved.indicators,
+            "exists": True,
+        }
+    )
+
+
+def _put_layout(request: HttpRequest) -> JsonResponse:
+    try:
+        body = json.loads(request.body or b"{}")
+    except json.JSONDecodeError:
+        return JsonResponse({"error": "invalid JSON"}, status=400)
+    if not isinstance(body, dict):
+        return JsonResponse({"error": "invalid body"}, status=400)
+
+    symbol = body.get("symbol", "")
+    interval = body.get("interval", "")
+    if not symbol:
+        return JsonResponse({"error": "symbol required"}, status=400)
+    if interval not in INTERVALS:
+        return JsonResponse({"error": "invalid interval"}, status=400)
+    try:
+        indicators = parse_layout_indicators(body.get("indicators"))
+    except ValueError as exc:
+        return JsonResponse({"error": str(exc)}, status=400)
+
+    layout, _ = ChartLayout.for_user(request.user).update_or_create(
+        user=request.user,
+        symbol=symbol,
+        interval=interval,
+        defaults={"indicators": indicators},
+    )
+    return JsonResponse(
+        {
+            "symbol": layout.symbol,
+            "interval": layout.interval,
+            "indicators": layout.indicators,
+            "exists": True,
+        }
+    )
 
 
 @login_required

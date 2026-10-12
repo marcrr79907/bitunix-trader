@@ -44,15 +44,21 @@ def seeded_5m_candles(db):
 
 
 @pytest.fixture
-def browser_page(live_server, client, db):
-    """A Playwright page carrying the Django session cookie."""
+def e2e_user(db):
+    """The Playwright session user (shared so layout seeds target the same row)."""
     from django.contrib.auth import get_user_model
-    from playwright.sync_api import sync_playwright
 
-    user = get_user_model().objects.create_user(
+    return get_user_model().objects.create_user(
         email="e2e@example.com", password="pw-123456"
     )
-    client.force_login(user)
+
+
+@pytest.fixture
+def browser_page(live_server, client, e2e_user):
+    """A Playwright page carrying the Django session cookie."""
+    from playwright.sync_api import sync_playwright
+
+    client.force_login(e2e_user)
     cookie = client.cookies["sessionid"]
 
     with sync_playwright() as pw:
@@ -71,6 +77,42 @@ def browser_page(live_server, client, db):
         page = context.new_page()
         yield page, live_server.url
         browser.close()
+
+
+@pytest.fixture
+def saved_layout(e2e_user):
+    """Seed a persisted layout BEFORE any Playwright context starts.
+
+    Boot uses ``(SYMBOLS[0], "1m")`` = ``(BTCUSDT, "1m")``. A non-default set
+    (SMA len 50 + MACD, EMA/RSI off) makes the restore observable in the DOM.
+    """
+    from trading.models import ChartLayout
+
+    ChartLayout.objects.create(
+        user=e2e_user,
+        symbol="BTCUSDT",
+        interval="1m",
+        indicators=[{"token": "sma", "params": {"sma_len": 50}}, {"token": "macd"}],
+    )
+    return e2e_user
+
+
+@pytest.fixture
+def per_interval_layouts(e2e_user):
+    """Two distinct layouts for the SAME symbol, different intervals.
+
+    Proves ``switchTo`` loads the target chart's layout: 1m = SMA only,
+    5m = RSI only. Seeded before the Playwright context (sync ORM rule).
+    """
+    from trading.models import ChartLayout
+
+    ChartLayout.objects.create(
+        user=e2e_user, symbol="BTCUSDT", interval="1m", indicators=[{"token": "sma"}]
+    )
+    ChartLayout.objects.create(
+        user=e2e_user, symbol="BTCUSDT", interval="5m", indicators=[{"token": "rsi"}]
+    )
+    return e2e_user
 
 
 @p
@@ -290,6 +332,137 @@ def test_ws_stream_never_calls_setdata(seeded_5m_candles, browser_page):
 
     calls = page.evaluate("() => window.__setDataCalls")
     assert calls == 0, f"setData called {calls} times during the live stream"
+
+
+def _wait_ready(page):
+    """Wait for boot to finish: layout applied + chart built (DOM seam)."""
+    page.wait_for_function(
+        "() => window.marketChart && window.marketChart.ready === true",
+        timeout=10000,
+    )
+
+
+@p
+def test_boot_restores_saved_layout(saved_layout, browser_page):
+    # R4 (issue #71): a persisted layout wins over the DOM defaults on boot —
+    # the toggle panel reflects the saved set AND the chart rebuilds to match.
+    page, base_url = browser_page
+    page.goto(f"{base_url}/market/")
+    _wait_ready(page)
+    # Saved: SMA on (len 50), MACD on; EMA/RSI off (defaults are on).
+    assert page.locator('.indicator-toggle[value="sma"]').is_checked()
+    assert page.locator('.indicator-toggle[value="macd"]').is_checked()
+    assert not page.locator('.indicator-toggle[value="ema"]').is_checked()
+    assert not page.locator('.indicator-toggle[value="rsi"]').is_checked()
+    # The saved param restores into its editable input.
+    assert page.locator('.indicator-param[data-token="sma"]').input_value() == "50"
+    # The MACD pane only exists if the saved layout drove the rebuild.
+    assert page.evaluate(
+        "() => !!(window.marketChart.panes && window.marketChart.panes.macd)"
+    )
+
+
+@pytest.fixture
+def saved_token_layout(e2e_user, request):
+    """Seed a single param-driven overlay BEFORE the Playwright context."""
+    from trading.models import ChartLayout
+
+    token, param = request.param
+    ChartLayout.objects.create(
+        user=e2e_user,
+        symbol="BTCUSDT",
+        interval="1m",
+        indicators=[{"token": token, "params": {param: 50}}],
+    )
+    return token, param
+
+
+@pytest.mark.parametrize(
+    "saved_token_layout",
+    [("sma", "sma_len"), ("ema", "ema_len")],
+    indirect=True,
+)
+@p
+def test_saved_sma_ema_length_uses_server_token(saved_token_layout, browser_page):
+    # R6: the adapter's REGISTRY keys the param-driven server tokens ``sma``/
+    # ``ema`` (not ``sma20``/``ema20``) so a saved length is actually requested.
+    token, param = saved_token_layout
+    page, base_url = browser_page
+    klines = []
+    page.on(
+        "request",
+        lambda r: klines.append(r.url) if "/market/api/kline" in r.url else None,
+    )
+    page.goto(f"{base_url}/market/")
+    _wait_ready(page)
+    requested = any(f"indicators={token}" in u and f"{param}=50" in u for u in klines)
+    assert requested, klines
+
+
+@p
+def test_fetch_failure_falls_back_to_dom_defaults(browser_page):
+    # R4: a failing layout fetch MUST fall back to the DOM defaults — never a
+    # blank chart. The preset checkboxes stay the source of truth.
+    page, base_url = browser_page
+    page.route("**/market/api/layout?*", lambda route: route.abort())
+    page.goto(f"{base_url}/market/")
+    _wait_ready(page)
+    assert page.locator('.indicator-toggle[value="sma"]').is_checked()
+    assert page.locator('.indicator-toggle[value="ema"]').is_checked()
+    assert page.locator('.indicator-toggle[value="rsi"]').is_checked()
+
+
+@p
+def test_toggle_fires_one_debounced_put(saved_layout, browser_page):
+    # R5: a toggle change debounce-saves exactly one PUT carrying the active
+    # symbol+interval, and the saved payload reflects the new selection.
+    page, base_url = browser_page
+    puts = []
+    page.on(
+        "request",
+        lambda r: (
+            puts.append(r)
+            if r.method == "PUT" and "/market/api/layout" in r.url
+            else None
+        ),
+    )
+    page.goto(f"{base_url}/market/")
+    _wait_ready(page)
+    puts.clear()  # ignore any boot-time traffic
+    page.locator('.indicator-toggle[value="rsi"]').check()
+    # Debounce (~500 ms) then one PUT; a second quick toggle must not add one.
+    page.wait_for_timeout(1200)
+    assert len(puts) == 1, [p.url for p in puts]
+    body = json.loads(puts[0].post_data or "{}")
+    assert body["symbol"] == "BTCUSDT"
+    assert body["interval"] == "1m"
+    tokens = [i["token"] for i in body["indicators"]]
+    assert "rsi" in tokens
+
+
+@p
+def test_switch_loads_target_layout(per_interval_layouts, browser_page):
+    # R4: switching interval loads THAT chart's layout before history — 1m is
+    # SMA-only, 5m is RSI-only, same symbol.
+    page, base_url = browser_page
+    page.goto(f"{base_url}/market/")
+    page.wait_for_function(
+        "() => window.marketChart && window.marketChart.candleSeries"
+        " && window.marketChart.candleSeries.data().length > 0",
+        timeout=10000,
+    )
+    assert page.locator('.indicator-toggle[value="sma"]').is_checked()
+    assert not page.locator('.indicator-toggle[value="rsi"]').is_checked()
+
+    page.select_option("#interval", "5m")
+    page.wait_for_function(
+        "() => window.marketChart && window.marketChart.panes"
+        " && window.marketChart.panes.rsi"
+        " && window.marketChart.panes.rsi.rsi.data().length > 0",
+        timeout=10000,
+    )
+    assert page.locator('.indicator-toggle[value="rsi"]').is_checked()
+    assert not page.locator('.indicator-toggle[value="sma"]').is_checked()
 
 
 @p

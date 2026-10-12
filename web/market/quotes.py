@@ -61,6 +61,10 @@ MAX_UPSTREAM = 200
 # (backward compatible, R3).
 DEFAULT_INDICATORS = ("sma20", "ema20", "rsi14")
 
+# Default chart layout (R2): the indicator set returned on a GET miss and
+# persisted when a user never saved one. Shape mirrors the stored JSON.
+DEFAULT_LAYOUT = [{"token": "sma"}, {"token": "ema"}, {"token": "rsi"}]
+
 
 # --- parameter vocabulary ----------------------------------------------------
 #
@@ -267,6 +271,61 @@ def parse_indicators(
             seen.add(name)
             selected.append((name, parsed))
     return selected
+
+
+def parse_layout_indicators(indicators) -> list[dict]:
+    """Validate a layout's JSON indicator list; raise ``ValueError`` on bad input.
+
+    Tokens MUST be in ``REGISTRY``; an optional ``params`` object MAY set known
+    param keys (type/range checked). The user-supplied shape is preserved (no
+    defaults injected) — the kline builders complete partial params at read
+    time, so a saved ``{"token":"sma","params":{"sma_len":50}}`` round-trips
+    verbatim.
+    """
+    if not isinstance(indicators, list):
+        raise ValueError("indicators must be a list")
+    out: list[dict] = []
+    seen: set[str] = set()
+    for item in indicators:
+        if not isinstance(item, dict):
+            raise ValueError("invalid indicator entry")
+        token = item.get("token")
+        if token not in REGISTRY:
+            raise ValueError(f"unknown indicator: {token}")
+        if token in seen:
+            continue
+        seen.add(token)
+        entry = {"token": token}
+        if "params" in item:
+            entry["params"] = _validate_layout_params(token, item["params"])
+        out.append(entry)
+    return out
+
+
+def _validate_layout_params(token: str, params) -> dict:
+    """Validate a JSON ``params`` object; return it verbatim. Raise ``ValueError``."""
+    if not isinstance(params, dict):
+        raise ValueError(f"invalid params for {token}")
+    for key, value in params.items():
+        if key in _INT_PARAMS:
+            ok = isinstance(value, int) and not isinstance(value, bool) and value >= 1
+        elif key in _FLOAT_PARAMS:
+            ok = (
+                isinstance(value, (int, float))
+                and not isinstance(value, bool)
+                and value > 0
+            )
+        else:
+            raise ValueError(f"unknown param: {key}")
+        if not ok:
+            raise ValueError(f"invalid {key}")
+    if (
+        "macd_fast" in params
+        and "macd_slow" in params
+        and params["macd_fast"] >= params["macd_slow"]
+    ):
+        raise ValueError("invalid macd params: macd_fast MUST be < macd_slow")
+    return params
 
 
 def _now_seconds() -> int:
