@@ -14,6 +14,7 @@ import logging
 import os
 import signal
 import time
+from datetime import UTC, datetime
 from threading import Event
 
 import requests
@@ -27,6 +28,8 @@ logger = logging.getLogger(__name__)
 IDLE_SECONDS = 30
 INGEST_POLL_SECONDS = int(os.environ.get("INGEST_POLL_SECONDS", "30"))
 _MAX_BACKOFF_SECONDS = 300
+# ponytail: >= RANGE_LOOKBACK(50) + swing warm-up + 2 closed bars.
+ALERT_CANDLE_WINDOW = 100
 
 
 def _bootstrap() -> None:
@@ -63,6 +66,13 @@ def run_once(client, symbols) -> tuple[int, int]:
         Exception
     ) as exc:  # ponytail: broad by spec — private failure must never kill ticks
         logger.warning("private sync failed: %s", exc)
+    try:
+        n_fired = run_alert_rules()
+        logger.info("alert rules ok fired=%d", n_fired)
+    except (
+        Exception
+    ) as exc:  # ponytail: broad by spec — a rule bug must never kill ticks
+        logger.warning("alert rules failed: %s", exc)
     return counts
 
 
@@ -95,6 +105,70 @@ def run_private_sync(client_factory=None) -> int:
         ) as exc:  # ponytail: per-user isolation by spec (R5) — never abort peers
             logger.warning("private sync failed user=%s: %s", cred.user_id, exc)
     return synced
+
+
+def on_fired(rule, detail: dict) -> None:
+    """D1 sink stub: log only. D2 re-binds this module seam (R8)."""
+    logger.info(
+        "alert fired rule=%s user=%s symbol=%s",
+        rule.pk,
+        rule.user_id,
+        rule.symbol,
+    )
+
+
+def run_alert_rules(on_fired_sink=None) -> int:
+    """Evaluate every active rule; return the fired count (R5/R7/R8).
+
+    Reads the unscoped ``AlertRule`` queryset here — ``web/worker.py`` is the
+    trusted zone (R14.4), outside the owned-model guard's request path. Rules
+    are grouped by ``(symbol, interval)`` so each group reads ONE candle window;
+    each rule is isolated in its own ``try/except`` so a bad condition is logged
+    and skipped while peers continue. On a false->true edge the fired bar time is
+    stamped into ``last_fired_at`` (dedup) and the sink is invoked once.
+    """
+    from market.quotes import _db_rows
+    from trading.candles import CANDLE_INTERVALS
+    from trading.models import AlertRule
+
+    from src import alert_rules
+
+    sink = on_fired_sink or on_fired
+    rules = list(AlertRule.objects.filter(is_active=True))
+    windows: dict[tuple[str, str], list[dict]] = {}
+    fired = 0
+    for rule in rules:
+        try:
+            if rule.interval not in CANDLE_INTERVALS:
+                continue
+            key = (rule.symbol, rule.interval)
+            if key not in windows:
+                windows[key] = _db_rows(
+                    rule.symbol, rule.interval, None, ALERT_CANDLE_WINDOW
+                )
+            rows = windows[key]
+            if not alert_rules.edge_fired(rule.condition, rows):
+                continue
+            edge_time = rows[-1]["time"]
+            if rule.last_fired_at is not None and (
+                int(rule.last_fired_at.timestamp()) >= edge_time
+            ):
+                continue
+            rule.last_fired_at = datetime.fromtimestamp(edge_time, tz=UTC)
+            rule.save(update_fields=["last_fired_at"])
+            sink(
+                rule,
+                {
+                    "symbol": rule.symbol,
+                    "interval": rule.interval,
+                    "edge_time": edge_time,
+                    "condition": rule.condition,
+                },
+            )
+            fired += 1
+        except Exception as exc:  # ponytail: per-rule isolation (R7) — peers continue
+            logger.warning("alert rule failed rule=%s: %s", rule.pk, exc)
+    return fired
 
 
 def run_loop(client, symbols=None, iterations=None, stop=None, sleep=time.sleep) -> int:
