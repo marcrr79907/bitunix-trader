@@ -107,6 +107,19 @@ def test_home_links_to_market_page(logged_in_client):
     assert b'href="/market/"' in response.content
 
 
+def test_nav_links_to_signals_page(logged_in_client):
+    # D2: the base shell exposes the /signals/ screen in the primary nav.
+    response = logged_in_client.get("/market/")
+    assert response.status_code == 200
+    assert b'href="/signals/"' in response.content
+
+
+def test_signals_route_is_served(logged_in_client):
+    response = logged_in_client.get("/signals/")
+    assert response.status_code == 200
+    assert response["Content-Type"].startswith("text/html")
+
+
 def test_csp_present_on_market_page(logged_in_client):
     response = logged_in_client.get("/market/")
     assert response.status_code == 200
