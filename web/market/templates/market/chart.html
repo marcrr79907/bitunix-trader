@@ -48,12 +48,32 @@
     </fieldset>
     <h2>RSI (14)</h2>
     <p id="rsi" aria-live="polite">–</p>
+    <h2 id="drawings-heading">Drawings</h2>
+    <fieldset class="drawings" aria-labelledby="drawings-heading">
+      <button type="button" class="draw-tool" data-kind="hline">H-line</button>
+      <button type="button" class="draw-tool" data-kind="trendline">Trend</button>
+      <button type="button" class="draw-tool" data-kind="fib">Fib</button>
+      <button type="button" class="draw-tool" data-kind="rect">Box</button>
+      <button type="button" class="draw-tool" data-kind="text">Text</button>
+    </fieldset>
+    <button type="button" class="draw-cancel">Pan / cancel</button>
+    <ul id="drawing-list" class="drawing-list"></ul>
   </aside>
 </div>
+
+<dialog id="text-dialog" aria-label="Text drawing">
+  <form method="dialog">
+    <label for="text-dialog-input">Label</label>
+    <input id="text-dialog-input" type="text" maxlength="80" autocomplete="off">
+    <button type="submit" value="ok">Add</button>
+    <button type="submit" value="cancel">Cancel</button>
+  </form>
+</dialog>
 {% endblock %}
 
 {% block scripts %}
 <script src="https://unpkg.com/lightweight-charts@5.2.0/dist/lightweight-charts.standalone.production.js"></script>
 <script src="{% url 'market_chart_core_js' %}"></script>
+<script src="{% url 'market_drawing_core_js' %}"></script>
 <script src="{% url 'market_chart_js' %}"></script>
 {% endblock %}
