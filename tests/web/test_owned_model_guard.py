@@ -20,7 +20,14 @@ REQUEST_PATH = (WEB / "config", WEB / "accounts", WEB / "trading", WEB / "market
 SCANNER_FILE = Path(__file__).resolve()
 
 OWNED_MODELS = frozenset(
-    {"ExchangeCredential", "Watchlist", "PositionSnapshot", "AccountSnapshot", "Trade"}
+    {
+        "ExchangeCredential",
+        "Watchlist",
+        "PositionSnapshot",
+        "AccountSnapshot",
+        "Trade",
+        "ChartLayout",
+    }
 )
 UNSCOPED_VERBS = frozenset(
     {
@@ -89,6 +96,7 @@ def test_scanner_flags_an_unscoped_all_on_the_other_model(tmp_path):
         "AccountSnapshot.objects.exclude(ts=ts)",
         "Trade.objects.first()",
         "Trade.objects.get_or_create(user=user_a, trade_id='T1')",
+        "ChartLayout.objects.all()",
     ],
 )
 def test_scanner_flags_the_private_models(tmp_path, query):

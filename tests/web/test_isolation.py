@@ -13,6 +13,7 @@ import pytest
 from django.db import IntegrityError, transaction
 from trading.models import (
     AccountSnapshot,
+    ChartLayout,
     ExchangeCredential,
     PositionSnapshot,
     Trade,
@@ -114,3 +115,58 @@ def test_same_symbol_allowed_across_users(user_a, user_b):
 
     assert Watchlist.for_user(user_a).count() == 1
     assert Watchlist.for_user(user_b).count() == 1
+
+
+@pytest.mark.django_db
+def test_chart_layout_cross_user_get_denied(user_a, user_b):
+    # R14.2/R3: B cannot read A's layout row through the scoped accessor.
+    layout = ChartLayout.objects.create(
+        user=user_a, symbol="BTCUSDT", interval="1m", indicators=[{"token": "rsi"}]
+    )
+
+    with pytest.raises(ChartLayout.DoesNotExist):
+        ChartLayout.for_user(user_b).get(pk=layout.pk)
+
+    assert ChartLayout.for_user(user_a).get(pk=layout.pk) == layout
+    assert ChartLayout.for_user(user_b).count() == 0
+
+
+@pytest.mark.django_db
+def test_chart_layout_for_user_scopes_to_the_owner(user_a, user_b):
+    ChartLayout.objects.create(user=user_a, symbol="BTCUSDT", interval="1m")
+    assert ChartLayout.for_user(user_a).count() == 1
+    assert ChartLayout.for_user(user_b).count() == 0
+
+
+@pytest.mark.django_db
+def test_chart_layout_duplicate_key_rejected(user_a):
+    ChartLayout.objects.create(user=user_a, symbol="BTCUSDT", interval="1m")
+    with pytest.raises(IntegrityError):
+        with transaction.atomic():
+            ChartLayout.objects.create(user=user_a, symbol="BTCUSDT", interval="1m")
+
+
+@pytest.mark.django_db
+def test_chart_layout_distinct_intervals_coexist(user_a):
+    ChartLayout.objects.create(user=user_a, symbol="BTCUSDT", interval="1m")
+    ChartLayout.objects.create(user=user_a, symbol="BTCUSDT", interval="1h")
+
+    assert ChartLayout.for_user(user_a).count() == 2
+
+
+@pytest.mark.django_db
+def test_chart_layout_json_round_trip(user_a):
+    indicators = [{"token": "macd", "params": {"macd_fast": 12}}]
+    ChartLayout.objects.create(
+        user=user_a, symbol="BTCUSDT", interval="1m", indicators=indicators
+    )
+
+    saved = ChartLayout.for_user(user_a).get(symbol="BTCUSDT", interval="1m")
+    assert saved.indicators == indicators
+
+
+@pytest.mark.django_db
+def test_chart_layout_owner_is_required():
+    with pytest.raises(IntegrityError):
+        with transaction.atomic():
+            ChartLayout.objects.create(symbol="BTCUSDT", interval="1m")
