@@ -2,6 +2,8 @@
 
 {% block title %}Market{% endblock %}
 
+{% block head %}<meta name="csrf-token" content="{{ csrf_token }}">{% endblock %}
+
 {% block content %}
 <div class="market-layout">
   <section id="chart" aria-label="Candlestick chart"></section>
@@ -32,8 +34,10 @@
     </select>
     <h2 id="indicators-heading">Indicators</h2>
     <fieldset class="indicators" aria-labelledby="indicators-heading">
-      <label><input type="checkbox" class="indicator-toggle" value="sma20" checked> SMA 20</label>
-      <label><input type="checkbox" class="indicator-toggle" value="ema20" checked> EMA 20</label>
+      <label><input type="checkbox" class="indicator-toggle" value="sma" checked> SMA
+        <input type="number" class="indicator-param" data-token="sma" data-param="sma_len" min="1" value="20" aria-label="SMA length"></label>
+      <label><input type="checkbox" class="indicator-toggle" value="ema" checked> EMA
+        <input type="number" class="indicator-param" data-token="ema" data-param="ema_len" min="1" value="20" aria-label="EMA length"></label>
       <label><input type="checkbox" class="indicator-toggle" value="bollinger"> Bollinger</label>
       <label><input type="checkbox" class="indicator-toggle" value="vwap"> VWAP</label>
       <label><input type="checkbox" class="indicator-toggle" value="rsi" checked> RSI</label>

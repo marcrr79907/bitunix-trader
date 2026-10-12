@@ -9,6 +9,7 @@ from market import views
 urlpatterns = [
     path("market/", views.market_page, name="market_page"),
     path("market/api/kline", views.api_kline, name="market_api_kline"),
+    path("market/api/layout", views.api_layout, name="market_api_layout"),
     path("market/chart-core.js", views.chart_core_js, name="market_chart_core_js"),
     path("market/chart.js", views.chart_js, name="market_chart_js"),
 ]

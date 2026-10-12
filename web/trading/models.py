@@ -205,3 +205,26 @@ class Trade(UserOwnedModel):
                 fields=["user", "trade_id"], name="uniq_trade_user_trade_id"
             )
         ]
+
+
+class ChartLayout(UserOwnedModel):
+    """Per-user persisted chart layout (R14): one layout per chart.
+
+    TradingView-style — one layout per ``(user, symbol, interval)``, enforced by
+    the unique constraint. ``indicators`` is a JSON list of ``{token, params}``
+    (params an object); the registry is open-ended, so a JSON column avoids a
+    migration per indicator token. ``updated_at`` is the save instant.
+    """
+
+    symbol = models.CharField(max_length=32)
+    interval = models.CharField(max_length=8)
+    indicators = models.JSONField(default=list)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=["user", "symbol", "interval"],
+                name="uniq_layout_user_symbol_interval",
+            )
+        ]
