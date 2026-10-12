@@ -19,6 +19,8 @@
   var SYMBOLS = {{ symbols|safe }};
   var WS_URL = "wss://fapi.bitunix.com/public/";
   var REFETCH_DELAY = 1500;
+  var SAVE_DELAY = 500; // debounce for the layout PUT (R5)
+  var LAYOUT_URL = "/market/api/layout";
 
   // REST interval -> BitUnix WS channel (live-verified 2026-10-08).
   var CHANNELS = {
@@ -32,10 +34,12 @@
   };
 
   // Static pane registry: token -> placement + series factory. Presentation
-  // metadata only; the values come from the server payload.
+  // metadata only; the values come from the server payload. Tokens are the
+  // server's param-driven vocabulary: ``sma``/``ema`` carry editable ``_len``
+  // (their defaults are 20, so the old ``sma20``/``ema20`` render identically).
   var REGISTRY = {
-    sma20: { place: "overlay", series: [{ key: "sma20", type: "line", color: "#2962ff" }] },
-    ema20: { place: "overlay", series: [{ key: "ema20", type: "line", color: "#ff6d00" }] },
+    sma: { place: "overlay", series: [{ key: "sma", type: "line", color: "#2962ff" }] },
+    ema: { place: "overlay", series: [{ key: "ema", type: "line", color: "#ff6d00" }] },
     bollinger: {
       place: "overlay",
       series: [
@@ -77,11 +81,37 @@
 
   // Fixed pane order -> contiguous indices 1..n (index 0 = price scale).
   var PANE_ORDER = ["rsi", "macd", "stochastic", "atr", "volume"];
-  var DEFAULT_INDICATORS = ["sma20", "ema20", "rsi"];
+  var DEFAULT_INDICATORS = ["sma", "ema", "rsi"];
 
   var toggles = Array.prototype.slice.call(
     document.querySelectorAll(".indicator-toggle"),
   );
+  var paramInputs = Array.prototype.slice.call(
+    document.querySelectorAll(".indicator-param"),
+  );
+
+  // DOM -> {token: {param: number}} for the checked, param-capable overlays.
+  var readParams = function () {
+    var out = {};
+    paramInputs.forEach(function (el) {
+      var token = el.dataset.token;
+      var n = parseInt(el.value, 10);
+      if (!token || isNaN(n) || n < 1) return;
+      (out[token] = out[token] || {})[el.dataset.param] = n;
+    });
+    return out;
+  };
+
+  // indicators = ["sma",...]; params = {sma: {sma_len: 20}, ...}. The params
+  // only matter for tokens actually selected.
+  var buildIndicators = function (indicators, params) {
+    return indicators.map(function (token) {
+      var entry = { token: token };
+      if (params && params[token]) entry.params = params[token];
+      return entry;
+    });
+  };
+
   var readIndicators = function () {
     if (!toggles.length) return DEFAULT_INDICATORS.slice();
     return toggles
@@ -89,7 +119,28 @@
       .map(function (t) { return t.value; });
   };
 
-  var state = { symbol: SYMBOLS[0], interval: "1m", indicators: readIndicators() };
+  // Sync the panel DOM from a layout so a saved set wins over the markup.
+  var applyLayout = function (indicators) {
+    var tokens = indicators.map(function (i) { return i.token; });
+    toggles.forEach(function (t) { t.checked = tokens.indexOf(t.value) !== -1; });
+    var params = {};
+    indicators.forEach(function (i) {
+      if (i.params) params[i.token] = i.params;
+    });
+    paramInputs.forEach(function (el) {
+      var token = el.dataset.token;
+      if (params[token] && params[token][el.dataset.param] !== undefined) {
+        el.value = params[token][el.dataset.param];
+      }
+    });
+  };
+
+  var state = {
+    symbol: SYMBOLS[0],
+    interval: "1m",
+    indicators: readIndicators(),
+    params: readParams(),
+  };
 
   var el = document.getElementById("chart");
   var chart = null;
@@ -99,8 +150,9 @@
   // In-memory series arrays, keyed by dataKey(place,pane,key).
   var seriesData = {};
 
-  // Read-only test seam (DOM assertions, no image diffs).
-  window.marketChart = { chart: null, candleSeries: null, panes: {} };
+  // Read-only test seam (DOM assertions, no image diffs). ``ready`` flips true
+  // once the async boot has applied the layout and built the chart.
+  window.marketChart = { chart: null, candleSeries: null, panes: {}, ready: false };
 
   var ws = null;
   var sub = null; // {symbol, interval} pending or active
@@ -201,6 +253,14 @@
   var klineUrl = function (extra) {
     var q = "symbol=" + state.symbol + "&interval=" + state.interval;
     if (state.indicators.length) q += "&indicators=" + state.indicators.join(",");
+    // Append editable params so e.g. ``sma_len=50`` reaches the server.
+    state.indicators.forEach(function (token) {
+      var params = state.params && state.params[token];
+      if (!params) return;
+      Object.keys(params).forEach(function (key) {
+        q += "&" + encodeURIComponent(key) + "=" + encodeURIComponent(params[key]);
+      });
+    });
     if (extra) q += "&" + extra;
     return "/market/api/kline?" + q;
   };
@@ -344,15 +404,88 @@
     ws.onerror = function () { ws.close(); };
   };
 
+  // --- layout persistence (R2/R4/R5) ------------------------------------------
+
+  var csrfToken = function () {
+    var meta = document.querySelector('meta[name="csrf-token"]');
+    return meta ? meta.content : "";
+  };
+
+  // Fetch and apply the saved layout for ``symbol``/``interval``; fall back to
+  // the DOM defaults on any failure (never a blank chart). Resolves either way.
+  var loadLayout = function (symbol, interval) {
+    var url = LAYOUT_URL + "?symbol=" + encodeURIComponent(symbol)
+      + "&interval=" + encodeURIComponent(interval);
+    return fetch(url)
+      .then(function (r) {
+        if (!r.ok) throw new Error("layout " + r.status);
+        return r.json();
+      })
+      .then(function (body) {
+        if (!body || !body.indicators) return;
+        state.indicators = body.indicators.map(function (i) { return i.token; });
+        state.params = readParams(); // panel already synced below
+        applyLayout(body.indicators);
+        state.params = readParams();
+      })
+      .catch(function () {
+        // Fall back to the DOM defaults already reflected in state.
+        state.indicators = readIndicators();
+        state.params = readParams();
+      });
+  };
+
+  // Debounced PUT; the symbol/interval are captured at change time so a racing
+  // switch cannot mis-save (R5). A failed save is silent (non-fatal).
+  var saveTimer = null;
+  var saveLayout = function () {
+    if (saveTimer) clearTimeout(saveTimer);
+    var symbol = state.symbol;
+    var interval = state.interval;
+    saveTimer = setTimeout(function () {
+      saveTimer = null;
+      var payload = {
+        symbol: symbol,
+        interval: interval,
+        indicators: buildIndicators(state.indicators, state.params),
+      };
+      fetch(LAYOUT_URL, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json", "X-CSRFToken": csrfToken() },
+        body: JSON.stringify(payload),
+      }).catch(function () { /* in-session chart unaffected */ });
+    }, SAVE_DELAY);
+  };
+
   // --- controls ----------------------------------------------------------------
 
+  // A config change (toggle/param) is legitimate to rebuild (setData path); the
+  // live WS stream keeps using update() only.
+  var rebuild = function () {
+    state.indicators = readIndicators();
+    state.params = readParams();
+    buildChart();
+    fetchHistory();
+    saveLayout();
+  };
+
+  // Monotonic chart generation: a switch bumps it so a slow boot/switch load
+  // for the previous chart cannot clobber the current one.
+  var gen = 0;
+
   var switchTo = function (symbol, interval) {
+    var mine = ++gen;
     state.symbol = symbol;
     state.interval = interval;
     lastBucket = 0;
     if (ws && ws.readyState === 1) sendSubscribe({ symbol: symbol, interval: interval });
     else sub = { symbol: symbol, interval: interval };
-    fetchHistory(); // full reset for the new series
+    // Load THIS chart's layout before history (R4); fallback keeps DOM defaults.
+    loadLayout(symbol, interval).then(function () {
+      if (mine !== gen) return; // a newer switch won the race
+      buildChart();
+      fetchHistory();
+    });
   };
 
   document.querySelectorAll(".pair").forEach(function (btn) {
@@ -365,16 +498,22 @@
   });
 
   // Toggle = config change -> rebuild the chart and refetch via the history path.
-  toggles.forEach(function (t) {
-    t.addEventListener("change", function () {
-      state.indicators = readIndicators();
-      buildChart();
-      fetchHistory();
-    });
-  });
+  toggles.forEach(function (t) { t.addEventListener("change", rebuild); });
+  paramInputs.forEach(function (el) { el.addEventListener("change", rebuild); });
 
-  buildChart();
-  sub = { symbol: state.symbol, interval: state.interval };
-  connect();
-  fetchHistory();
+  // Async boot (R4): layout FIRST, then build + connect + history. On failure
+  // the DOM defaults drive the chart — never blank.
+  var boot = function () {
+    var mine = ++gen;
+    loadLayout(state.symbol, state.interval).then(function () {
+      if (mine !== gen) return; // a switch raced ahead of boot
+      buildChart();
+      sub = { symbol: state.symbol, interval: state.interval };
+      connect();
+      fetchHistory();
+      window.marketChart.ready = true;
+    });
+  };
+
+  boot();
 })();

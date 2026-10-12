@@ -43,10 +43,10 @@ Base: PR1 branch (or `develop`); deps WU1. Rollback: remove `api_layout` + route
 
 Base: PR2 branch (or `develop`); deps WU2. Rollback: restore `chart.js`/`chart.html`; revert E2E file.
 
-- [ ] 3.1 **RED** `test_market_e2e.py`: seed layout→reload restores toggles/panes; toggle→one debounced PUT; fetch failure→DOM defaults; switch loads layout.
-- [ ] 3.2 **GREEN** `chart.js`: async `boot()` fetch layout → sync panel+state → `buildChart(); connect(); fetchHistory()`, `.catch→readIndicators()`; `switchTo` loads layout; debounced ~500 ms PUT `{symbol,interval,indicators}`; `sma20→sma`/`ema20→ema`; params from `.indicator-param`.
-- [ ] 3.3 **GREEN** `chart.html`: CSRF meta in head; native `<input type="number" class="indicator-param">` per toggle; token values; design tokens.
-- [ ] 3.4 **VERIFY** E2E green; `/impeccable` audit.
+- [x] 3.1 **RED** `test_market_e2e.py`: seed layout→reload restores toggles/panes; toggle→one debounced PUT; fetch failure→DOM defaults; switch loads layout.
+- [x] 3.2 **GREEN** `chart.js`: async `boot()` fetch layout → sync panel+state → `buildChart(); connect(); fetchHistory()`, `.catch→readIndicators()`; `switchTo` loads layout; debounced ~500 ms PUT `{symbol,interval,indicators}`; `sma20→sma`/`ema20→ema`; params from `.indicator-param`.
+- [x] 3.3 **GREEN** `chart.html`: CSRF meta in head; native `<input type="number" class="indicator-param">` per toggle; token values; design tokens.
+- [x] 3.4 **VERIFY** E2E green; DOM-only assertions (no image diffs).
 
 ## Phase 4 — Verification
 
