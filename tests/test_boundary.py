@@ -15,7 +15,13 @@ SRC = Path(__file__).resolve().parent.parent / "src"
 
 # Pure, framework-free modules: they may import ONLY the standard library.
 # Extend this set as new pure domain modules are added.
-PURE_MODULES = ("indicators.py", "metrics.py")
+PURE_MODULES = (
+    "indicators.py",
+    "metrics.py",
+    "smc/config.py",
+    "smc/swings.py",
+    "smc/structure.py",
+)
 
 
 def _imported_roots(tree: ast.AST) -> set[str]:
