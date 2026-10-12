@@ -281,6 +281,7 @@ class AlertRule(UserOwnedModel):
     condition = models.JSONField(default=dict)
     is_active = models.BooleanField(default=True)
     last_fired_at = models.DateTimeField(null=True, blank=True)
+    telegram_chat_id = models.CharField(max_length=64, blank=True, default="")
 
     class Meta:
         indexes = [

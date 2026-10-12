@@ -1,0 +1,53 @@
+{% extends "registration/base.html" %}
+
+{% block title %}Alert rules{% endblock %}
+
+{% block content %}
+<h1>Alert rules</h1>
+<p><a href="{% url 'rule_create' %}">New rule</a></p>
+
+{% if form %}
+<section class="panel rule-form" aria-labelledby="rule-form-title">
+  <h2 id="rule-form-title">{% if editing %}Edit rule{% else %}New rule{% endif %}</h2>
+  <form method="post">
+    {% csrf_token %}
+    {{ form.as_p }}
+    <input type="submit" value="{% if editing %}Save rule{% else %}Create rule{% endif %}">
+  </form>
+</section>
+{% endif %}
+
+{% if rules %}
+<table class="rules">
+  <caption class="muted">Your alert rules</caption>
+  <thead>
+    <tr>
+      <th scope="col">Symbol</th>
+      <th scope="col">Interval</th>
+      <th scope="col">Condition</th>
+      <th scope="col">Chat</th>
+      <th scope="col">State</th>
+      <th scope="col">Actions</th>
+    </tr>
+  </thead>
+  <tbody>
+  {% for rule in rules %}
+    <tr>
+      <td>{{ rule.symbol }}</td>
+      <td>{{ rule.interval }}</td>
+      <td><code>{{ rule.condition }}</code></td>
+      <td>{% if rule.telegram_chat_id %}{{ rule.telegram_chat_id }}{% else %}<span class="muted">default</span>{% endif %}</td>
+      <td>{% if rule.is_active %}<span class="signal-state state-armed">active</span>{% else %}<span class="signal-state state-inactive">inactive</span>{% endif %}</td>
+      <td class="rule-actions">
+        <a href="{% url 'rule_edit' rule.pk %}">Edit</a>
+        <form method="post" action="{% url 'rule_toggle' rule.pk %}">{% csrf_token %}<button type="submit">{% if rule.is_active %}Deactivate{% else %}Activate{% endif %}</button></form>
+        <form method="post" action="{% url 'rule_delete' rule.pk %}">{% csrf_token %}<button type="submit" class="danger">Delete</button></form>
+      </td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% else %}
+<section class="panel"><p>No alert rules yet. Create one above.</p></section>
+{% endif %}
+{% endblock %}

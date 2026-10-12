@@ -1,0 +1,55 @@
+{% extends "registration/base.html" %}
+
+{% block title %}Signals{% endblock %}
+
+{% block content %}
+<h1>Signals</h1>
+<p class="signals-intro">Setups for the pairs you have alert rules on. <a href="{% url 'rules' %}">Manage alert rules</a>.</p>
+
+{% if groups %}
+<div class="signals">
+  {% for group in groups %}
+  <section class="panel signal-group" aria-labelledby="pair-{{ forloop.counter }}">
+    <header class="signal-head">
+      <h2 id="pair-{{ forloop.counter }}">{{ group.symbol }} <span class="muted">{{ group.interval }}</span></h2>
+      <span class="signal-state state-{{ group.state }}">{{ group.state }}</span>
+    </header>
+
+    {% if group.setups %}
+    <table class="signal-setups">
+      <caption class="muted">Setups for {{ group.symbol }} {{ group.interval }}</caption>
+      <thead>
+        <tr>
+          <th scope="col">Direction</th>
+          <th scope="col" class="num">Entry</th>
+          <th scope="col" class="num">Stop</th>
+          <th scope="col" class="num">Take profit</th>
+          <th scope="col" class="num">R:R</th>
+          <th scope="col" class="num">Score</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for setup in group.setups %}
+        <tr class="dir-{{ setup.direction }}">
+          <td>{{ setup.direction }}</td>
+          <td class="num">{{ setup.entry }}</td>
+          <td class="num">{{ setup.stop }}</td>
+          <td class="num">{{ setup.take_profit }}</td>
+          <td class="num">{{ setup.rr }}</td>
+          <td class="num">{{ setup.score }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% else %}
+    <p class="muted">No setups for this pair.</p>
+    {% endif %}
+  </section>
+  {% endfor %}
+</div>
+{% else %}
+<section class="panel">
+  <p>No alert rules yet.</p>
+</section>
+{% endif %}
+{% endblock %}
