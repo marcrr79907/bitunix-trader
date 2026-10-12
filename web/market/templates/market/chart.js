@@ -925,7 +925,9 @@
     });
 
     // Swing zig-zag polyline + pivot labels (label-less first swing still draws).
-    ctx.strokeStyle = "#9e9e9e";
+    // #616161 keeps the connector at 6.2:1 on the white chart canvas (WCAG 1.4.11
+    // non-text floor is 3:1; the old #9e9e9e fell to 2.7:1).
+    ctx.strokeStyle = "#616161";
     ctx.beginPath();
     var started = false;
     d.swings.forEach(function (s) {
