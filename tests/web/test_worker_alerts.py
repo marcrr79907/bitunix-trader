@@ -9,6 +9,8 @@ rule is logged and skipped without aborting its peers (R7); the ``run_once``
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
+
 import pytest
 import worker
 from trading.models import AlertRule, Candle, FundingSnapshot, TickerSnapshot
@@ -274,3 +276,137 @@ def test_run_once_survives_alert_failure(monkeypatch):
     assert worker.run_once(MarketStub(), [SYMBOL]) == (1, 1)
     assert FundingSnapshot.objects.count() == 1
     assert TickerSnapshot.objects.count() == 1
+
+
+# --- R8 (D2): Telegram delivery sink ----------------------------------------
+
+
+def _expected_bar(edge_time):
+    return datetime.fromtimestamp(edge_time, tz=UTC).isoformat()
+
+
+class TelegramRecorder:
+    """Stubs ``src.alerts.send_telegram``: records calls, returns/raises."""
+
+    def __init__(self, result=True, raises=None):
+        self.calls = []
+        self.result = result
+        self.raises = raises
+
+    def __call__(self, text, token=None, chat_id=None):
+        self.calls.append((text, chat_id))
+        if self.raises is not None:
+            raise self.raises
+        return self.result
+
+
+@pytest.mark.django_db
+def test_telegram_chat_id_round_trips(user_a):
+    rule = _rule(user_a, telegram_chat_id="555")
+    assert AlertRule.objects.get(pk=rule.pk).telegram_chat_id == "555"
+    # Additive/blank by default: nothing changed for existing rules.
+    assert _rule(user_a).telegram_chat_id == ""
+
+
+@pytest.mark.django_db
+def test_fire_sends_detail_only_message_to_rule_chat(user_a, monkeypatch):
+    from src import alerts
+
+    _seed(SYMBOL, INTERVAL, [99.0, 101.0])
+    _rule(user_a, telegram_chat_id="123")
+    rec = TelegramRecorder()
+    monkeypatch.setattr(alerts, "send_telegram", rec)
+
+    assert worker.run_alert_rules() == 1
+
+    assert len(rec.calls) == 1
+    text, chat = rec.calls[0]
+    assert chat == "123"
+    # Frozen format: symbol/interval/condition/bar, no entry/SL/TP.
+    assert text.startswith("🚨 Alert BTCUSDT 1h\n")
+    assert 'Condition: {"level":100,"op":"above","type":"price"}' in text
+    assert f"Bar: {_expected_bar(BASE_TIME + HOUR)}" in text
+    lowered = text.lower()
+    for forbidden in ("entry", "sl", "tp", "stop", "target"):
+        assert forbidden not in lowered
+
+
+@pytest.mark.django_db
+def test_blank_chat_id_falls_back_to_env(user_a, monkeypatch):
+    from src import alerts
+
+    _seed(SYMBOL, INTERVAL, [99.0, 101.0])
+    _rule(user_a, telegram_chat_id="")
+    rec = TelegramRecorder()
+    monkeypatch.setattr(alerts, "send_telegram", rec)
+    monkeypatch.setattr(alerts.config, "TELEGRAM_CHAT_ID", "999")
+
+    assert worker.run_alert_rules() == 1
+    assert rec.calls[0][1] == "999"
+
+
+@pytest.mark.django_db
+def test_no_chat_id_anywhere_does_not_crash(user_a, monkeypatch):
+    from src import alerts
+
+    _seed(SYMBOL, INTERVAL, [99.0, 101.0])
+    rule = _rule(user_a, telegram_chat_id="")
+    rec = TelegramRecorder(result=False)
+    monkeypatch.setattr(alerts, "send_telegram", rec)
+    monkeypatch.setattr(alerts.config, "TELEGRAM_CHAT_ID", "")
+
+    # Falsy destination: no send, no raise, the fire is still stamped.
+    assert worker.run_alert_rules() == 1
+    assert rec.calls == []
+    rule.refresh_from_db()
+    assert int(rule.last_fired_at.timestamp()) == BASE_TIME + HOUR
+
+
+@pytest.mark.django_db
+def test_telegram_false_is_isolated_and_peers_fire(user_a, monkeypatch):
+    from src import alerts
+
+    _seed(SYMBOL, INTERVAL, [99.0, 101.0])
+    rule = _rule(user_a, telegram_chat_id="1")
+    peer = _rule(user_a, telegram_chat_id="2")
+    rec = TelegramRecorder(result=False)
+    monkeypatch.setattr(alerts, "send_telegram", rec)
+
+    # ``False`` (transport error) must not break the loop nor skip peers.
+    assert worker.run_alert_rules() == 2
+    assert len(rec.calls) == 2
+    rule.refresh_from_db()
+    assert int(rule.last_fired_at.timestamp()) == BASE_TIME + HOUR
+    peer.refresh_from_db()
+    assert int(peer.last_fired_at.timestamp()) == BASE_TIME + HOUR
+
+
+@pytest.mark.django_db
+def test_telegram_exception_never_escapes_on_fired(user_a, monkeypatch):
+    from src import alerts
+
+    _seed(SYMBOL, INTERVAL, [99.0, 101.0])
+    rule = _rule(user_a, telegram_chat_id="boom")
+    _rule(user_a, telegram_chat_id="ok")
+    rec = TelegramRecorder(raises=RuntimeError("telegram exploded"))
+    monkeypatch.setattr(alerts, "send_telegram", rec)
+
+    # A send raising inside the sink is caught by ``on_fired``: peers fire too.
+    assert worker.run_alert_rules() == 2
+    rule.refresh_from_db()
+    assert int(rule.last_fired_at.timestamp()) == BASE_TIME + HOUR
+
+
+@pytest.mark.django_db
+def test_failed_send_is_not_retried_at_most_once(user_a, monkeypatch):
+    from src import alerts
+
+    _seed(SYMBOL, INTERVAL, [99.0, 101.0])
+    _rule(user_a, telegram_chat_id="1")
+    rec = TelegramRecorder(result=False)
+    monkeypatch.setattr(alerts, "send_telegram", rec)
+
+    assert worker.run_alert_rules() == 1
+    # Same stamped bar re-evaluated: dedup by ``last_fired_at``, no re-send.
+    assert worker.run_alert_rules() == 0
+    assert len(rec.calls) == 1
