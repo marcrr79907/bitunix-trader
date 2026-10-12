@@ -142,6 +142,7 @@ def test_payload_empty_upstream_is_200_empty_arrays():
     assert payload == {
         "candles": [],
         "overlays": {"sma20": [], "ema20": [], "rsi14": []},
+        "panes": {},
     }
 
 
@@ -184,8 +185,9 @@ def test_endpoint_200_exact_shape(monkeypatch):
 
     assert response.status_code == 200
     body = response.json()
-    assert set(body) == {"candles", "overlays"}
+    assert set(body) == {"candles", "overlays", "panes"}
     assert set(body["overlays"]) == {"sma20", "ema20", "rsi14"}
+    assert body["panes"] == {}
     candle = body["candles"][0]
     assert set(candle) == {"time", "open", "high", "low", "close"}
     assert isinstance(candle["time"], int)
@@ -253,6 +255,7 @@ def test_endpoint_empty_upstream_is_200_empty(monkeypatch):
     assert response.json() == {
         "candles": [],
         "overlays": {"sma20": [], "ema20": [], "rsi14": []},
+        "panes": {},
     }
 
 
@@ -487,4 +490,339 @@ def test_endpoint_empty_cursor_is_200_empty(monkeypatch):
     assert response.json() == {
         "candles": [],
         "overlays": {"sma20": [], "ema20": [], "rsi14": []},
+        "panes": {},
     }
+
+
+# --- WU2: registry, selection, derived warm-up, volume (R3/R4) --------------
+
+# A long mixed series so every default/selected indicator computes real values.
+_MIXED_CLOSES = [
+    10,
+    11,
+    10.5,
+    12,
+    11.5,
+    13,
+    12,
+    14,
+    13,
+    15,
+    14,
+    16,
+    15,
+    17,
+    16,
+    18,
+    17,
+    19,
+    18,
+    20,
+    19,
+    21,
+    20,
+    22,
+    21,
+    23,
+    22,
+    24,
+    23,
+    25,
+    24,
+    26,
+    25,
+    27,
+    26,
+    28,
+    27,
+    29,
+    28,
+    30,
+]
+
+
+def _mixed_rows(n=40, with_quote_vol=False):
+    rows = []
+    for t in range(n):
+        c = _MIXED_CLOSES[t % len(_MIXED_CLOSES)]
+        if with_quote_vol:
+            rows.append(
+                _row_with_quote_vol(
+                    t * 60, str(c), str(c + 1), str(c - 1), str(c), str(t + 1)
+                )
+            )
+        else:
+            rows.append(_row(t * 60, str(c), str(c + 1), str(c - 1), str(c)))
+    return rows
+
+
+def test_payload_default_set_unchanged_and_panes_empty():
+    from market.quotes import get_kline_payload
+
+    payload = get_kline_payload(StubClient(_mixed_rows()), "BTCUSDT", "1m", 40)
+
+    assert set(payload) == {"candles", "overlays", "panes"}
+    assert set(payload["overlays"]) == {"sma20", "ema20", "rsi14"}
+    assert payload["panes"] == {}
+
+
+def test_payload_selection_returns_requested_panes():
+    from market.quotes import get_kline_payload
+
+    payload = get_kline_payload(
+        StubClient(_mixed_rows()),
+        "BTCUSDT",
+        "1m",
+        40,
+        indicators=[("macd", {}), ("rsi", {})],
+    )
+
+    assert set(payload["overlays"]) == set()  # nothing default leaked in
+    assert set(payload["panes"]) == {"macd", "rsi"}
+    macd = payload["panes"]["macd"]
+    assert macd["type"] == "line"
+    assert set(macd["series"]) == {"macd", "signal", "histogram"}
+    rsi = payload["panes"]["rsi"]
+    assert rsi["type"] == "line"
+    assert set(rsi["series"]) == {"rsi"}
+    assert all(set(p) == {"time", "value"} for p in rsi["series"]["rsi"])
+
+
+def test_payload_overlays_selection_bollinger_three_lines():
+    from market.quotes import get_kline_payload
+
+    payload = get_kline_payload(
+        StubClient(_mixed_rows()),
+        "BTCUSDT",
+        "1m",
+        40,
+        indicators=[("bollinger", {})],
+    )
+
+    assert set(payload["overlays"]) == {
+        "bollinger_upper",
+        "bollinger_middle",
+        "bollinger_lower",
+    }
+    assert payload["panes"] == {}
+    upper = payload["overlays"]["bollinger_upper"]
+    lower = payload["overlays"]["bollinger_lower"]
+    assert len(upper) == len(lower) > 0
+    # Band order per computed point.
+    assert all(u["value"] >= lo["value"] for u, lo in zip(upper, lower, strict=False))
+
+
+def test_payload_derived_warmup_macd_defined_on_first_page_candle():
+    from market.quotes import get_kline_payload
+
+    # 40 rows, page = 5. MACD needs 33 warm-up → derived warmup must exceed 20
+    # so the first returned candle already has a non-null MACD line.
+    payload = get_kline_payload(
+        StubClient(_mixed_rows(40)),
+        "BTCUSDT",
+        "1m",
+        5,
+        indicators=[("macd", {})],
+    )
+
+    page_times = {c["time"] for c in payload["candles"]}
+    assert len(page_times) == 5
+    macd = payload["panes"]["macd"]["series"]["macd"]
+    assert macd, "MACD series must not be empty"
+    assert macd[0]["value"] is not None
+    assert macd[0]["time"] == payload["candles"][0]["time"]
+    assert all(p["time"] in page_times for p in macd)
+
+
+def test_payload_candles_exactly_five_keys_no_quote_vol_leak():
+    from market.quotes import get_kline_payload
+
+    payload = get_kline_payload(
+        StubClient(_mixed_rows(with_quote_vol=True)),
+        "BTCUSDT",
+        "1m",
+        40,
+        indicators=[("volume", {})],
+    )
+
+    assert payload["candles"]
+    for c in payload["candles"]:
+        assert set(c) == {"time", "open", "high", "low", "close"}
+        assert "quote_vol" not in c
+
+
+def test_payload_volume_pane_uses_quote_vol():
+    from market.quotes import get_kline_payload
+
+    rows = _mixed_rows(40, with_quote_vol=True)
+    payload = get_kline_payload(
+        StubClient(rows), "BTCUSDT", "1m", 40, indicators=[("volume", {})]
+    )
+
+    volume = payload["panes"]["volume"]
+    assert volume["type"] == "histogram"
+    series = volume["series"]["volume"]
+    assert series  # non-empty: rows carried quote_vol
+    # The page's last candle quote_vol must equal the last volume point.
+    assert series[-1]["value"] == rows[-1]["quote_vol"]
+    assert series[-1]["time"] == payload["candles"][-1]["time"]
+
+
+def test_payload_upstream_fetch_clamped_to_200():
+    from market.quotes import get_kline_payload
+
+    client = StubClient([])
+    # limit 200 + default warm-up 20 = 220 > 200 → upstream asked for 200 max.
+    get_kline_payload(client, "BTCUSDT", "1m", 200)
+
+    assert client.calls[0]["limit"] == 200
+
+
+def test_endpoint_selected_panes_shape(monkeypatch):
+    from market import views
+
+    monkeypatch.setattr(views, "BitunixClient", lambda: StubClient(_mixed_rows(40)))
+
+    response = USER.get(
+        "/market/api/kline?symbol=BTCUSDT&interval=1m&limit=40&indicators=macd,rsi"
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["panes"]["macd"]["type"] == "line"
+    assert set(body["panes"]["macd"]["series"]) == {"macd", "signal", "histogram"}
+    assert set(body["panes"]["rsi"]["series"]) == {"rsi"}
+    assert body["overlays"] == {}
+
+
+def test_endpoint_unknown_indicator_is_400(monkeypatch):
+    from market import views
+
+    monkeypatch.setattr(views, "BitunixClient", lambda: StubClient(_mixed_rows(40)))
+
+    response = USER.get(
+        "/market/api/kline?symbol=BTCUSDT&interval=1m&indicators=notreal"
+    )
+
+    assert response.status_code == 400
+    assert "error" in response.json()
+
+
+def test_endpoint_bad_indicator_param_is_400(monkeypatch):
+    from market import views
+
+    monkeypatch.setattr(views, "BitunixClient", lambda: StubClient(_mixed_rows(40)))
+
+    response = USER.get(
+        "/market/api/kline?symbol=BTCUSDT&interval=1m&indicators=rsi&rsi_len=abc"
+    )
+
+    assert response.status_code == 400
+    assert "error" in response.json()
+
+
+def test_endpoint_volume_indicator_never_leaks_quote_vol(monkeypatch):
+    from market import views
+
+    monkeypatch.setattr(
+        views, "BitunixClient", lambda: StubClient(_mixed_rows(40, with_quote_vol=True))
+    )
+
+    response = USER.get(
+        "/market/api/kline?symbol=BTCUSDT&interval=1m&limit=40&indicators=volume"
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert all(
+        set(c) == {"time", "open", "high", "low", "close"} for c in body["candles"]
+    )
+    assert body["panes"]["volume"]["series"]["volume"]
+
+
+def test_payload_param_driven_overlays_sma_ema_vwap():
+    from market.quotes import get_kline_payload
+
+    payload = get_kline_payload(
+        StubClient(_mixed_rows(40, with_quote_vol=True)),
+        "BTCUSDT",
+        "1m",
+        40,
+        indicators=[("sma", {"sma_len": 5}), ("ema", {"ema_len": 5}), ("vwap", {})],
+    )
+
+    assert set(payload["overlays"]) == {"sma", "ema", "vwap"}
+    assert payload["panes"] == {}
+    assert all(p["value"] is not None for p in payload["overlays"]["sma"])
+    assert all(p["value"] is not None for p in payload["overlays"]["ema"])
+    assert payload["overlays"]["vwap"]  # quote_vol present → VWAP defined
+
+
+def test_payload_stochastic_and_atr_panes():
+    from market.quotes import get_kline_payload
+
+    payload = get_kline_payload(
+        StubClient(_mixed_rows(40)),
+        "BTCUSDT",
+        "1m",
+        40,
+        indicators=[("stochastic", {}), ("atr", {})],
+    )
+
+    assert set(payload["panes"]) == {"stochastic", "atr"}
+    assert set(payload["panes"]["stochastic"]["series"]) == {"k", "d"}
+    assert payload["panes"]["stochastic"]["series"]["k"]
+    assert set(payload["panes"]["atr"]["series"]) == {"atr"}
+    assert payload["panes"]["atr"]["series"]["atr"]
+
+
+def test_payload_vwap_with_null_quote_vol_treated_as_zero():
+    from market.quotes import get_kline_payload
+
+    # quote_vol all None → cumulative volume stays 0 → VWAP undefined → omitted.
+    payload = get_kline_payload(
+        StubClient(_mixed_rows(40)), "BTCUSDT", "1m", 40, indicators=[("vwap", {})]
+    )
+
+    assert payload["overlays"]["vwap"] == []
+
+
+def test_endpoint_int_param_below_one_is_400(monkeypatch):
+    from market import views
+
+    monkeypatch.setattr(views, "BitunixClient", lambda: StubClient(_mixed_rows(40)))
+
+    response = USER.get(
+        "/market/api/kline?symbol=BTCUSDT&interval=1m&indicators=rsi&rsi_len=0"
+    )
+    assert response.status_code == 400
+    assert "error" in response.json()
+
+
+def test_endpoint_float_param_invalid_is_400(monkeypatch):
+    from market import views
+
+    monkeypatch.setattr(views, "BitunixClient", lambda: StubClient(_mixed_rows(40)))
+
+    bad = USER.get(
+        "/market/api/kline?symbol=BTCUSDT&interval=1m&indicators=bollinger&bb_std=abc"
+    )
+    assert bad.status_code == 400
+    zero = USER.get(
+        "/market/api/kline?symbol=BTCUSDT&interval=1m&indicators=bollinger&bb_std=0"
+    )
+    assert zero.status_code == 400
+
+
+def test_endpoint_param_overrides_reach_the_builder(monkeypatch):
+    from market import views
+
+    monkeypatch.setattr(views, "BitunixClient", lambda: StubClient(_mixed_rows(40)))
+
+    response = USER.get(
+        "/market/api/kline?symbol=BTCUSDT&interval=1m&limit=40&indicators=sma&sma_len=5"
+    )
+
+    assert response.status_code == 200
+    sma = response.json()["overlays"]["sma"]
+    assert sma and all(p["value"] is not None for p in sma)
