@@ -28,7 +28,7 @@ Cross-user reads MUST be denied for ALL owned models. Using
 `for_user(other).get(pk=<this user's row pk>)` MUST raise `DoesNotExist`; a
 lookup that bypasses `for_user` MUST NOT be used by request-serving code.
 (Delivered with: `ExchangeCredential`, `Watchlist`, `PositionSnapshot`,
-`AccountSnapshot`, `Trade`.)
+`AccountSnapshot`, `Trade`, `ChartLayout`.)
 
 #### Scenario: A cannot read B's ExchangeCredential
 
@@ -60,13 +60,19 @@ lookup that bypasses `for_user` MUST NOT be used by request-serving code.
 - WHEN `for_user(B).get(pk=row.pk)` is called
 - THEN it raises `DoesNotExist`
 
+#### Scenario: A cannot read B's ChartLayout
+
+- GIVEN a `ChartLayout` owned by A
+- WHEN `for_user(B).get(pk=row.pk)` is called
+- THEN it raises `DoesNotExist`
+
 ### Requirement: R14.3 — Unscoped-query guard
 
 Request-serving code MUST NOT use unscoped queries (`.objects.all()`,
 `.objects.get()`, `.objects.filter()`) on owned models. A scanner MUST flag such
 usage; `OWNED_MODELS` MUST include `ExchangeCredential`, `Watchlist`,
-`PositionSnapshot`, `AccountSnapshot`, and `Trade`. The mechanism holds only
-while all access routes through `for_user`.
+`PositionSnapshot`, `AccountSnapshot`, `Trade`, and `ChartLayout`. The mechanism
+holds only while all access routes through `for_user`.
 
 #### Scenario: Scanner flags an unscoped query
 
@@ -76,7 +82,7 @@ while all access routes through `for_user`.
 
 #### Scenario: Scanner flags the new models
 
-- GIVEN a fixture calling `PositionSnapshot.objects.all()` (or an unscoped query on `AccountSnapshot`/`Trade`)
+- GIVEN a fixture calling `PositionSnapshot.objects.all()` (or an unscoped query on `AccountSnapshot`/`Trade`/`ChartLayout`)
 - WHEN the guard scans it
 - THEN the scanner reports the offender
 
