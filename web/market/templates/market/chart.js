@@ -3,8 +3,15 @@
 // Consistency rule (issue #68): ONE write path per concern.
 //   - history load + pagination prepend -> setData (once / with merge)
 //   - live stream (WS push)             -> update() only, never setData
-//   - candle close                      -> update() the last overlay point
-// All timeline/ordering math lives in the pure core (chart-core.js).
+//   - candle close                      -> update() the last point of EVERY
+//                                          active overlay/pane series
+//   - toggle / indicator change         -> CONFIG change: rebuild + setData
+// A toggle is the same class of change as a symbol/interval switch: it refetches
+// history and applies it via setData. It is NOT a mid-stream write.
+//
+// All timeline/ordering math lives in the pure core (chart-core.js); this file
+// only renders the server payload {candles, overlays, panes} — never computes
+// indicator values (server-side single source).
 (function () {
   "use strict";
 
@@ -24,18 +31,76 @@
     "1w": "market_kline_1week", "1M": "market_kline_1month",
   };
 
-  var state = { symbol: SYMBOLS[0], interval: "1m" };
+  // Static pane registry: token -> placement + series factory. Presentation
+  // metadata only; the values come from the server payload.
+  var REGISTRY = {
+    sma20: { place: "overlay", series: [{ key: "sma20", type: "line", color: "#2962ff" }] },
+    ema20: { place: "overlay", series: [{ key: "ema20", type: "line", color: "#ff6d00" }] },
+    bollinger: {
+      place: "overlay",
+      series: [
+        { key: "bollinger_upper", type: "line", color: "#7e57c2" },
+        { key: "bollinger_middle", type: "line", color: "#7e57c2" },
+        { key: "bollinger_lower", type: "line", color: "#7e57c2" },
+      ],
+    },
+    vwap: { place: "overlay", series: [{ key: "vwap", type: "line", color: "#26a69a" }] },
+    rsi: {
+      place: "pane",
+      pane: "rsi",
+      series: [{ key: "rsi", type: "line", color: "#ab47bc" }],
+    },
+    macd: {
+      place: "pane",
+      pane: "macd",
+      series: [
+        { key: "macd", type: "line", color: "#2962ff" },
+        { key: "signal", type: "line", color: "#ff6d00" },
+        { key: "histogram", type: "histogram", color: "#26a69a" },
+      ],
+    },
+    stochastic: {
+      place: "pane",
+      pane: "stochastic",
+      series: [
+        { key: "k", type: "line", color: "#2962ff" },
+        { key: "d", type: "line", color: "#ff6d00" },
+      ],
+    },
+    atr: { place: "pane", pane: "atr", series: [{ key: "atr", type: "line", color: "#ff6d00" }] },
+    volume: {
+      place: "pane",
+      pane: "volume",
+      series: [{ key: "volume", type: "histogram", color: "#26a69a" }],
+    },
+  };
 
-  var chart = LightweightCharts.createChart(document.getElementById("chart"), {
-    height: 480,
-    timeScale: { timeVisible: true },
-  });
-  var candleSeries = chart.addSeries(LightweightCharts.CandlestickSeries);
-  var smaSeries = chart.addSeries(LightweightCharts.LineSeries, { color: "#2962ff" });
-  var emaSeries = chart.addSeries(LightweightCharts.LineSeries, { color: "#ff6d00" });
+  // Fixed pane order -> contiguous indices 1..n (index 0 = price scale).
+  var PANE_ORDER = ["rsi", "macd", "stochastic", "atr", "volume"];
+  var DEFAULT_INDICATORS = ["sma20", "ema20", "rsi"];
+
+  var toggles = Array.prototype.slice.call(
+    document.querySelectorAll(".indicator-toggle"),
+  );
+  var readIndicators = function () {
+    if (!toggles.length) return DEFAULT_INDICATORS.slice();
+    return toggles
+      .filter(function (t) { return t.checked; })
+      .map(function (t) { return t.value; });
+  };
+
+  var state = { symbol: SYMBOLS[0], interval: "1m", indicators: readIndicators() };
+
+  var el = document.getElementById("chart");
+  var chart = null;
+  var candleSeries = null;
+  // Active series descriptors: {token, key, place, pane, series}.
+  var activeSeries = [];
+  // In-memory series arrays, keyed by dataKey(place,pane,key).
+  var seriesData = {};
 
   // Read-only test seam (DOM assertions, no image diffs).
-  window.marketChart = { chart: chart, candleSeries: candleSeries };
+  window.marketChart = { chart: null, candleSeries: null, panes: {} };
 
   var ws = null;
   var sub = null; // {symbol, interval} pending or active
@@ -44,41 +109,118 @@
   var closeTimer = null;
   var lastBucket = 0;
 
-  // In-memory series (single source for the adapter's writes).
   var candles = [];
-  var sma = [];
-  var ema = [];
   var EDGE = 5;
   var loadingOlder = false;
   var hasMore = true;
+
+  var dataKey = function (place, pane, key) {
+    return place === "overlay" ? "o:" + key : "p:" + pane + ":" + key;
+  };
+
+  // Payload -> flat series array for a descriptor (gaps already omitted server-side).
+  var seriesFromPayload = function (a, payload) {
+    if (a.place === "overlay") {
+      return (payload.overlays && payload.overlays[a.key]) || [];
+    }
+    var pane = payload.panes && payload.panes[a.pane];
+    return (pane && pane.series && pane.series[a.key]) || [];
+  };
+
+  // RSI text (kept): read the pane's RSI last value, else the legacy overlay.
+  var rsiValues = function (payload) {
+    if (payload.panes && payload.panes.rsi) return payload.panes.rsi.rsi;
+    if (payload.overlays) return payload.overlays.rsi14 || payload.overlays.rsi;
+    return null;
+  };
+
+  var setRsi = function (values) {
+    var last = values && values.length ? values[values.length - 1].value : null;
+    document.getElementById("rsi").textContent =
+      last === null || last === undefined ? "–" : last.toFixed(2);
+  };
+
+  // --- chart build / rebuild (config changes) ---------------------------------
+
+  var buildChart = function () {
+    if (chart) chart.remove();
+    chart = LightweightCharts.createChart(el, {
+      height: 480,
+      timeScale: { timeVisible: true },
+    });
+    candleSeries = chart.addSeries(LightweightCharts.CandlestickSeries);
+    activeSeries = [];
+
+    var enabled = state.indicators;
+    var isOn = function (token) { return enabled.indexOf(token) !== -1; };
+    var addSeries = function (token, paneIndex) {
+      REGISTRY[token].series.forEach(function (s) {
+        var Ctor =
+          s.type === "histogram"
+            ? LightweightCharts.HistogramSeries
+            : LightweightCharts.LineSeries;
+        var series = chart.addSeries(Ctor, { color: s.color }, paneIndex);
+        activeSeries.push({
+          token: token,
+          key: s.key,
+          place: REGISTRY[token].place,
+          pane: REGISTRY[token].pane,
+          series: series,
+        });
+      });
+    };
+
+    Object.keys(REGISTRY).forEach(function (token) {
+      if (REGISTRY[token].place === "overlay" && isOn(token)) addSeries(token, 0);
+    });
+    PANE_ORDER.filter(isOn).forEach(function (token, i) {
+      addSeries(token, i + 1);
+    });
+
+    // Pane test seam: {paneName: {seriesKey: series}}.
+    var panes = {};
+    activeSeries.forEach(function (a) {
+      if (a.place !== "pane") return;
+      (panes[a.pane] = panes[a.pane] || {})[a.key] = a.series;
+    });
+    window.marketChart.chart = chart;
+    window.marketChart.candleSeries = candleSeries;
+    window.marketChart.panes = panes;
+
+    chart.timeScale().subscribeVisibleLogicalRangeChange(function (range) {
+      if (range && range.from < EDGE) loadOlder();
+    });
+  };
 
   var backoff = function () {
     return Math.min(1000 * Math.pow(2, retry), 60000) * (0.5 + Math.random());
   };
 
-  var setRsi = function (value) {
-    document.getElementById("rsi").textContent =
-      value === null || value === undefined ? "–" : value.toFixed(2);
-  };
-
   // --- history -----------------------------------------------------------------
 
+  var klineUrl = function (extra) {
+    var q = "symbol=" + state.symbol + "&interval=" + state.interval;
+    if (state.indicators.length) q += "&indicators=" + state.indicators.join(",");
+    if (extra) q += "&" + extra;
+    return "/market/api/kline?" + q;
+  };
+
   var applyHistory = function (payload) {
-    // setData is allowed HERE only: full history reset for a symbol/interval.
+    // setData is allowed HERE only: full history reset for a config change.
     candles = payload.candles.slice();
-    sma = payload.overlays.sma20.slice();
-    ema = payload.overlays.ema20.slice();
     candleSeries.setData(candles);
-    smaSeries.setData(sma);
-    emaSeries.setData(ema);
-    var rsi = payload.overlays.rsi14;
-    setRsi(rsi.length ? rsi[rsi.length - 1].value : null);
+    activeSeries.forEach(function (a) {
+      var arr = seriesFromPayload(a, payload).slice();
+      seriesData[dataKey(a.place, a.pane, a.key)] = arr;
+      a.series.setData(arr);
+    });
+    setRsi(rsiValues(payload));
     lastBucket = candles.length ? candles[candles.length - 1].time : 0;
     hasMore = true;
   };
 
   var fetchHistory = function () {
-    fetch("/market/api/kline?symbol=" + state.symbol + "&interval=" + state.interval)
+    fetch(klineUrl())
       .then(function (r) {
         if (!r.ok) throw new Error("kline " + r.status);
         return r.json();
@@ -93,8 +235,7 @@
     if (loadingOlder || !hasMore || !candles.length) return;
     loadingOlder = true;
     var before = candles[0].time;
-    fetch("/market/api/kline?symbol=" + state.symbol + "&interval=" + state.interval +
-          "&limit=200&before=" + before)
+    fetch(klineUrl("limit=200&before=" + before))
       .then(function (r) {
         if (!r.ok) throw new Error("kline " + r.status);
         return r.json();
@@ -104,13 +245,14 @@
         var range = chart.timeScale().getVisibleLogicalRange();
         var beforeLen = candles.length;
         candles = Core.mergeCandles(p.candles, candles);
-        sma = Core.mergeCandles(p.overlays.sma20, sma);
-        ema = Core.mergeCandles(p.overlays.ema20, ema);
+        activeSeries.forEach(function (a) {
+          var k = dataKey(a.place, a.pane, a.key);
+          seriesData[k] = Core.mergeCandles(seriesFromPayload(a, p), seriesData[k] || []);
+          a.series.setData(seriesData[k]);
+        });
         var added = candles.length - beforeLen;
         if (!added) { hasMore = false; return; }
         candleSeries.setData(candles);
-        smaSeries.setData(sma);
-        emaSeries.setData(ema);
         if (range) {
           chart.timeScale().setVisibleLogicalRange({
             from: range.from + added,
@@ -121,10 +263,6 @@
       .catch(function () { /* transient */ })
       .finally(function () { loadingOlder = false; });
   };
-
-  chart.timeScale().subscribeVisibleLogicalRangeChange(function (range) {
-    if (range && range.from < EDGE) loadOlder();
-  });
 
   // --- live stream (update only) ----------------------------------------------
 
@@ -140,34 +278,31 @@
 
     if (t > lastBucket) {
       lastBucket = t; // monotonic: a closed candle advanced the bucket
-      scheduleCloseOverlay();
+      scheduleCloseRefresh();
     }
   };
 
-  // On candle close, refresh the overlays' last point via update() (no setData).
-  var scheduleCloseOverlay = function () {
+  // On candle close, advance the LAST point of every active series via update()
+  // (no setData): R6, single-write-path preserved for the live stream.
+  var scheduleCloseRefresh = function () {
     if (closeTimer) return;
     closeTimer = setTimeout(function () {
       closeTimer = null;
-      fetch("/market/api/kline?symbol=" + state.symbol + "&interval=" + state.interval +
-            "&limit=2")
+      fetch(klineUrl("limit=2"))
         .then(function (r) { return r.ok ? r.json() : null; })
         .then(function (p) {
           if (!p) return;
-          updateLastOverlay(smaSeries, sma, p.overlays.sma20);
-          updateLastOverlay(emaSeries, ema, p.overlays.ema20);
-          var rsi = p.overlays.rsi14;
-          if (rsi.length) setRsi(rsi[rsi.length - 1].value);
+          activeSeries.forEach(function (a) {
+            var pt = Core.lastPoint(seriesFromPayload(a, p));
+            if (!pt) return;
+            var k = dataKey(a.place, a.pane, a.key);
+            Core.upsertCandle(seriesData[k] || (seriesData[k] = []), pt);
+            a.series.update(pt); // advance the last point only
+          });
+          setRsi(rsiValues(p));
         })
-        .catch(function () { /* keep current overlays */ });
+        .catch(function () { /* keep current series */ });
     }, REFETCH_DELAY);
-  };
-
-  var updateLastOverlay = function (series, arr, points) {
-    var pt = Core.lastPoint(points);
-    if (!pt) return;
-    Core.upsertCandle(arr, pt);
-    series.update(pt); // update the last overlay point, never setData mid-stream
   };
 
   // --- websocket ---------------------------------------------------------------
@@ -212,7 +347,8 @@
   // --- controls ----------------------------------------------------------------
 
   var switchTo = function (symbol, interval) {
-    state = { symbol: symbol, interval: interval };
+    state.symbol = symbol;
+    state.interval = interval;
     lastBucket = 0;
     if (ws && ws.readyState === 1) sendSubscribe({ symbol: symbol, interval: interval });
     else sub = { symbol: symbol, interval: interval };
@@ -228,6 +364,16 @@
     switchTo(state.symbol, e.target.value);
   });
 
+  // Toggle = config change -> rebuild the chart and refetch via the history path.
+  toggles.forEach(function (t) {
+    t.addEventListener("change", function () {
+      state.indicators = readIndicators();
+      buildChart();
+      fetchHistory();
+    });
+  });
+
+  buildChart();
   sub = { symbol: state.symbol, interval: state.interval };
   connect();
   fetchHistory();
