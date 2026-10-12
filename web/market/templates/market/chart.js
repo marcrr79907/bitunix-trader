@@ -17,12 +17,16 @@
 
   var Core = window.ChartCore;
   var Draw = window.DrawingCore;
+  var Smc = window.SmcOverlayCore;
   var SYMBOLS = {{ symbols|safe }};
   var WS_URL = "wss://fapi.bitunix.com/public/";
   var REFETCH_DELAY = 1500;
   var SAVE_DELAY = 500; // debounce for the layout PUT (R5)
   var LAYOUT_URL = "/market/api/layout";
   var DRAWINGS_URL = "/market/api/drawings";
+  // Shared history/SMC window (R8): both requests use ``limit=HISTORY_LIMIT`` so
+  // the SMC bar indices align with ``candles[-HISTORY_LIMIT:]``.
+  var HISTORY_LIMIT = 200;
 
   // REST interval -> BitUnix WS channel (live-verified 2026-10-08).
   var CHANNELS = {
@@ -91,6 +95,17 @@
   var paramInputs = Array.prototype.slice.call(
     document.querySelectorAll(".indicator-param"),
   );
+  // SMC family checkboxes (R7); session-only, no persistence.
+  var smcToggles = Array.prototype.slice.call(
+    document.querySelectorAll(".smc-toggle"),
+  );
+
+  // DOM -> {family: bool} for the SMC overlay (absent element => all ON).
+  var readSmc = function () {
+    var out = {};
+    smcToggles.forEach(function (el) { out[el.dataset.family] = el.checked; });
+    return out;
+  };
 
   // DOM -> {token: {param: number}} for the checked, param-capable overlays.
   var readParams = function () {
@@ -142,6 +157,7 @@
     interval: "1m",
     indicators: readIndicators(),
     params: readParams(),
+    smc: readSmc(), // session-only SMC family toggles (R7)
     tool: null, // active drawing tool ("hline"|"trendline"|"fib"|"rect"|"text")
   };
 
@@ -161,7 +177,11 @@
     panes: {},
     ready: false,
     drawings: [],
+    smc: null, // R9 seam: the fetched SMC payload (deep-equals the response)
+    smcCounts: null,
+    smcToggles: null, // R7 seam: {family: bool}
   };
+  window.marketChart.smcToggles = state.smc;
 
   var ws = null;
   var sub = null; // {symbol, interval} pending or active
@@ -251,6 +271,9 @@
     // Drawings live on the primitive layer (own canvas), so a rebuild must
     // re-attach them — no series setData/update involved (#68 preserved).
     attachAllDrawings();
+    // SMC overlay lives on the same primitive layer; re-attach after a rebuild
+    // (the previous chart's primitives are gone with chart.remove()).
+    attachSmcLayer();
     chart.subscribeClick(onChartClick);
 
     chart.timeScale().subscribeVisibleLogicalRangeChange(function (range) {
@@ -294,7 +317,8 @@
   };
 
   var fetchHistory = function () {
-    fetch(klineUrl())
+    // limit=HISTORY_LIMIT so the history window matches the SMC window (R8).
+    fetch(klineUrl("limit=" + HISTORY_LIMIT))
       .then(function (r) {
         if (!r.ok) throw new Error("kline " + r.status);
         return r.json();
@@ -794,6 +818,233 @@
     });
   }
 
+  // --- SMC overlay (R6/R7/R8/R9) ----------------------------------------------
+  //
+  // The overlay renders on a series PRIMITIVE (its own canvas layer) — never via
+  // setData/update — so #68 single-write-path stays intact. Geometry comes from
+  // the pure smc-overlay-core.js; this adapter only fetches and maps coords.
+  // Setups use ONE createSeriesMarkers handle on candleSeries, recreated on
+  // every buildChart (A3 draw teardown precedent, no leak).
+
+  var smcBody = null; // raw fetched payload (R9: window.marketChart.smc)
+  var smcPrim = null; // the attached ISeriesPrimitive (canvas families)
+  var smcMarkers = null; // the createSeriesMarkers handle (setups)
+  var smcGen = 0; // monotonic guard against a stale SMC fetch
+  var smcCtx = { chart: null, series: null, requestUpdate: null };
+  var MAP_WIDTH = 0; // live canvas width, refreshed each draw
+  var RAY_WIDTH = 40; // px length of a BOS/CHoCH ray
+  var FVG_HALF_WIDTH = 6; // px half-width of an FVG box
+
+  var smcUrl = function () {
+    var q = "symbol=" + encodeURIComponent(state.symbol)
+      + "&interval=" + encodeURIComponent(state.interval)
+      + "&limit=" + HISTORY_LIMIT;
+    return "/market/api/smc?" + q;
+  };
+
+  // {x(time), y(price)} over the LIVE chart; each may return null off-series.
+  var smcMap = function () {
+    return {
+      x: function (time) {
+        return smcCtx.chart ? smcCtx.chart.timeScale().timeToCoordinate(time) : null;
+      },
+      y: function (price) {
+        return smcCtx.series ? smcCtx.series.priceToCoordinate(price) : null;
+      },
+    };
+  };
+
+  // Price range so bands / rays are not clipped on pan/zoom (R6 autoscaleInfo).
+  var smcPriceRange = function () {
+    var prices = [];
+    var push = function (v) { if (typeof v === "number") prices.push(v); };
+    var d = Smc.descriptors(smcBody, state.smc);
+    d.swings.forEach(function (s) { push(s.price); });
+    d.structure.forEach(function (s) { push(s.price); });
+    d.order_blocks.forEach(function (o) { push(o.top); push(o.bottom); });
+    d.fvg.forEach(function (f) { push(f.top); push(f.bottom); });
+    if (d.range) { push(d.range.high); push(d.range.low); }
+    if (!prices.length) return null;
+    return {
+      priceRange: {
+        minValue: Math.min.apply(null, prices),
+        maxValue: Math.max.apply(null, prices),
+      },
+    };
+  };
+
+  // Pure canvas draw for the enabled canvas families. ``map`` null-guards every
+  // coordinate: an off-series leg is skipped, never thrown (R6).
+  var renderSmc = function (ctx, map) {
+    var d = Smc.descriptors(smcBody, state.smc, map);
+    ctx.save();
+    ctx.lineWidth = 1;
+
+    // Premium (equilibrium..high) + discount (low..equilibrium) bands + eq line.
+    if (d.range) {
+      ctx.globalAlpha = 0.08;
+      ctx.fillStyle = d.range.color;
+      // premium band (equilibrium..high)
+      ctx.fillRect(0, d.range.yHigh, MAP_WIDTH, d.range.yEquilibrium - d.range.yHigh);
+      // discount band (low..equilibrium)
+      ctx.fillRect(0, d.range.yEquilibrium, MAP_WIDTH, d.range.yLow - d.range.yEquilibrium);
+      ctx.globalAlpha = 1;
+      ctx.strokeStyle = d.range.color;
+      ctx.setLineDash([4, 4]);
+      ctx.beginPath();
+      ctx.moveTo(0, d.range.yEquilibrium);
+      ctx.lineTo(MAP_WIDTH, d.range.yEquilibrium);
+      ctx.stroke();
+      ctx.setLineDash([]);
+    }
+
+    // Order-block rects (time -> anchor_time, top -> bottom).
+    d.order_blocks.forEach(function (ob) {
+      var left = Math.min(ob.x1, ob.x2);
+      var width = Math.abs(ob.x2 - ob.x1);
+      var top = Math.min(ob.yTop, ob.yBottom);
+      var height = Math.abs(ob.yBottom - ob.yTop);
+      ctx.globalAlpha = 0.15;
+      ctx.fillStyle = ob.color;
+      ctx.fillRect(left, top, width, height);
+      ctx.globalAlpha = 1;
+      ctx.strokeStyle = ob.color;
+      ctx.strokeRect(left, top, width, height);
+    });
+
+    // FVG rects (middle candle span; draw a fixed-width box centred on x).
+    d.fvg.forEach(function (g) {
+      var top = Math.min(g.yTop, g.yBottom);
+      var height = Math.abs(g.yBottom - g.yTop);
+      ctx.globalAlpha = 0.15;
+      ctx.fillStyle = g.color;
+      ctx.fillRect(g.x - FVG_HALF_WIDTH, top, FVG_HALF_WIDTH * 2, height);
+      ctx.globalAlpha = 1;
+      ctx.strokeStyle = g.color;
+      ctx.strokeRect(g.x - FVG_HALF_WIDTH, top, FVG_HALF_WIDTH * 2, height);
+    });
+
+    // Swing zig-zag polyline + pivot labels (label-less first swing still draws).
+    ctx.strokeStyle = "#9e9e9e";
+    ctx.beginPath();
+    var started = false;
+    d.swings.forEach(function (s) {
+      if (!started) { ctx.moveTo(s.x, s.y); started = true; }
+      else { ctx.lineTo(s.x, s.y); }
+    });
+    ctx.stroke();
+    ctx.font = "10px sans-serif";
+    d.swings.forEach(function (s) {
+      ctx.fillStyle = s.color;
+      ctx.beginPath();
+      ctx.arc(s.x, s.y, 2, 0, Math.PI * 2);
+      ctx.fill();
+      if (s.label) ctx.fillText(s.label, s.x + 3, s.y - 3);
+    });
+
+    // BOS / CHoCH short horizontal ray at price + text.
+    ctx.font = "10px sans-serif";
+    d.structure.forEach(function (e) {
+      ctx.strokeStyle = e.color;
+      ctx.fillStyle = e.color;
+      ctx.beginPath();
+      ctx.moveTo(e.x, e.y);
+      ctx.lineTo(Math.min(e.x + RAY_WIDTH, MAP_WIDTH), e.y);
+      ctx.stroke();
+      ctx.fillText(e.label, e.x + 3, e.y - 3);
+    });
+
+    ctx.restore();
+  };
+
+  // One v5 ISeriesPrimitive renders ALL enabled canvas families (fewest
+  // attach/detach cycles). Rebuilt on every buildChart via attachSmcLayer().
+  var makeSmcPrimitive = function () {
+    return {
+      attached: function (params) {
+        smcCtx.chart = params.chart;
+        smcCtx.series = params.series;
+        smcCtx.requestUpdate = params.requestUpdate;
+      },
+      detached: function () {
+        smcCtx.chart = null;
+        smcCtx.series = null;
+        smcCtx.requestUpdate = null;
+      },
+      paneViews: function () {
+        return [
+          {
+            renderer: function () {
+              return {
+                draw: function (target) {
+                  if (!smcBody) return;
+                  target.useMediaCoordinateSpace(function (scope) {
+                    MAP_WIDTH = scope.mediaSize.width;
+                    renderSmc(scope.context, smcMap());
+                  });
+                },
+              };
+            },
+          },
+        ];
+      },
+      autoscaleInfo: smcPriceRange,
+    };
+  };
+
+  // (Re)attach the SMC primitive + markers onto the CURRENT candleSeries.
+  // Called from buildChart (A3 order: layout -> build -> reattach) and after a
+  // fetch. Always tears the previous layer down first (no leak, R6/R7).
+  var attachSmcLayer = function () {
+    if (smcPrim && candleSeries) candleSeries.detachPrimitive(smcPrim);
+    smcPrim = null;
+    if (smcMarkers) {
+      smcMarkers.detach();
+      smcMarkers = null;
+    }
+    if (!candleSeries || !smcBody) {
+      window.marketChart.smc = smcBody;
+      return;
+    }
+    smcPrim = makeSmcPrimitive();
+    candleSeries.attachPrimitive(smcPrim);
+    smcMarkers = LightweightCharts.createSeriesMarkers(
+      candleSeries,
+      Smc.setupMarkers(smcBody, state.smc),
+    );
+    window.marketChart.smc = smcBody;
+    window.marketChart.smcCounts = Smc.counts(smcBody, state.smc);
+  };
+
+  // Fetch the SMC payload for the ACTIVE key; a failed fetch is non-fatal.
+  var loadSmc = function () {
+    var mine = ++smcGen;
+    return fetch(smcUrl())
+      .then(function (r) {
+        if (!r.ok) throw new Error("smc " + r.status);
+        return r.json();
+      })
+      .then(function (body) {
+        if (mine !== smcGen) return;
+        smcBody = body;
+        attachSmcLayer();
+      })
+      .catch(function () {
+        if (mine !== smcGen) return;
+        smcBody = null;
+        attachSmcLayer();
+      });
+  };
+
+  // Toggle -> re-render from the already-fetched payload; NO refetch (R7).
+  var refreshSmc = function () {
+    state.smc = readSmc();
+    window.marketChart.smcToggles = state.smc;
+    if (smcCtx.requestUpdate) smcCtx.requestUpdate();
+    if (smcMarkers) smcMarkers.setMarkers(Smc.setupMarkers(smcBody, state.smc));
+    window.marketChart.smcCounts = smcBody ? Smc.counts(smcBody, state.smc) : null;
+  };
+
   // --- controls ----------------------------------------------------------------
 
   // A config change (toggle/param) is legitimate to rebuild (setData path); the
@@ -819,6 +1070,11 @@
     syncToolButtons();
     currentDrawings = []; // clear immediately: shapes never cross keys (R7)
     drawGen++; // invalidate any in-flight drawings fetch for the old key
+    // Clear the previous key's SMC layer immediately: primitives/markers never
+    // cross keys. smcGen++ invalidates any in-flight SMC fetch (R8).
+    smcBody = null;
+    smcGen++;
+    attachSmcLayer();
     lastBucket = 0;
     if (ws && ws.readyState === 1) sendSubscribe({ symbol: symbol, interval: interval });
     else sub = { symbol: symbol, interval: interval };
@@ -831,7 +1087,10 @@
       return refreshDrawings();
     }).then(function () {
       if (mine !== gen) return;
-      fetchHistory();
+      return loadSmc(); // SMC for the new key, before history (R8)
+    }).then(function () {
+      if (mine !== gen) return;
+      fetchHistory(); // same (symbol, interval, limit) window as the SMC request
     });
   };
 
@@ -847,6 +1106,8 @@
   // Toggle = config change -> rebuild the chart and refetch via the history path.
   toggles.forEach(function (t) { t.addEventListener("change", rebuild); });
   paramInputs.forEach(function (el) { el.addEventListener("change", rebuild); });
+  // SMC family toggle -> re-render from the fetched payload; NO refetch (R7).
+  smcToggles.forEach(function (t) { t.addEventListener("change", refreshSmc); });
 
   // Async boot (R4/R7): layout -> build -> connect -> drawings -> history, all
   // sequential so no two API fetches race the session (the E2E live server is
@@ -860,6 +1121,9 @@
       sub = { symbol: state.symbol, interval: state.interval };
       connect();
       return refreshDrawings();
+    }).then(function () {
+      if (mine !== gen) return;
+      return loadSmc(); // attach the SMC layer before history (R8 ordering)
     }).then(function () {
       if (mine !== gen) return;
       fetchHistory();
