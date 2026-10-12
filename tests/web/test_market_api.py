@@ -207,6 +207,14 @@ def test_endpoint_missing_symbol_is_400():
     assert "error" in response.json()
 
 
+def test_endpoint_macd_fast_gte_slow_is_400():
+    # Regression: fast>=slow previously raised TypeError -> HTTP 500.
+    url = "/market/api/kline?symbol=BTCUSDT&interval=1m&indicators=macd"
+    response = USER.get(url + "&macd_fast=30&macd_slow=5")
+    assert response.status_code == 400
+    assert "error" in response.json()
+
+
 def test_endpoint_limit_outside_range_is_400():
     url = "/market/api/kline?symbol=BTCUSDT&interval=1m&limit={}"
     assert USER.get(url.format(0)).status_code == 400

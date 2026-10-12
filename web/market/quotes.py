@@ -236,6 +236,10 @@ def _parse_params(params: Mapping[str, str]) -> dict:
         if value <= 0:
             raise ValueError(f"invalid {key}")
         out[key] = value
+    # MACD requires fast < slow (reversed order is undefined; the pure function
+    # tolerates it, but the API contract rejects it as a bad request).
+    if out["macd_fast"] >= out["macd_slow"]:
+        raise ValueError("invalid macd params: macd_fast MUST be < macd_slow")
     return out
 
 
