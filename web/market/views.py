@@ -8,13 +8,14 @@ inline JS would force ``script-src 'unsafe-inline'``).
 from __future__ import annotations
 
 import json
+import logging
 
 import requests
 from django.contrib.auth.decorators import login_required
 from django.http import HttpRequest, HttpResponse, JsonResponse
 from django.shortcuts import render
 from django.views.decorators.http import require_http_methods
-from trading.models import ChartLayout, Drawing
+from trading.models import AlertRule, ChartLayout, Drawing
 
 from market.quotes import (
     DEFAULT_LAYOUT,
@@ -28,13 +29,66 @@ from market.quotes import (
 from src.client import BitunixClient, BitunixError
 from src.config import SYMBOLS
 
+logger = logging.getLogger(__name__)
+
 MIN_LIMIT, MAX_LIMIT = 1, 200
+SIGNALS_LIMIT = 200
 
 
 @login_required
 @require_http_methods(["GET"])
 def market_page(request: HttpRequest) -> HttpResponse:
     return render(request, "market/chart.html", {"symbols": SYMBOLS})
+
+
+def _rule_state(rules) -> str:
+    """Derive a pair's alert state from its rules (S4 precedence).
+
+    ``fired`` (any ``last_fired_at`` set) > ``armed`` (any active) > ``inactive``
+    (a rule exists) > ``none`` (no rule).
+    """
+    if any(rule.last_fired_at is not None for rule in rules):
+        return "fired"
+    if any(rule.is_active for rule in rules):
+        return "armed"
+    if rules:
+        return "inactive"
+    return "none"
+
+
+@login_required
+@require_http_methods(["GET"])
+def signals_page(request: HttpRequest) -> HttpResponse:
+    """Server-rendered ``/signals/``: caller's rule pairs + frozen SMC setups.
+
+    Pairs come only from the caller's own ``AlertRule.for_user`` rows (R14); each
+    pair calls the frozen ``get_smc_payload`` ONCE (no SMC recompute here) and an
+    upstream failure degrades to empty setups, never 500. Read-only: no send, no
+    ``last_fired_at`` write, no pagination (S5).
+    """
+    by_pair: dict[tuple[str, str], list] = {}
+    for rule in AlertRule.for_user(request.user):
+        by_pair.setdefault((rule.symbol, rule.interval), []).append(rule)
+
+    groups = []
+    for (symbol, interval), rules in sorted(by_pair.items()):
+        try:
+            setups = get_smc_payload(BitunixClient(), symbol, interval, SIGNALS_LIMIT)[
+                "setups"
+            ]
+        except (BitunixError, requests.RequestException):
+            logger.warning("signals degraded symbol=%s interval=%s", symbol, interval)
+            setups = []
+        groups.append(
+            {
+                "symbol": symbol,
+                "interval": interval,
+                "setups": setups,
+                "state": _rule_state(rules),
+            }
+        )
+
+    return render(request, "market/signals.html", {"groups": groups})
 
 
 @login_required

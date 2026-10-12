@@ -8,6 +8,7 @@ from market import views
 
 urlpatterns = [
     path("market/", views.market_page, name="market_page"),
+    path("signals/", views.signals_page, name="signals"),
     path("market/api/kline", views.api_kline, name="market_api_kline"),
     path("market/api/smc", views.api_smc, name="market_api_smc"),
     path("market/api/layout", views.api_layout, name="market_api_layout"),

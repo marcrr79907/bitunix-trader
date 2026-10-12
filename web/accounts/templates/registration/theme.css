@@ -78,3 +78,20 @@ dialog{background:var(--surface); color:var(--text); border:1px solid var(--bord
 dialog form{display:flex; flex-direction:column; gap:var(--sp-2)}
 
 @media (max-width:820px){ .market-layout{grid-template-columns:1fr} }
+
+/* signals screen (D2) */
+.signals{display:flex; flex-direction:column; gap:var(--sp-4)}
+.signal-head{display:flex; align-items:center; justify-content:space-between; gap:var(--sp-2)}
+.signal-head h2{margin:0; font-size:var(--fs-2)}
+.muted{color:var(--muted)}
+.signal-state{font-size:var(--fs-3); border:1px solid var(--border); border-radius:var(--r); padding:1px var(--sp-2)}
+.signal-state.state-fired{color:var(--up); border-color:var(--up)}
+.signal-state.state-armed{color:var(--accent); border-color:var(--accent)}
+.signal-state.state-inactive{color:var(--dn); border-color:var(--dn)}
+.signal-state.state-none{color:var(--muted)}
+.signal-setups{width:100%; border-collapse:collapse; margin-top:var(--sp-2)}
+.signal-setups th,.signal-setups td{text-align:left; padding:var(--sp-1) var(--sp-2); border-bottom:1px solid var(--border)}
+.signal-setups thead th{color:var(--muted); font-weight:500}
+.signal-setups tr.dir-long td:first-child,.signal-setups tr.dir-short td:first-child{font-weight:600}
+.signal-setups tr.dir-long td:first-child{color:var(--up)}
+.signal-setups tr.dir-short td:first-child{color:var(--dn)}
