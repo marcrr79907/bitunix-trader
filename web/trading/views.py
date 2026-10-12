@@ -10,14 +10,21 @@ from __future__ import annotations
 
 from django.contrib.auth.decorators import login_required
 from django.db.models import Max
-from django.http import HttpRequest, HttpResponse
-from django.shortcuts import render
+from django.http import Http404, HttpRequest, HttpResponse
+from django.shortcuts import redirect, render
 from django.views.decorators.http import require_http_methods
 
 from src.journal import metrics as journal_metrics
 from src.metrics import equity_curve, expectancy, profit_factor
 from src.monitor import liq_distance_pct, margin_state
-from trading.models import AccountSnapshot, PositionSnapshot, TickerSnapshot, Trade
+from trading.forms import AlertRuleForm
+from trading.models import (
+    AccountSnapshot,
+    AlertRule,
+    PositionSnapshot,
+    TickerSnapshot,
+    Trade,
+)
 
 
 def _latest_marks(symbols: list[str]) -> dict[str, float | None]:
@@ -85,3 +92,72 @@ def journal(request: HttpRequest) -> HttpResponse:
             "empty": not rows,
         },
     )
+
+
+def _get_rule(user, pk: int) -> AlertRule:
+    """Fetch the caller's rule by pk; a miss (incl. another user's) -> 404.
+
+    Scoped through ``for_user`` so existence is never leaked (R14/C2).
+    """
+    rule = AlertRule.for_user(user).filter(pk=pk).first()
+    if rule is None:
+        raise Http404
+    return rule
+
+
+@login_required
+@require_http_methods(["GET"])
+def rules(request: HttpRequest) -> HttpResponse:
+    """List the caller's alert rules (read-only)."""
+    return render(
+        request, "trading/rules.html", {"rules": AlertRule.for_user(request.user)}
+    )
+
+
+@login_required
+@require_http_methods(["GET", "POST"])
+def rule_create(request: HttpRequest) -> HttpResponse:
+    """Create a rule; ``owner`` is set explicitly (``for_user`` only filters)."""
+    if request.method == "POST":
+        form = AlertRuleForm(request.POST)
+        if form.is_valid():
+            rule = form.save(commit=False)
+            rule.user = request.user
+            rule.save()
+            return redirect("rules")
+    else:
+        form = AlertRuleForm()
+    return render(request, "trading/rules.html", {"form": form, "creating": True})
+
+
+@login_required
+@require_http_methods(["GET", "POST"])
+def rule_edit(request: HttpRequest, pk: int) -> HttpResponse:
+    """Edit the caller's rule (scoped fetch -> 404 on a foreign pk)."""
+    rule = _get_rule(request.user, pk)
+    if request.method == "POST":
+        form = AlertRuleForm(request.POST, instance=rule)
+        if form.is_valid():
+            form.save()
+            return redirect("rules")
+    else:
+        form = AlertRuleForm(instance=rule)
+    return render(request, "trading/rules.html", {"form": form, "editing": rule})
+
+
+@login_required
+@require_http_methods(["POST"])
+def rule_toggle(request: HttpRequest, pk: int) -> HttpResponse:
+    """Flip ``is_active``; the config UI never evaluates or sends (C4)."""
+    rule = _get_rule(request.user, pk)
+    rule.is_active = not rule.is_active
+    rule.save(update_fields=["is_active"])
+    return redirect("rules")
+
+
+@login_required
+@require_http_methods(["POST"])
+def rule_delete(request: HttpRequest, pk: int) -> HttpResponse:
+    """Delete the caller's rule (scoped fetch -> 404 on a foreign pk)."""
+    _get_rule(request.user, pk).delete()
+    return redirect("rules")

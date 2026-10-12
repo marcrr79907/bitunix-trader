@@ -13,6 +13,7 @@
     <nav aria-label="Primary">
       <a href="{% url 'market_page' %}"{% if request.resolver_match.url_name == 'market_page' %} aria-current="page"{% endif %}>Market</a>
       <a href="{% url 'signals' %}"{% if request.resolver_match.url_name == 'signals' %} aria-current="page"{% endif %}>Signals</a>
+      <a href="{% url 'rules' %}"{% if request.resolver_match.url_name == 'rules' %} aria-current="page"{% endif %}>Rules</a>
       <a href="/positions/">Positions</a>
       <a href="/journal/">Journal</a>
     </nav>
