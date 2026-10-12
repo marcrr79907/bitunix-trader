@@ -42,3 +42,32 @@ def equity_curve(pnls: list[float]) -> list[float]:
         running += pnl
         out.append(running)
     return out
+
+
+def max_drawdown(equity: list[float]) -> float | None:
+    """Worst peak-to-trough decline of an equity curve, ``<= 0.0``.
+
+    Returns the minimum ``e - peak`` over the running peak, so a monotonically
+    non-decreasing curve is ``0.0``. ``None`` when there are no points.
+    """
+    if not equity:
+        return None
+    peak = equity[0]
+    worst = 0.0
+    for value in equity:
+        peak = max(peak, value)
+        worst = min(worst, value - peak)
+    return worst
+
+
+def win_rate(pnls: list[float]) -> float | None:
+    """``wins / total * 100`` where a win is ``pnl > 0``; ``None`` if empty."""
+    if not pnls:
+        return None
+    wins = sum(1 for pnl in pnls if pnl > 0)
+    return wins / len(pnls) * 100
+
+
+def net_pnl(pnls: list[float]) -> float:
+    """Sum of net realized PnL; ``0.0`` for empty input."""
+    return sum(pnls)
