@@ -290,3 +290,65 @@ def test_ws_stream_never_calls_setdata(seeded_5m_candles, browser_page):
 
     calls = page.evaluate("() => window.__setDataCalls")
     assert calls == 0, f"setData called {calls} times during the live stream"
+
+
+@p
+def test_selected_indicator_renders_a_pane(seeded_5m_candles, browser_page):
+    # R3/R6: the default active set includes the RSI pane, so a sub-pane series
+    # exists with data (DOM-only, no image diff).
+    page, base_url = browser_page
+    page.goto(f"{base_url}/market/")
+    page.select_option("#interval", "5m")
+    page.wait_for_function(
+        "() => window.marketChart && window.marketChart.candleSeries.data().length > 0",
+        timeout=10000,
+    )
+    page.wait_for_function(
+        "() => window.marketChart.panes && window.marketChart.panes.rsi "
+        "&& window.marketChart.panes.rsi.rsi.data().length > 0",
+        timeout=10000,
+    )
+    # A sub-pane adds at least one more canvas than the price pane alone.
+    assert page.locator("#chart canvas").count() >= 2
+
+
+@p
+def test_toggle_adds_and_removes_panes(seeded_5m_candles, browser_page):
+    # R6: a toggle is a config change -> rebuild + refetch (setData path allowed).
+    # Unchecking the RSI pane removes it; checking MACD adds it back as a new pane.
+    page, base_url = browser_page
+    kline_requests = []
+    page.on(
+        "request",
+        lambda r: (
+            kline_requests.append(r.url) if "/market/api/kline" in r.url else None
+        ),
+    )
+    page.goto(f"{base_url}/market/")
+    page.select_option("#interval", "5m")
+    page.wait_for_function(
+        "() => window.marketChart && window.marketChart.panes "
+        "&& window.marketChart.panes.rsi "
+        "&& window.marketChart.panes.rsi.rsi.data().length > 0",
+        timeout=10000,
+    )
+    with_pane = page.locator("#chart canvas").count()
+
+    # Toggle the default RSI pane OFF: its series disappears (clean rebuild).
+    page.locator('.indicator-toggle[value="rsi"]').uncheck()
+    page.wait_for_function(
+        "() => !(window.marketChart.panes && window.marketChart.panes.rsi)",
+        timeout=10000,
+    )
+    assert page.locator("#chart canvas").count() < with_pane
+
+    # Toggle MACD ON: a new pane renders and history refetches with it in the set.
+    page.locator('.indicator-toggle[value="macd"]').check()
+    page.wait_for_function(
+        "() => window.marketChart.panes && window.marketChart.panes.macd "
+        "&& window.marketChart.panes.macd.macd.data().length > 0",
+        timeout=10000,
+    )
+    assert any("indicators=" in u and "macd" in u for u in kline_requests), (
+        kline_requests
+    )
