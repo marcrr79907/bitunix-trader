@@ -42,10 +42,10 @@ ancestor of `origin/main`; staging commits must be on `origin/develop`.
 
 | Secret | Value |
 |---|---|
-| `RAILWAY_PROJECT_ID` | `75c28786-9399-48a4-a952-719af9b08bb5` |
+| `RAILWAY_PROJECT_ID` | `<your-railway-project-id>` |
 | `RAILWAY_TOKEN_STAGING` | Railway **project token** for the `staging` environment |
 | `RAILWAY_TOKEN_PROD` | Railway **project token** for the `production` environment |
-| `STAGING_URL` | `https://web-staging-e8bd.up.railway.app` |
+| `STAGING_URL` | `https://<your-staging-app>.up.railway.app` |
 | `PROD_URL` | production web URL (set when prod exists) |
 | `GHCR_USER` / `GHCR_TOKEN` | only if the GHCR package is **private**: a GitHub PAT with `read:packages` (used as Railway registry credentials) |
 
