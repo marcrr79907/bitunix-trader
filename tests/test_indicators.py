@@ -295,6 +295,14 @@ def test_macd_does_not_mutate_input():
     assert series == [1, 2, 3, 4, 5]
 
 
+def test_macd_fast_greater_than_slow_does_not_raise():
+    # Regression: a reversed pair previously fed None into ema -> TypeError.
+    series = [float(i) for i in range(1, 40)]
+    line, signal, hist = macd(series, fast=30, slow=5, signal=9)
+    assert len(line) == len(signal) == len(hist) == 39
+    assert any(v is not None for v in line)
+
+
 # --- bollinger ----------------------------------------------------------
 
 

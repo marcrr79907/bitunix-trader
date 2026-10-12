@@ -150,15 +150,14 @@ def macd(
         return ([], [], [])
     fast_ema = ema(series, fast)
     slow_ema = ema(series, slow)
-    line: list[float | None] = [None] * n
-    for i in range(n):
-        f, s = fast_ema[i], slow_ema[i]
-        if f is not None and s is not None:
-            line[i] = f - s
+    line = _macd_line(fast_ema, slow_ema, n)
 
-    start = slow - 1
+    # Signal = EMA over the VALID suffix of the line (R1), regardless of the
+    # fast/slow ordering. ``start`` is the first non-None index, so a reversed
+    # (fast > slow) pair never feeds None into ``ema`` (was: slow-1).
+    start = next((i for i, v in enumerate(line) if v is not None), n)
     sig: list[float | None] = [None] * n
-    if 0 <= start < n:
+    if start < n:
         for j, v in enumerate(ema(line[start:], signal)):
             sig[start + j] = v
 
@@ -167,6 +166,17 @@ def macd(
         if line[i] is not None and sig[i] is not None:
             hist[i] = line[i] - sig[i]
     return (line, sig, hist)
+
+
+def _macd_line(
+    fast_ema: list[float | None], slow_ema: list[float | None], n: int
+) -> list[float | None]:
+    line: list[float | None] = [None] * n
+    for i in range(n):
+        f, s = fast_ema[i], slow_ema[i]
+        if f is not None and s is not None:
+            line[i] = f - s
+    return line
 
 
 def bollinger(
