@@ -131,6 +131,117 @@ def vwap(
     return out
 
 
+def macd(
+    series: list[float],
+    fast: int = 12,
+    slow: int = 26,
+    signal: int = 9,
+) -> tuple[list[float | None], list[float | None], list[float | None]]:
+    """MACD line, signal line, histogram.
+
+    ``line = ema(fast) - ema(slow)`` (``None`` where either leg is ``None``);
+    ``signal = ema(line[slow-1:], signal)`` left-padded with ``slow - 1``
+    ``None``s; ``histogram = line - signal`` where both are defined. Default
+    warm-up: line at ``slow - 1`` (25), signal/histogram at ``slow - 1 +
+    signal - 1`` (33).
+    """
+    n = len(series)
+    if n == 0:
+        return ([], [], [])
+    fast_ema = ema(series, fast)
+    slow_ema = ema(series, slow)
+    line = _macd_line(fast_ema, slow_ema, n)
+
+    # Signal = EMA over the VALID suffix of the line (R1), regardless of the
+    # fast/slow ordering. ``start`` is the first non-None index, so a reversed
+    # (fast > slow) pair never feeds None into ``ema`` (was: slow-1).
+    start = next((i for i, v in enumerate(line) if v is not None), n)
+    sig: list[float | None] = [None] * n
+    if start < n:
+        for j, v in enumerate(ema(line[start:], signal)):
+            sig[start + j] = v
+
+    hist: list[float | None] = [None] * n
+    for i in range(n):
+        if line[i] is not None and sig[i] is not None:
+            hist[i] = line[i] - sig[i]
+    return (line, sig, hist)
+
+
+def _macd_line(
+    fast_ema: list[float | None], slow_ema: list[float | None], n: int
+) -> list[float | None]:
+    line: list[float | None] = [None] * n
+    for i in range(n):
+        f, s = fast_ema[i], slow_ema[i]
+        if f is not None and s is not None:
+            line[i] = f - s
+    return line
+
+
+def bollinger(
+    series: list[float],
+    window: int = 20,
+    num_std: float = 2,
+) -> tuple[list[float | None], list[float | None], list[float | None]]:
+    """Bollinger bands ``(upper, middle, lower)``; middle = SMA.
+
+    ``sd`` is the window's population standard deviation. A flat window
+    (``sd == 0``) collapses the bands onto the middle: ``upper == middle ==
+    lower`` — ``None`` is never returned for a computable position.
+    """
+    n = len(series)
+    if n == 0:
+        return ([], [], [])
+    middle = sma(series, window)
+    upper: list[float | None] = [None] * n
+    lower: list[float | None] = [None] * n
+    for i in range(n):
+        m = middle[i]
+        if m is None:
+            continue
+        sd = statistics.pstdev(series[i - window + 1 : i + 1])
+        upper[i] = m + num_std * sd
+        lower[i] = m - num_std * sd
+    return (upper, middle, lower)
+
+
+def stochastic(
+    highs: list[float],
+    lows: list[float],
+    closes: list[float],
+    k: int = 14,
+    d: int = 3,
+) -> tuple[list[float | None], list[float | None]]:
+    """Stochastic oscillator ``(%K, %D)``.
+
+    ``%K = 100 * (close - lowest_low) / (highest_high - lowest_low)`` over the
+    ``k`` window; a zero range yields ``None`` for that position. ``%D`` is the
+    SMA of ``%K`` over ``d``, ``None`` where any averaged ``%K`` is ``None``.
+    Warm-up: ``%K`` at ``k - 1``, ``%D`` at ``k - 1 + d - 1``.
+    """
+    n = len(closes)
+    if n == 0:
+        return ([], [])
+    pct_k: list[float | None] = [None] * n
+    if k >= 1:
+        for i in range(k - 1, n):
+            lowest = min(lows[i - k + 1 : i + 1])
+            highest = max(highs[i - k + 1 : i + 1])
+            rng = highest - lowest
+            if rng == 0:
+                continue
+            pct_k[i] = 100.0 * (closes[i] - lowest) / rng
+    pct_d: list[float | None] = [None] * n
+    if d >= 1:
+        for i in range(d - 1, n):
+            chunk = pct_k[i - d + 1 : i + 1]
+            if any(v is None for v in chunk):
+                continue
+            pct_d[i] = statistics.fmean(chunk)
+    return (pct_k, pct_d)
+
+
 def zscore(series: list[float], window: int) -> list[float | None]:
     """Rolling z-score (population pstdev); ``window == n`` = full series."""
     n = len(series)

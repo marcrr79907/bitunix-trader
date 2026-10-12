@@ -7,7 +7,17 @@ mutates its inputs.
 
 from pytest import approx
 
-from src.indicators import atr, ema, rsi, sma, vwap, zscore
+from src.indicators import (
+    atr,
+    bollinger,
+    ema,
+    macd,
+    rsi,
+    sma,
+    stochastic,
+    vwap,
+    zscore,
+)
 
 # --- sma ----------------------------------------------------------------
 
@@ -234,6 +244,190 @@ def test_zscore_does_not_mutate_input():
     data = [1, 2, 3]
     zscore(data, 2)
     assert data == [1, 2, 3]
+
+
+# --- macd ---------------------------------------------------------------
+
+
+def test_macd_exact_values_small_window():
+    line, signal, hist = macd([1, 2, 3, 4, 5], fast=2, slow=3, signal=2)
+    assert line == [None, None, 0.5, 0.5, 0.5]
+    assert signal == [None, None, None, 0.5, 0.5]
+    assert hist == [None, None, None, 0.0, 0.0]
+
+
+def test_macd_histogram_is_line_minus_signal():
+    line, signal, hist = macd([3, 1, 4, 1, 5, 9, 2, 6], fast=2, slow=3, signal=2)
+    for lo, si, hi in zip(line, signal, hist, strict=True):
+        if lo is None or si is None:
+            assert hi is None
+        else:
+            assert hi == approx(lo - si)
+
+
+def test_macd_default_warmup_is_25_line_33_signal():
+    series = [float(i) for i in range(40)]
+    line, signal, _ = macd(series)
+    assert line[24] is None
+    assert line[25] is not None
+    assert signal[32] is None
+    assert signal[33] is not None
+
+
+def test_macd_length_preserved():
+    series = [float(i) for i in range(40)]
+    line, signal, hist = macd(series)
+    assert len(line) == len(signal) == len(hist) == 40
+
+
+def test_macd_empty_returns_empty():
+    assert macd([], 2, 3, 2) == ([], [], [])
+
+
+def test_macd_window_below_one_all_none():
+    line, signal, hist = macd([1, 2, 3], fast=0, slow=3, signal=2)
+    assert line == signal == hist == [None, None, None]
+
+
+def test_macd_does_not_mutate_input():
+    series = [1, 2, 3, 4, 5]
+    macd(series, fast=2, slow=3, signal=2)
+    assert series == [1, 2, 3, 4, 5]
+
+
+def test_macd_fast_greater_than_slow_does_not_raise():
+    # Regression: a reversed pair previously fed None into ema -> TypeError.
+    series = [float(i) for i in range(1, 40)]
+    line, signal, hist = macd(series, fast=30, slow=5, signal=9)
+    assert len(line) == len(signal) == len(hist) == 39
+    assert any(v is not None for v in line)
+
+
+# --- bollinger ----------------------------------------------------------
+
+
+def test_bollinger_exact_values_small_window():
+    upper, middle, lower = bollinger([1, 2, 3, 4, 5], window=3, num_std=2)
+    assert upper == [
+        None,
+        None,
+        approx(3.6329931618),
+        approx(4.6329931618),
+        approx(5.6329931618),
+    ]
+    assert middle == [None, None, 2.0, 3.0, 4.0]
+    assert lower == [
+        None,
+        None,
+        approx(0.3670068382),
+        approx(1.3670068382),
+        approx(2.3670068382),
+    ]
+
+
+def test_bollinger_flat_window_collapses_to_middle():
+    upper, middle, lower = bollinger([5, 5, 5, 5], window=2, num_std=2)
+    assert upper == [None, 5.0, 5.0, 5.0]
+    assert middle == [None, 5.0, 5.0, 5.0]
+    assert lower == [None, 5.0, 5.0, 5.0]
+
+
+def test_bollinger_band_ordering():
+    upper, middle, lower = bollinger([1, 2, 3, 4, 5], window=3, num_std=2)
+    for u, m, lo in zip(upper, middle, lower, strict=True):
+        if m is None:
+            assert u is None and lo is None
+        else:
+            assert lo <= m <= u
+
+
+def test_bollinger_default_warmup_is_19():
+    series = [float(i) for i in range(25)]
+    upper, middle, lower = bollinger(series)
+    assert middle[18] is None
+    assert middle[19] is not None
+    assert upper[18] is None and lower[18] is None
+
+
+def test_bollinger_length_preserved():
+    series = [float(i) for i in range(25)]
+    upper, middle, lower = bollinger(series)
+    assert len(upper) == len(middle) == len(lower) == 25
+
+
+def test_bollinger_empty_returns_empty():
+    assert bollinger([], 3, 2) == ([], [], [])
+
+
+def test_bollinger_window_below_one_all_none():
+    upper, middle, lower = bollinger([1, 2, 3], window=0)
+    assert upper == middle == lower == [None, None, None]
+
+
+def test_bollinger_does_not_mutate_input():
+    series = [1, 2, 3, 4, 5]
+    bollinger(series, window=3)
+    assert series == [1, 2, 3, 4, 5]
+
+
+# --- stochastic ---------------------------------------------------------
+
+
+def test_stochastic_exact_values_small_window():
+    pct_k, pct_d = stochastic([3, 3, 3], [1, 1, 1], [1, 2, 3], k=2, d=2)
+    assert pct_k == [None, 50.0, 100.0]
+    assert pct_d == [None, None, 75.0]
+
+
+def test_stochastic_zero_range_pct_k_none_no_raise():
+    pct_k, pct_d = stochastic([5, 5, 5], [5, 5, 5], [5, 5, 5], k=2, d=2)
+    assert pct_k == [None, None, None]
+    assert pct_d == [None, None, None]
+
+
+def test_stochastic_bounded_zero_to_hundred():
+    highs = [10, 12, 11, 13, 12, 14]
+    lows = [8, 9, 9, 10, 10, 11]
+    closes = [9, 11, 10, 12, 11, 13]
+    pct_k, pct_d = stochastic(highs, lows, closes, k=3, d=2)
+    assert all(v is None or 0.0 <= v <= 100.0 for v in pct_k)
+    assert all(v is None or 0.0 <= v <= 100.0 for v in pct_d)
+
+
+def test_stochastic_default_warmup_is_13_k_15_d():
+    highs = [float(i) + 1 for i in range(20)]
+    lows = [float(i) for i in range(20)]
+    closes = [float(i) + 0.5 for i in range(20)]
+    pct_k, pct_d = stochastic(highs, lows, closes)
+    assert pct_k[12] is None
+    assert pct_k[13] is not None
+    assert pct_d[14] is None
+    assert pct_d[15] is not None
+
+
+def test_stochastic_length_preserved():
+    highs = [float(i) + 1 for i in range(20)]
+    lows = [float(i) for i in range(20)]
+    closes = [float(i) + 0.5 for i in range(20)]
+    pct_k, pct_d = stochastic(highs, lows, closes)
+    assert len(pct_k) == len(pct_d) == 20
+
+
+def test_stochastic_empty_returns_empty():
+    assert stochastic([], [], [], 2, 2) == ([], [])
+
+
+def test_stochastic_window_below_one_all_none():
+    pct_k, pct_d = stochastic([1, 2, 3], [1, 2, 3], [1, 2, 3], k=0)
+    assert pct_k == pct_d == [None, None, None]
+
+
+def test_stochastic_does_not_mutate_inputs():
+    highs, lows, closes = [3, 3, 3], [1, 1, 1], [1, 2, 3]
+    stochastic(highs, lows, closes, k=2, d=2)
+    assert highs == [3, 3, 3]
+    assert lows == [1, 1, 1]
+    assert closes == [1, 2, 3]
 
 
 # --- pure-function contract over all six --------------------------------
