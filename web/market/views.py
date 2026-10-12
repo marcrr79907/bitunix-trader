@@ -15,7 +15,7 @@ from django.http import HttpRequest, HttpResponse, JsonResponse
 from django.shortcuts import render
 from django.views.decorators.http import require_http_methods
 
-from market.quotes import INTERVALS, get_kline_payload
+from market.quotes import INTERVALS, get_kline_payload, parse_indicators
 from src.client import BitunixClient, BitunixError
 from src.config import SYMBOLS
 
@@ -35,6 +35,7 @@ def api_kline(request: HttpRequest) -> JsonResponse:
     interval = request.GET.get("interval", "")
     raw_limit = request.GET.get("limit", "")
     raw_before = request.GET.get("before", "")
+    raw_indicators = request.GET.get("indicators", "")
 
     if interval not in INTERVALS:
         return JsonResponse({"error": "invalid interval"}, status=400)
@@ -47,6 +48,12 @@ def api_kline(request: HttpRequest) -> JsonResponse:
     if not MIN_LIMIT <= limit <= MAX_LIMIT:
         return JsonResponse({"error": "invalid limit"}, status=400)
 
+    # Validate the indicator selection BEFORE building the payload (R3).
+    try:
+        indicators = parse_indicators(raw_indicators, request.GET)
+    except ValueError as exc:
+        return JsonResponse({"error": str(exc)}, status=400)
+
     before = None
     if raw_before:
         try:
@@ -57,7 +64,9 @@ def api_kline(request: HttpRequest) -> JsonResponse:
             return JsonResponse({"error": "invalid before"}, status=400)
 
     try:
-        payload = get_kline_payload(BitunixClient(), symbol, interval, limit, before)
+        payload = get_kline_payload(
+            BitunixClient(), symbol, interval, limit, before, indicators
+        )
     except BitunixError:
         # Upstream rejects the request (API code != 0, e.g. unknown symbol).
         return JsonResponse({"error": "upstream rejected"}, status=400)
