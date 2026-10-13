@@ -60,6 +60,13 @@ export function createHost() {
   let activeSeries = [];
   let panes = {};
   let candles = [];
+  // Overlay/pane series arrays keyed by dataKey() — the indicator series data
+  // (NOT candles). Shared by the history (setData) and stream (last-point
+  // update) paths so the #68 single-write-path keeps one bookkeeping array.
+  let seriesData = {};
+  // Last live bucket (UNIX seconds) already applied by the stream; advanced on
+  // history load + live push so a new-bucket push can be detected.
+  let lastBucket = 0;
 
   // --- payload <-> series mapping ---------------------------------------------
 
@@ -159,6 +166,14 @@ export function createHost() {
   function getPanes() { return panes; }
   function getCandles() { return candles; }
 
+  // Overlay/pane series arrays (NOT candles) shared by history + stream so the
+  // single-write-path bookkeeping stays in one place. Returned by reference.
+  function getSeriesData() { return seriesData; }
+
+  // Last live bucket (UNIX seconds). History resets it; the stream advances it.
+  function getLastBucket() { return lastBucket; }
+  function setLastBucket(t) { lastBucket = t; }
+
   // Candle data write path (#68). History/config -> setData; live -> update().
   function setCandles(arr) {
     candles = arr;
@@ -200,6 +215,9 @@ export function createHost() {
     getActiveSeries,
     getPanes,
     getCandles,
+    getSeriesData,
+    getLastBucket,
+    setLastBucket,
     setCandles,
     updateCandle,
     dataKey,

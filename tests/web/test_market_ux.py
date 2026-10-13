@@ -111,6 +111,23 @@ def test_module_allowlist_routes_serve_javascript(logged_in_client):
     assert b"market_kline" in entry.content
 
 
+def test_controller_allowlist_routes_serve_javascript(logged_in_client):
+    # R14/R15: every allowlisted controller module is served same-origin from
+    # ``market/controllers/`` as JS (a missing route = import 404 = blank chart).
+    from market import views
+
+    assert len(views.CONTROLLER_ALLOWLIST) == 6
+    for name in views.CONTROLLER_ALLOWLIST:
+        response = logged_in_client.get(f"/market/controllers/{name}.js")
+        assert response.status_code == 200, name
+        assert response["Content-Type"] == "text/javascript", name
+
+    # main.js (orchestration) is an allowlisted ESM module too.
+    main = logged_in_client.get("/market/main.js")
+    assert main.status_code == 200
+    assert main["Content-Type"] == "text/javascript"
+
+
 def test_market_page_has_no_inline_script_or_handler(logged_in_client):
     # R11: no inline script and no inline event handler (CSP-safe).
     import re

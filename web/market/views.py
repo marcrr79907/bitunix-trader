@@ -36,7 +36,7 @@ SIGNALS_LIMIT = 200
 
 # ESM module serving allowlists (R15). Names are matched against these sets —
 # never concatenated into a path — so traversal is impossible. Controllers live
-# under ``market/controllers/`` and are added as they ship (Slice 3).
+# under ``market/controllers/`` and are served by ``market_controller_js``.
 MODULE_ALLOWLIST = frozenset(
     {
         "chart-core",
@@ -45,9 +45,19 @@ MODULE_ALLOWLIST = frozenset(
         "chart-store",
         "chart-bus",
         "chart-host",
+        "main",
     }
 )
-CONTROLLER_ALLOWLIST: frozenset[str] = frozenset()
+CONTROLLER_ALLOWLIST: frozenset[str] = frozenset(
+    {
+        "indicators",
+        "history",
+        "stream",
+        "drawings",
+        "smc",
+        "toolbar",
+    }
+)
 
 
 @login_required

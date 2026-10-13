@@ -88,5 +88,12 @@
 <link rel="modulepreload" href="{% url 'market_chart_module_js' name='chart-store' %}">
 <link rel="modulepreload" href="{% url 'market_chart_module_js' name='chart-bus' %}">
 <link rel="modulepreload" href="{% url 'market_chart_module_js' name='chart-host' %}">
+<link rel="modulepreload" href="{% url 'market_chart_module_js' name='main' %}">
+<link rel="modulepreload" href="{% url 'market_controller_js' name='indicators' %}">
+<link rel="modulepreload" href="{% url 'market_controller_js' name='history' %}">
+<link rel="modulepreload" href="{% url 'market_controller_js' name='stream' %}">
+<link rel="modulepreload" href="{% url 'market_controller_js' name='drawings' %}">
+<link rel="modulepreload" href="{% url 'market_controller_js' name='smc' %}">
+<link rel="modulepreload" href="{% url 'market_controller_js' name='toolbar' %}">
 <script type="module" src="{% url 'market_chart_js' %}"></script>
 {% endblock %}
