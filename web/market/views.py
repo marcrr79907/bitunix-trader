@@ -15,7 +15,7 @@ from django.contrib.auth.decorators import login_required
 from django.http import Http404, HttpRequest, HttpResponse, JsonResponse
 from django.shortcuts import render
 from django.views.decorators.http import require_http_methods
-from trading.models import AlertRule, ChartLayout, Drawing
+from trading.models import AlertRule, ChartLayout, ChartPreference, Drawing
 
 from market.quotes import (
     DEFAULT_LAYOUT,
@@ -279,6 +279,45 @@ def _put_layout(request: HttpRequest) -> JsonResponse:
             "exists": True,
         }
     )
+
+
+@login_required
+@require_http_methods(["GET", "PUT"])
+def api_preference(request: HttpRequest) -> JsonResponse:
+    """Per-user, user-global last-interval preference (R8/R9): GET reads, PUT upserts.
+
+    All access routes through ``ChartPreference.for_user`` — no unscoped query in
+    this request path (R14.3). A GET miss returns ``{interval:"1m",
+    exists:false}`` (never 404). A PUT validates ``interval`` against
+    ``INTERVALS`` BEFORE writing; an invalid value → 400 with no row touched.
+    """
+    if request.method == "PUT":
+        return _put_preference(request)
+
+    saved = ChartPreference.for_user(request.user).first()
+    if saved is None:
+        return JsonResponse({"interval": "1m", "exists": False})
+    return JsonResponse({"interval": saved.last_interval, "exists": True})
+
+
+def _put_preference(request: HttpRequest) -> JsonResponse:
+    try:
+        body = json.loads(request.body or b"{}")
+    except json.JSONDecodeError:
+        return JsonResponse({"error": "invalid JSON"}, status=400)
+    if not isinstance(body, dict):
+        return JsonResponse({"error": "invalid body"}, status=400)
+
+    interval = body.get("interval", "")
+    if interval not in INTERVALS:
+        return JsonResponse({"error": "invalid interval"}, status=400)
+
+    # for_user filters; it does NOT inject the owner (A2 gotcha) — pass user.
+    pref, _ = ChartPreference.for_user(request.user).update_or_create(
+        user=request.user,
+        defaults={"last_interval": interval},
+    )
+    return JsonResponse({"interval": pref.last_interval, "exists": True})
 
 
 @login_required

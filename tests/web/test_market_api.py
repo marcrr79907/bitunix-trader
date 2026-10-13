@@ -1798,3 +1798,132 @@ def test_smc_payload_before_forwards_to_upstream_end_time():
 
     # ``before`` reaches the shared seam as the exclusive upstream end_time.
     assert client.calls[0]["end_time"] == 1700000000 * 1000
+
+
+# --- Slice 2: interval preference endpoint (R8/R9/R11) ----------------------
+
+PREF_URL = "/market/api/preference"
+
+
+def _put_pref(client, payload):
+    return client.put(
+        PREF_URL, data=json.dumps(payload), content_type="application/json"
+    )
+
+
+def test_preference_anonymous_get_redirects_to_login():
+    response = ANON.get(PREF_URL)
+    assert response.status_code == 302
+    assert response.url.startswith("/login/")
+
+
+def test_preference_anonymous_put_redirects_to_login():
+    response = _put_pref(ANON, {"interval": "1h"})
+    assert response.status_code == 302
+    assert response.url.startswith("/login/")
+
+
+def test_preference_get_default_when_absent():
+    from trading.models import ChartPreference
+
+    response = USER.get(PREF_URL)
+
+    assert response.status_code == 200
+    assert response.json() == {"interval": "1m", "exists": False}
+    assert ChartPreference.objects.count() == 0
+
+
+def test_preference_put_then_get_round_trip():
+    put = _put_pref(USER, {"interval": "1h"})
+    assert put.status_code == 200
+    assert put.json() == {"interval": "1h", "exists": True}
+
+    body = USER.get(PREF_URL).json()
+    assert body == {"interval": "1h", "exists": True}
+
+
+def test_preference_put_upserts_one_row_for_the_user():
+    from trading.models import ChartPreference
+
+    _put_pref(USER, {"interval": "1h"})
+    _put_pref(USER, {"interval": "4h"})
+
+    rows = list(ChartPreference.for_user(AUTH_USER))
+    assert len(rows) == 1
+    assert rows[0].last_interval == "4h"
+
+
+def test_preference_put_invalid_interval_is_400_and_writes_nothing():
+    from trading.models import ChartPreference
+
+    response = _put_pref(USER, {"interval": "7m"})
+
+    assert response.status_code == 400
+    assert "error" in response.json()
+    assert ChartPreference.objects.count() == 0
+
+
+def test_preference_put_invalid_json_is_400():
+    response = USER.put(PREF_URL, data="not-json", content_type="application/json")
+    assert response.status_code == 400
+    assert "error" in response.json()
+
+
+def test_preference_put_non_object_body_is_400():
+    response = USER.put(PREF_URL, data="[1, 2]", content_type="application/json")
+    assert response.status_code == 400
+    assert "error" in response.json()
+
+
+def test_preference_put_requires_csrf():
+    enforcing = Client(enforce_csrf_checks=True)
+    enforcing.force_login(AUTH_USER)
+    response = enforcing.put(
+        PREF_URL,
+        data=json.dumps({"interval": "1h"}),
+        content_type="application/json",
+    )
+    assert response.status_code == 403
+
+
+def test_preference_isolation_b_get_never_sees_a():
+    from django.contrib.auth import get_user_model
+    from trading.models import ChartPreference
+
+    ChartPreference.objects.create(user=AUTH_USER, last_interval="4h")
+
+    b_client = Client()
+    b = get_user_model().objects.create_user(
+        email="pref-b@example.com", password="pw-123456"
+    )
+    b_client.force_login(b)
+
+    assert b_client.get(PREF_URL).json() == {"interval": "1m", "exists": False}
+
+
+def test_preference_isolation_b_put_does_not_touch_a_row():
+    from django.contrib.auth import get_user_model
+    from trading.models import ChartPreference
+
+    a_row = ChartPreference.objects.create(user=AUTH_USER, last_interval="4h")
+
+    b_client = Client()
+    b = get_user_model().objects.create_user(
+        email="pref-b2@example.com", password="pw-123456"
+    )
+    b_client.force_login(b)
+
+    _put_pref(b_client, {"interval": "1h"})
+
+    a_row.refresh_from_db()
+    assert a_row.last_interval == "4h"  # A untouched
+    assert ChartPreference.for_user(b).get().last_interval == "1h"
+    assert ChartPreference.for_user(AUTH_USER).count() == 1
+
+
+def test_preference_get_is_not_scoped_to_interval_query_param():
+    # A preference is user-global: the GET carries no symbol/interval input.
+    from trading.models import ChartPreference
+
+    ChartPreference.objects.create(user=AUTH_USER, last_interval="12h")
+    assert USER.get(PREF_URL).json() == {"interval": "12h", "exists": True}

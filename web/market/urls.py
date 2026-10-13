@@ -12,6 +12,11 @@ urlpatterns = [
     path("market/api/kline", views.api_kline, name="market_api_kline"),
     path("market/api/smc", views.api_smc, name="market_api_smc"),
     path("market/api/layout", views.api_layout, name="market_api_layout"),
+    path(
+        "market/api/preference",
+        views.api_preference,
+        name="market_api_preference",
+    ),
     path("market/api/drawings", views.api_drawings, name="market_api_drawings"),
     path(
         "market/api/drawings/<int:id>",

@@ -6,8 +6,9 @@
 
 {% block content %}
 <div class="market-layout">
+  <button type="button" class="panel-toggle" aria-expanded="true" aria-controls="panel">Panel</button>
   <section id="chart" aria-label="Candlestick chart"></section>
-  <aside class="panel">
+  <aside class="panel" id="panel">
     <h1>Market</h1>
     <h2>Pairs</h2>
     <nav class="pairs">

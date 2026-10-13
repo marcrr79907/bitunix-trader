@@ -121,7 +121,7 @@ export function createHost() {
     const el = document.getElementById("chart");
     if (chart) chart.remove();
     chart = LightweightCharts.createChart(el, {
-      height: 480,
+      autoSize: true,
       timeScale: { timeVisible: true },
     });
     candleSeries = chart.addSeries(LightweightCharts.CandlestickSeries);

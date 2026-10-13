@@ -290,3 +290,21 @@ class AlertRule(UserOwnedModel):
                 name="ix_alertrule_user_active",
             )
         ]
+
+
+class ChartPreference(UserOwnedModel):
+    """Per-user, user-global chart preference (R8): one row per user.
+
+    Distinct from ``ChartLayout`` (per ``(user, symbol, interval)``): the last
+    interval a user viewed is global across charts, so the owner is a
+    ``OneToOneField`` and ``last_interval`` is validated against
+    ``quotes.INTERVALS`` in the view, not the model.
+    """
+
+    user = models.OneToOneField(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="chart_preference",
+    )
+    last_interval = models.CharField(max_length=8, default="1m")
+    updated_at = models.DateTimeField(auto_now=True)
