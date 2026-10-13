@@ -28,7 +28,8 @@ Cross-user reads MUST be denied for ALL owned models. Using
 `for_user(other).get(pk=<this user's row pk>)` MUST raise `DoesNotExist`; a
 lookup that bypasses `for_user` MUST NOT be used by request-serving code.
 (Delivered with: `ExchangeCredential`, `Watchlist`, `PositionSnapshot`,
-`AccountSnapshot`, `Trade`, `ChartLayout`, `Drawing`, `AlertRule`.)
+`AccountSnapshot`, `Trade`, `ChartLayout`, `Drawing`, `AlertRule`,
+`ChartPreference`.)
 
 #### Scenario: A cannot read B's ExchangeCredential
 
@@ -78,13 +79,20 @@ lookup that bypasses `for_user` MUST NOT be used by request-serving code.
 - WHEN `for_user(B).get(pk=rule.pk)` is called
 - THEN it raises `DoesNotExist`
 
+#### Scenario: A cannot read B's ChartPreference
+
+- GIVEN a `ChartPreference` owned by A
+- WHEN `for_user(B).get(pk=row.pk)` is called
+- THEN it raises `DoesNotExist`
+
 ### Requirement: R14.3 — Unscoped-query guard
 
 Request-serving code MUST NOT use unscoped queries (`.objects.all()`,
 `.objects.get()`, `.objects.filter()`) on owned models. A scanner MUST flag such
 usage; `OWNED_MODELS` MUST include `ExchangeCredential`, `Watchlist`,
-`PositionSnapshot`, `AccountSnapshot`, `Trade`, `ChartLayout`, `Drawing`, and
-`AlertRule`. The mechanism holds only while all access routes through `for_user`.
+`PositionSnapshot`, `AccountSnapshot`, `Trade`, `ChartLayout`, `Drawing`,
+`AlertRule`, and `ChartPreference`. The mechanism holds only while all access
+routes through `for_user`.
 
 #### Scenario: Scanner flags an unscoped query
 
@@ -109,6 +117,12 @@ usage; `OWNED_MODELS` MUST include `ExchangeCredential`, `Watchlist`,
 - GIVEN a fixture calling `AlertRule.objects.all()` in the request path
 - WHEN the guard scans it
 - THEN the scanner reports the offender (proves `AlertRule` is in `OWNED_MODELS`)
+
+#### Scenario: Scanner flags an unscoped ChartPreference query
+
+- GIVEN a fixture calling `ChartPreference.objects.all()` in the request path
+- WHEN the guard scans it
+- THEN the scanner reports the offender (proves `ChartPreference` is in `OWNED_MODELS`)
 
 #### Scenario: Scoped query passes the guard
 
