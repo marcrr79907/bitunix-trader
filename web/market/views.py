@@ -12,7 +12,7 @@ import logging
 
 import requests
 from django.contrib.auth.decorators import login_required
-from django.http import HttpRequest, HttpResponse, JsonResponse
+from django.http import Http404, HttpRequest, HttpResponse, JsonResponse
 from django.shortcuts import render
 from django.views.decorators.http import require_http_methods
 from trading.models import AlertRule, ChartLayout, Drawing
@@ -33,6 +33,12 @@ logger = logging.getLogger(__name__)
 
 MIN_LIMIT, MAX_LIMIT = 1, 200
 SIGNALS_LIMIT = 200
+
+# ESM module serving allowlists (R15). Names are matched against these sets —
+# never concatenated into a path — so traversal is impossible. Controllers live
+# under ``market/controllers/`` and are added as they ship (Slice 3).
+MODULE_ALLOWLIST = frozenset({"chart-core", "drawing-core", "smc-overlay-core"})
+CONTROLLER_ALLOWLIST: frozenset[str] = frozenset()
 
 
 @login_required
@@ -352,27 +358,31 @@ def chart_js(request: HttpRequest) -> HttpResponse:
 
 
 @require_http_methods(["GET"])
-def chart_core_js(request: HttpRequest) -> HttpResponse:
-    """Serve the pure chart core same-origin (no state; not auth-gated)."""
-    return HttpResponse(
-        render(request, "market/chart-core.js").content,
-        content_type="text/javascript",
-    )
+def market_chart_module_js(request: HttpRequest, name: str) -> HttpResponse:
+    """Serve an allowlisted ESM chart module same-origin (no state, no auth).
+
+    The allowlist (not a filesystem path) blocks traversal: any name outside
+    ``MODULE_ALLOWLIST`` is a 404. Modules are plain JS, so ``text/javascript``.
+    """
+    return _serve_allowlisted(request, name, MODULE_ALLOWLIST, "")
 
 
 @require_http_methods(["GET"])
-def drawing_core_js(request: HttpRequest) -> HttpResponse:
-    """Serve the pure drawing geometry same-origin (no state; not auth-gated)."""
-    return HttpResponse(
-        render(request, "market/drawing-core.js").content,
-        content_type="text/javascript",
-    )
+def market_controller_js(request: HttpRequest, name: str) -> HttpResponse:
+    """Serve an allowlisted controller module from ``market/controllers/``.
+
+    Same allowlist discipline as ``market_chart_module_js``; the allowlist is
+    populated as controllers ship.
+    """
+    return _serve_allowlisted(request, name, CONTROLLER_ALLOWLIST, "controllers/")
 
 
-@require_http_methods(["GET"])
-def smc_overlay_core_js(request: HttpRequest) -> HttpResponse:
-    """Serve the pure SMC overlay mapping same-origin (no state; not auth-gated)."""
+def _serve_allowlisted(
+    request: HttpRequest, name: str, allowlist: frozenset[str], subdir: str
+) -> HttpResponse:
+    if name not in allowlist:
+        raise Http404("unknown module")
     return HttpResponse(
-        render(request, "market/smc-overlay-core.js").content,
+        render(request, f"market/{subdir}{name}.js").content,
         content_type="text/javascript",
     )

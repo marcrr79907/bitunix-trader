@@ -1,7 +1,7 @@
 // Pure drawing geometry tests — node --test (no DOM, no chart lib, no network).
-const test = require("node:test");
-const assert = require("node:assert");
-const core = require("../../web/market/templates/market/drawing-core.js");
+import test from "node:test";
+import assert from "node:assert";
+import * as core from "../../web/market/templates/market/drawing-core.js";
 
 // A coordinate mapper stub: identity-ish, so expected pixels are obvious.
 const mapper = (x, y) => ({ x: () => x, y: () => y });

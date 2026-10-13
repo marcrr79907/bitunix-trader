@@ -1,7 +1,7 @@
 // Pure SMC overlay mapping tests — node --test (no DOM, no chart lib, no network).
-const test = require("node:test");
-const assert = require("node:assert");
-const core = require("../../web/market/templates/market/smc-overlay-core.js");
+import test from "node:test";
+import assert from "node:assert";
+import * as core from "../../web/market/templates/market/smc-overlay-core.js";
 
 // A frozen-shape payload (mirrors the `/market/api/smc` response body).
 const payload = {

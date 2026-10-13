@@ -12,12 +12,19 @@
 // All timeline/ordering math lives in the pure core (chart-core.js); this file
 // only renders the server payload {candles, overlays, panes} — never computes
 // indicator values (server-side single source).
+//
+// Native ESM entry: Django renders this module (injecting the symbol list and
+// WS channel map below). The pure cores are imported, not read off window.
+import * as Core from "./chart-core.js";
+import * as Draw from "./drawing-core.js";
+import * as Smc from "./smc-overlay-core.js";
+
+// Sanctioned test seam (R18): the E2E reads window.SmcOverlayCore.setupMarkers.
+window.SmcOverlayCore = Smc;
+
 (function () {
   "use strict";
 
-  var Core = window.ChartCore;
-  var Draw = window.DrawingCore;
-  var Smc = window.SmcOverlayCore;
   var SYMBOLS = {{ symbols|safe }};
   var WS_URL = "wss://fapi.bitunix.com/public/";
   var REFETCH_DELAY = 1500;

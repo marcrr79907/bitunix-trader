@@ -90,6 +90,27 @@ def test_market_page_includes_smc_core_and_toggles(logged_in_client):
         assert b'data-family="' + family + b'"' in response.content
 
 
+def test_module_allowlist_routes_serve_javascript(logged_in_client):
+    # R15/R16: every allowlisted ESM module is served same-origin as JS (a
+    # missing route = import 404 = blank chart), a non-allowlisted name is
+    # rejected (traversal guard), and the entry keeps its Django-injected
+    # config literals. The allowlist constant is the route-coverage source.
+    from market import views
+
+    for name in views.MODULE_ALLOWLIST:
+        response = logged_in_client.get(f"/market/{name}.js")
+        assert response.status_code == 200, name
+        assert response["Content-Type"] == "text/javascript", name
+
+    assert logged_in_client.get("/market/not-allowed.js").status_code == 404
+    assert logged_in_client.get("/market/controllers/nope.js").status_code == 404
+
+    entry = logged_in_client.get("/market/chart.js")
+    assert entry.status_code == 200
+    assert b"BTCUSDT" in entry.content
+    assert b"market_kline" in entry.content
+
+
 def test_market_page_has_no_inline_script_or_handler(logged_in_client):
     # R11: no inline script and no inline event handler (CSP-safe).
     import re

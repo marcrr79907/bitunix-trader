@@ -1,7 +1,7 @@
 // Pure core tests — node --test (no DOM, no chart lib, no network).
-const test = require("node:test");
-const assert = require("node:assert");
-const core = require("../../web/market/templates/market/chart-core.js");
+import test from "node:test";
+import assert from "node:assert";
+import * as core from "../../web/market/templates/market/chart-core.js";
 
 test("bucketTime: intraday floors to the interval", () => {
   // 2026-10-10 00:00:30 UTC -> 5m bucket
