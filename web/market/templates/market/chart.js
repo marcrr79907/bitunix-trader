@@ -29,6 +29,7 @@ export const CONFIG = {
     kline: "/market/api/kline",
     smc: "/market/api/smc",
     layout: "/market/api/layout",
+    preference: "/market/api/preference",
     drawings: "/market/api/drawings",
   },
 };
