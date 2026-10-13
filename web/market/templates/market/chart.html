@@ -82,8 +82,18 @@
 
 {% block scripts %}
 <script src="https://unpkg.com/lightweight-charts@5.2.0/dist/lightweight-charts.standalone.production.js"></script>
-<script src="{% url 'market_chart_core_js' %}"></script>
-<script src="{% url 'market_drawing_core_js' %}"></script>
-<script src="{% url 'market_smc_overlay_core_js' %}"></script>
-<script src="{% url 'market_chart_js' %}"></script>
+<link rel="modulepreload" href="{% url 'market_chart_module_js' name='chart-core' %}">
+<link rel="modulepreload" href="{% url 'market_chart_module_js' name='drawing-core' %}">
+<link rel="modulepreload" href="{% url 'market_chart_module_js' name='smc-overlay-core' %}">
+<link rel="modulepreload" href="{% url 'market_chart_module_js' name='chart-store' %}">
+<link rel="modulepreload" href="{% url 'market_chart_module_js' name='chart-bus' %}">
+<link rel="modulepreload" href="{% url 'market_chart_module_js' name='chart-host' %}">
+<link rel="modulepreload" href="{% url 'market_chart_module_js' name='main' %}">
+<link rel="modulepreload" href="{% url 'market_controller_js' name='indicators' %}">
+<link rel="modulepreload" href="{% url 'market_controller_js' name='history' %}">
+<link rel="modulepreload" href="{% url 'market_controller_js' name='stream' %}">
+<link rel="modulepreload" href="{% url 'market_controller_js' name='drawings' %}">
+<link rel="modulepreload" href="{% url 'market_controller_js' name='smc' %}">
+<link rel="modulepreload" href="{% url 'market_controller_js' name='toolbar' %}">
+<script type="module" src="{% url 'market_chart_js' %}"></script>
 {% endblock %}
