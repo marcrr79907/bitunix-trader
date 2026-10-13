@@ -57,6 +57,7 @@ CONTROLLER_ALLOWLIST: frozenset[str] = frozenset(
         "drawings",
         "smc",
         "toolbar",
+        "legend",
     }
 )
 

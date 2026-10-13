@@ -972,3 +972,99 @@ def test_smc_switch_refetches_for_new_key(
     assert counts["swings"] > 0 and counts["setups"] > 0, counts
     script_errors = [e for e in errors if "net::" not in e and "WebSocket" not in e]
     assert script_errors == [], f"console errors: {script_errors}"
+
+
+# --- chart legend overlay (LC1-LC6) -----------------------------------------
+#
+# DOM/computed-style assertions only (no image diffs, no new seam key). The
+# legend is injected by controllers/legend.js into #chart on boot; a synthetic
+# crosshair move over the chart drives the hover readout and moving the mouse
+# OUT of the chart leaves the last values. The frozen seam must still be 8 keys.
+
+
+@p
+def test_legend_overlay_shows_ohlc_and_updates_on_crosshair(
+    seeded_5m_candles, browser_page
+):
+    page, base_url = browser_page
+    page.goto(f"{base_url}/market/")
+    page.select_option("#interval", "5m")
+    page.wait_for_function(
+        "() => window.marketChart && window.marketChart.candleSeries.data().length > 0",
+        timeout=10000,
+    )
+
+    legend = page.locator("#chart .chart-legend")
+    assert legend.count() == 1
+    # a11y policy: role=status, idle live region, present by boot.
+    assert legend.get_attribute("role") == "status"
+    assert legend.get_attribute("aria-label") == "Chart legend"
+
+    # Idle: at least one row per active series and an OHLC read-out.
+    page.wait_for_function(
+        "() => document.querySelectorAll('#chart .chart-legend .lg-row').length > 0",
+        timeout=10000,
+    )
+    rows_idle = page.locator("#chart .chart-legend .lg-row").count()
+    assert rows_idle >= 1
+    ohlc_before = page.locator("#chart .chart-legend .lg-ohlc").inner_text()
+    assert "O " in ohlc_before and "C " in ohlc_before
+
+    # Synthetic crosshair move over the chart canvas -> hover readout updates.
+    canvas = page.locator("#chart canvas").first
+    canvas.scroll_into_view_if_needed()
+    box = canvas.bounding_box()
+    page.mouse.move(box["x"] + box["width"] * 0.5, box["y"] + box["height"] * 0.4)
+    page.wait_for_function(
+        "() => document.querySelector('#chart .chart-legend .lg-ohlc')"
+        " && document.querySelector('#chart .chart-legend .lg-ohlc')"
+        ".textContent.includes('H ')",
+        timeout=5000,
+    )
+    live = legend.get_attribute("aria-live")
+    assert live == "off", live  # never announce per mousemove (LC5)
+    # Values under the cursor are real (not the placeholder-only idle skeleton).
+    hover_text = page.locator("#chart .chart-legend .lg-ohlc").inner_text()
+    assert "O " in hover_text and "C " in hover_text
+
+    # Leave the chart -> last-value fallback renders (no crash, rows remain).
+    page.mouse.move(0, 0)
+    page.wait_for_function(
+        "() => document.querySelectorAll('#chart .chart-legend .lg-row').length > 0",
+        timeout=5000,
+    )
+    assert page.locator("#chart .chart-legend .lg-row").count() >= 1
+
+    # Seam frozen (R18): the legend writes DOM only, never a 9th key.
+    assert page.evaluate("() => Object.keys(window.marketChart).length") == 8
+
+
+@p
+def test_legend_overlay_styling_and_375px_fit(seeded_5m_candles, browser_page):
+    # LC5/LC6: the overlay is anchored/absolute, never eats chart pointer input,
+    # and stays within #chart bounds at 375px (no horizontal overflow).
+    page, base_url = browser_page
+    page.set_viewport_size({"width": 375, "height": 800})
+    page.goto(f"{base_url}/market/")
+    page.select_option("#interval", "5m")
+    page.wait_for_function(
+        "() => window.marketChart && window.marketChart.candleSeries.data().length > 0",
+        timeout=10000,
+    )
+
+    styles = page.evaluate(
+        "() => { const l = document.querySelector('#chart .chart-legend');"
+        " const c = document.querySelector('#chart');"
+        " const ls = getComputedStyle(l), cs = getComputedStyle(c);"
+        " return { pos: ls.position, pe: ls.pointerEvents, live: ls.ariaLive,"
+        "   cpos: cs.position,"
+        "   lw: l.getBoundingClientRect().width, cw: c.getBoundingClientRect().width,"
+        "   lr: l.getBoundingClientRect().right, cr: c.getBoundingClientRect().right };"
+        " }"
+    )
+    assert styles["pos"] == "absolute"
+    assert styles["pe"] == "none"
+    assert styles["cpos"] == "relative"
+    # Fits inside #chart at 375px: no horizontal overflow past the right edge.
+    assert styles["lw"] <= styles["cw"]
+    assert styles["lr"] <= styles["cr"] + 1
