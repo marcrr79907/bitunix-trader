@@ -114,8 +114,14 @@ export function createHost() {
         paneIndex,
       );
       if (typeof s.precision === "number") {
+        // ``Number("1e-" + n)`` is exactly representable; ``Math.pow(10, -n)``
+        // is not (V8-version-dependent: 10**-5 -> 0.000009999999999999999 on
+        // some Node builds), which would break the priceFormat minMove.
         series.applyOptions({
-          priceFormat: { precision: s.precision, minMove: Math.pow(10, -s.precision) },
+          priceFormat: {
+            precision: s.precision,
+            minMove: Number("1e-" + s.precision),
+          },
         });
       }
       activeSeries.push({
