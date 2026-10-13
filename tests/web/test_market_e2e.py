@@ -1068,3 +1068,201 @@ def test_legend_overlay_styling_and_375px_fit(seeded_5m_candles, browser_page):
     # Fits inside #chart at 375px: no horizontal overflow past the right edge.
     assert styles["lw"] <= styles["cw"]
     assert styles["lr"] <= styles["cr"] + 1
+
+
+# --- chart shell (Slice 1: full-height + chips + sidebar collapse) -----------
+#
+# DOM/computed-style assertions only. The chips are DERIVED from the retained
+# ``<select id="interval">`` (kept in the DOM, visually hidden via clip) so the
+# 15 existing ``select_option("#interval", …)`` calls above stay green with no
+# edits. The frozen seam stays 8 keys.
+
+
+@p
+def test_chart_fills_height_and_canvas_tracks_container(
+    seeded_5m_candles, browser_page
+):
+    # R20: autoSize:true + a flex-resolved #chart make the canvas taller than the
+    # old fixed 480 and track #chart's box (no zero-height collapse).
+    page, base_url = browser_page
+    page.set_viewport_size({"width": 1280, "height": 900})
+    page.goto(f"{base_url}/market/")
+    page.wait_for_function(
+        "() => window.marketChart && window.marketChart.candleSeries"
+        " && window.marketChart.candleSeries.data().length > 0",
+        timeout=10000,
+    )
+    # autoSize sizes the LightweightCharts root to its container via a
+    # ResizeObserver (async). Wait until the root fills #chart, then read boxes.
+    page.wait_for_function(
+        "() => { const c = document.querySelector('#chart');"
+        " const root = document.querySelector('#chart .tv-lightweight-charts');"
+        " if (!c || !root) return false;"
+        " return Math.abs(root.getBoundingClientRect().height"
+        " - c.getBoundingClientRect().height) <= 2; }",
+        timeout=10000,
+    )
+    boxes = page.evaluate(
+        "() => { const c = document.querySelector('#chart');"
+        " const root = document.querySelector('#chart .tv-lightweight-charts');"
+        " const cv = document.querySelector('#chart canvas');"
+        " return { chartH: c.getBoundingClientRect().height,"
+        "   rootH: root.getBoundingClientRect().height,"
+        "   canvasH: cv.getBoundingClientRect().height }; }"
+    )
+    # Resolved by the flex chain, not the removed `height:480` option.
+    assert boxes["chartH"] > 480, boxes
+    # The price-pane canvas is taller than the old fixed 480 box.
+    assert boxes["canvasH"] > 480, boxes
+    # The chart root tracks #chart exactly (autoSize ResizeObserver).
+    assert abs(boxes["rootH"] - boxes["chartH"]) <= 2, boxes
+
+
+@p
+def test_chart_host_has_no_fixed_height_and_autosize():
+    # R20: the construction options carry autoSize and never a numeric height.
+    import re
+
+    host = (
+        __import__("pathlib").Path(__file__).resolve().parents[2]
+        / "web/market/templates/market/chart-host.js"
+    ).read_text()
+    assert "autoSize: true" in host or "autoSize:true" in host
+    assert not re.search(r"\bheight\s*:\s*\d", host), "fixed numeric height remains"
+
+
+@p
+def test_interval_chips_switch_and_reflect_store(seeded_5m_candles, browser_page):
+    # R21: chips render from the select options; activating one moves
+    # aria-pressed and switches the chart to that interval.
+    page, base_url = browser_page
+    page.goto(f"{base_url}/market/")
+    page.wait_for_function(
+        "() => window.marketChart && window.marketChart.candleSeries"
+        " && window.marketChart.candleSeries.data().length > 0",
+        timeout=10000,
+    )
+
+    chips = page.locator(".interval-chips .interval-chip")
+    assert chips.count() == 14
+    assert (
+        page.locator('.interval-chip[data-interval="1m"]').get_attribute("aria-pressed")
+        == "true"
+    )
+
+    page.locator('.interval-chip[data-interval="5m"]').click()
+    page.wait_for_function(
+        "() => window.marketChart.candleSeries.data().length > 0"
+        " && document.querySelector('.interval-chip[data-interval=\"5m\"]')"
+        ".getAttribute('aria-pressed') === 'true'",
+        timeout=10000,
+    )
+    assert (
+        page.locator('.interval-chip[data-interval="1m"]').get_attribute("aria-pressed")
+        == "false"
+    )
+    # One command path: the retained select reflects the chip choice.
+    assert page.locator("#interval").input_value() == "5m"
+
+
+@p
+def test_hidden_select_stays_selectable_and_syncs_chips(
+    seeded_5m_candles, browser_page
+):
+    # R21/R18 invariant: the select stays in the DOM (clipped, not display:none),
+    # select_option still works, and the chips follow it.
+    page, base_url = browser_page
+    page.goto(f"{base_url}/market/")
+    page.wait_for_function(
+        "() => window.marketChart && window.marketChart.candleSeries"
+        " && window.marketChart.candleSeries.data().length > 0",
+        timeout=10000,
+    )
+    clipped = page.evaluate(
+        "() => { const s = document.getElementById('interval');"
+        " const cs = getComputedStyle(s);"
+        " return { display: cs.display, visibility: cs.visibility,"
+        "   clip: cs.clipPath || cs.clip }; }"
+    )
+    assert clipped["display"] != "none", clipped
+    assert clipped["visibility"] != "hidden", clipped
+
+    # The pre-existing E2E interaction still works (no assertion edits needed).
+    page.select_option("#interval", "1h")
+    page.wait_for_function(
+        "() => document.querySelector('.interval-chip[data-interval=\"1h\"]')"
+        ".getAttribute('aria-pressed') === 'true'",
+        timeout=10000,
+    )
+    assert (
+        page.locator('.interval-chip[data-interval="5m"]').get_attribute("aria-pressed")
+        == "false"
+    )
+
+
+@p
+def test_panel_toggle_collapses_and_expands_at_375(seeded_5m_candles, browser_page):
+    # R23: the toggle is visible ≤820px, flips aria-expanded and hides the panel.
+    page, base_url = browser_page
+    page.set_viewport_size({"width": 375, "height": 800})
+    page.goto(f"{base_url}/market/")
+    page.wait_for_function(
+        "() => window.marketChart && window.marketChart.candleSeries"
+        " && window.marketChart.candleSeries.data().length > 0",
+        timeout=10000,
+    )
+    toggle = page.locator(".panel-toggle")
+    assert toggle.is_visible()
+    assert toggle.get_attribute("aria-expanded") == "true"
+    assert toggle.get_attribute("aria-controls") == "panel"
+
+    toggle.click()
+    page.wait_for_function(
+        "() => document.querySelector('.panel-toggle')"
+        ".getAttribute('aria-expanded') === 'false'",
+        timeout=5000,
+    )
+    assert page.locator("#panel").is_visible() is False
+
+    toggle.click()
+    page.wait_for_function(
+        "() => document.querySelector('.panel-toggle')"
+        ".getAttribute('aria-expanded') === 'true'",
+        timeout=5000,
+    )
+    assert page.locator("#panel").is_visible()
+
+
+@p
+def test_no_horizontal_overflow_at_375(seeded_5m_candles, browser_page):
+    # R24: at 375px the page must not scroll horizontally; chips wrap.
+    page, base_url = browser_page
+    page.set_viewport_size({"width": 375, "height": 800})
+    page.goto(f"{base_url}/market/")
+    page.wait_for_function(
+        "() => window.marketChart && window.marketChart.candleSeries"
+        " && window.marketChart.candleSeries.data().length > 0",
+        timeout=10000,
+    )
+    overflow = page.evaluate(
+        "() => document.documentElement.scrollWidth"
+        " - document.documentElement.clientWidth"
+    )
+    assert overflow <= 1, overflow
+    wrap = page.evaluate(
+        "() => getComputedStyle(document.querySelector('.interval-chips')).flexWrap"
+    )
+    assert wrap == "wrap"
+
+
+@p
+def test_shell_keeps_seam_at_eight_keys(seeded_5m_candles, browser_page):
+    # R20 (market-chart): the shell writes no new global; seam stays 8 keys.
+    page, base_url = browser_page
+    page.goto(f"{base_url}/market/")
+    page.wait_for_function(
+        "() => window.marketChart && window.marketChart.ready === true",
+        timeout=10000,
+    )
+    assert page.evaluate("() => Object.keys(window.marketChart).length") == 8
+    assert page.evaluate("() => typeof window.SmcOverlayCore") == "object"

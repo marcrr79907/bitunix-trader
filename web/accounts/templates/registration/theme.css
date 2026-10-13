@@ -14,7 +14,12 @@ body{
   margin:0; background:var(--bg); color:var(--text);
   font-family:-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;
   font-size:var(--fs-2); line-height:1.45;
+  display:flex; flex-direction:column; min-height:100dvh;
 }
+/* Market needs a DEFINITE viewport height so `.market-layout{height:100%}`
+   resolves and the chart fills it; scoped so other pages keep normal page
+   scroll (the topbar + main fill the viewport, main scrolls internally). */
+body:has(.market-layout){height:100dvh}
 a{color:var(--accent); text-decoration:none}
 a:hover{text-decoration:underline}
 a:focus-visible,button:focus-visible,input:focus-visible,select:focus-visible{
@@ -34,7 +39,8 @@ a:focus-visible,button:focus-visible,input:focus-visible,select:focus-visible{
 .topbar nav a:hover,.topbar nav a[aria-current="page"]{color:var(--text)}
 .topbar .whoami{margin-left:auto; color:var(--muted); font-size:var(--fs-3)}
 .topbar form{display:inline}
-main{max-width:1200px; margin:0 auto; padding:var(--sp-4)}
+main{max-width:1200px; margin:0 auto; padding:var(--sp-4);
+  flex:1 1 auto; width:100%; min-height:0; overflow-y:auto}
 
 /* forms */
 input,select,textarea,button{
@@ -48,9 +54,24 @@ input[type=submit],button{
 code{font-family:var(--mono); background:var(--surface); padding:1px 5px; border-radius:4px}
 
 /* market chart layout (existing dead hooks) */
-.market-layout{display:grid; grid-template-columns:1fr 300px; gap:var(--sp-4)}
-.panel{background:var(--surface); border:1px solid var(--border); border-radius:var(--r); padding:var(--sp-3)}
+.market-layout{display:grid; grid-template-columns:1fr 300px;
+  grid-template-rows:minmax(0,1fr); gap:var(--sp-4); height:100%}
+.panel{background:var(--surface); border:1px solid var(--border); border-radius:var(--r); padding:var(--sp-3);
+  min-height:0; overflow-y:auto}
 #chart{min-height:460px; position:relative}
+.visually-hidden{position:absolute; width:1px; height:1px; margin:-1px;
+  padding:0; border:0; overflow:hidden; clip:rect(0 0 0 0); white-space:nowrap}
+
+/* interval chips (TradingView-style) — derived from the retained #interval
+   select, which is clipped (not display:none) so Playwright can still set it. */
+.interval-chips{display:flex; flex-wrap:wrap; gap:var(--sp-1); margin:0 0 var(--sp-2)}
+.interval-chip{background:var(--surface); border:1px solid var(--border);
+  color:var(--text); padding:var(--sp-1) var(--sp-2); border-radius:var(--r);
+  min-height:36px; display:inline-flex; align-items:center}
+.interval-chip[aria-pressed="true"]{border-color:var(--accent); color:var(--accent)}
+
+/* collapsible sidebar toggle: visible only ≤820px */
+.panel-toggle{display:none}
 
 /* chart legend overlay (F1): anchored top-left inside #chart, read-only.
    pointer-events:none so it never eats chart/crosshair input; tabs/nums keep
@@ -96,7 +117,12 @@ code{font-family:var(--mono); background:var(--surface); padding:1px 5px; border
 dialog{background:var(--surface); color:var(--text); border:1px solid var(--border); border-radius:var(--r)}
 dialog form{display:flex; flex-direction:column; gap:var(--sp-2)}
 
-@media (max-width:820px){ .market-layout{grid-template-columns:1fr} }
+@media (max-width:820px){
+  .market-layout{grid-template-columns:1fr; height:auto}
+  #chart{height:70dvh; min-height:320px}
+  .panel-toggle{display:inline-block; grid-column:1/-1; justify-self:start}
+  .market-layout.panel-collapsed .panel{display:none}
+}
 
 /* signals screen (D2) */
 .signals{display:flex; flex-direction:column; gap:var(--sp-4)}
