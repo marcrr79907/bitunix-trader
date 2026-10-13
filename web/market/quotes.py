@@ -17,6 +17,7 @@ single source of truth; the browser never recomputes it.
 from __future__ import annotations
 
 import logging
+import re
 import time
 from collections.abc import Mapping
 
@@ -303,6 +304,8 @@ def parse_layout_indicators(indicators) -> list[dict]:
         entry = {"token": token}
         if "params" in item:
             entry["params"] = _validate_layout_params(token, item["params"])
+        if "style" in item:
+            entry["style"] = _validate_layout_style(token, item["style"])
         out.append(entry)
     return out
 
@@ -331,6 +334,38 @@ def _validate_layout_params(token: str, params) -> dict:
     ):
         raise ValueError("invalid macd params: macd_fast MUST be < macd_slow")
     return params
+
+
+# Frozen per-indicator style shape (F2.7): all three keys optional, values
+# whitelisted. ``color`` is #rrggbb; ``lineWidth`` int 1..4; ``precision`` int
+# 0..8. Unknown key / bad shape / out of range → ``ValueError`` (→ 400).
+_LAYOUT_STYLE_COLOR = re.compile(r"^#[0-9a-fA-F]{6}$")
+
+
+def _validate_layout_style(token: str, style) -> dict:
+    """Validate a JSON ``style`` object; return it verbatim. Raise ``ValueError``."""
+    if not isinstance(style, dict):
+        raise ValueError(f"invalid style for {token}")
+    for key, value in style.items():
+        if key == "color":
+            ok = isinstance(value, str) and bool(_LAYOUT_STYLE_COLOR.match(value))
+        elif key == "lineWidth":
+            ok = (
+                isinstance(value, int)
+                and not isinstance(value, bool)
+                and 1 <= value <= 4
+            )
+        elif key == "precision":
+            ok = (
+                isinstance(value, int)
+                and not isinstance(value, bool)
+                and 0 <= value <= 8
+            )
+        else:
+            raise ValueError(f"unknown style key: {key}")
+        if not ok:
+            raise ValueError(f"invalid {key}")
+    return style
 
 
 # --- drawings (R2/R4/R5) -----------------------------------------------------

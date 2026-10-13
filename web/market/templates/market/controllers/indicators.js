@@ -29,12 +29,14 @@ export function readIndicators() {
     .map(function (t) { return t.value; });
 }
 
-// indicators = ["sma",...]; params = {sma: {sma_len: 20}, ...}. The params
-// only matter for tokens actually selected.
-export function buildIndicators(indicators, params) {
+// indicators = ["sma",...]; params = {sma: {sma_len: 20}, ...}; styles =
+// {sma: {color,lineWidth,precision}, ...}. params/styles only matter for tokens
+// actually selected. style is emitted only when one is set (F2.7 payload shape).
+export function buildIndicators(indicators, params, styles) {
   return indicators.map(function (token) {
     const entry = { token: token };
     if (params && params[token]) entry.params = params[token];
+    if (styles && styles[token]) entry.style = styles[token];
     return entry;
   });
 }
@@ -87,6 +89,13 @@ export function createIndicators({ store, bus, config }) {
         state.params = readParams();
         applyLayout(body.indicators);
         state.params = readParams();
+        // Style rides the layout entry's optional ``style`` (F2.7); keep it in
+        // the dedicated top-level slot, never under params (kline-leak guard).
+        const styles = {};
+        body.indicators.forEach(function (i) {
+          if (i.style) styles[i.token] = i.style;
+        });
+        state.styles = styles;
         bus.emit("layout:loaded", { indicators: body.indicators, params: state.params });
       })
       .catch(function () {
@@ -108,7 +117,7 @@ export function createIndicators({ store, bus, config }) {
       const payload = {
         symbol: symbol,
         interval: interval,
-        indicators: buildIndicators(state.indicators, state.params),
+        indicators: buildIndicators(state.indicators, state.params, state.styles),
       };
       fetch(config.urls.layout, {
         method: "PUT",

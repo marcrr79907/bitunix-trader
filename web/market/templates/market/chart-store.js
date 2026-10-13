@@ -5,11 +5,11 @@
 // The state keys are frozen to the design vocabulary; any other key in a patch
 // (e.g. ``candles``) is silently dropped.
 //
-//   state = { symbol, interval, indicators, params, smc, tool }
+//   state = { symbol, interval, indicators, params, styles, smc, tool }
 //
 // API: get() -> state (same reference) | set(patch) -> merge + emit |
 //      subscribe(fn) -> unsubscribe.
-export const STORE_KEYS = ["symbol", "interval", "indicators", "params", "smc", "tool"];
+export const STORE_KEYS = ["symbol", "interval", "indicators", "params", "styles", "smc", "tool"];
 
 export function createStore(initial) {
   const state = {};

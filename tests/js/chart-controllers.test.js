@@ -29,6 +29,22 @@ test("buildIndicators: params attach only to selected tokens", () => {
   ]);
 });
 
+test("buildIndicators: 3rd styles arg emits style only for styled tokens", () => {
+  const out = buildIndicators(
+    ["sma", "rsi"],
+    { sma: { sma_len: 50 } },
+    { sma: { color: "#ff0000", lineWidth: 2, precision: 4 } },
+  );
+  assert.deepStrictEqual(out, [
+    { token: "sma", params: { sma_len: 50 }, style: { color: "#ff0000", lineWidth: 2, precision: 4 } },
+    { token: "rsi" },
+  ]);
+});
+
+test("buildIndicators: no styles arg keeps entries style-free", () => {
+  assert.deepStrictEqual(buildIndicators(["sma"], {}), [{ token: "sma" }]);
+});
+
 test("klineUrlFrom: symbol+interval+indicators+params+extra", () => {
   const url = klineUrlFrom(
     {
@@ -56,6 +72,25 @@ test("klineUrlFrom: no indicators -> no indicators/params segments", () => {
     url,
     "/market/api/kline?symbol=ETHUSDT&interval=1m&limit=200",
   );
+});
+
+test("klineUrlFrom: styles never leak into the kline query", () => {
+  const url = klineUrlFrom(
+    {
+      symbol: "BTCUSDT",
+      interval: "1m",
+      indicators: ["sma"],
+      params: { sma: { sma_len: 50 } },
+      styles: { sma: { color: "#ff0000", lineWidth: 3, precision: 5 } },
+    },
+    "/market/api/kline",
+    "limit=2",
+  );
+  assert.strictEqual(
+    url,
+    "/market/api/kline?symbol=BTCUSDT&interval=1m&indicators=sma&sma_len=50&limit=2",
+  );
+  assert.strictEqual(/color|lineWidth|precision/.test(url), false);
 });
 
 // --- legend controller pure helpers (Slice 2) --------------------------------

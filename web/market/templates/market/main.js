@@ -34,6 +34,7 @@ export function boot(config) {
     interval: "1m",
     indicators: readIndicators(),
     params: readParams(),
+    styles: {}, // per-token presentation style (F2.4; loaded from layout, never in params)
     smc: readSmc(), // session-only SMC family toggles (R7)
     tool: null, // active drawing tool ("hline"|"trendline"|"fib"|"rect"|"text")
   });

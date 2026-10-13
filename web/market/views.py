@@ -43,6 +43,7 @@ MODULE_ALLOWLIST = frozenset(
         "drawing-core",
         "smc-overlay-core",
         "legend-core",
+        "indicator-settings-core",
         "chart-store",
         "chart-bus",
         "chart-host",
