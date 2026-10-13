@@ -7,7 +7,15 @@ metrics and ``[]`` for the equity curve.
 
 from pytest import approx
 
-from src.metrics import equity_curve, expectancy, profit_factor, r_multiple
+from src.metrics import (
+    equity_curve,
+    expectancy,
+    max_drawdown,
+    net_pnl,
+    profit_factor,
+    r_multiple,
+    win_rate,
+)
 
 # --- expectancy ---------------------------------------------------------
 
@@ -92,3 +100,71 @@ def test_equity_curve_does_not_mutate_input():
     pnls = [5.0, -2.0, 3.0]
     equity_curve(pnls)
     assert pnls == [5.0, -2.0, 3.0]
+
+
+# --- max_drawdown (R8) --------------------------------------------------
+
+
+def test_max_drawdown_peak_then_trough():
+    assert max_drawdown([10.0, 5.0, 8.0, 2.0]) == -8.0
+
+
+def test_max_drawdown_monotonic_up_is_zero():
+    assert max_drawdown([1.0, 2.0, 3.0]) == 0.0
+
+
+def test_max_drawdown_single_point_is_zero():
+    # Triangulation: one point is its own peak, no decline.
+    assert max_drawdown([42.0]) == 0.0
+
+
+def test_max_drawdown_empty_is_none():
+    assert max_drawdown([]) is None
+
+
+def test_max_drawdown_does_not_mutate_input():
+    equity = [10.0, 5.0, 8.0, 2.0]
+    max_drawdown(equity)
+    assert equity == [10.0, 5.0, 8.0, 2.0]
+
+
+# --- win_rate (R9) ------------------------------------------------------
+
+
+def test_win_rate_mixed():
+    assert win_rate([10.0, -5.0, 5.0]) == approx(66.6666666667)
+
+
+def test_win_rate_all_win_is_100():
+    assert win_rate([1.0, 2.0]) == 100.0
+
+
+def test_win_rate_zero_is_not_a_win():
+    assert win_rate([0.0, -1.0]) == 0.0
+
+
+def test_win_rate_empty_is_none():
+    assert win_rate([]) is None
+
+
+def test_win_rate_does_not_mutate_input():
+    pnls = [10.0, -5.0, 5.0]
+    win_rate(pnls)
+    assert pnls == [10.0, -5.0, 5.0]
+
+
+# --- net_pnl (R10) ------------------------------------------------------
+
+
+def test_net_pnl_sums_nets():
+    assert net_pnl([10.0, -5.0, 5.0]) == 10.0
+
+
+def test_net_pnl_empty_is_zero():
+    assert net_pnl([]) == 0.0
+
+
+def test_net_pnl_does_not_mutate_input():
+    pnls = [10.0, -5.0, 5.0]
+    net_pnl(pnls)
+    assert pnls == [10.0, -5.0, 5.0]

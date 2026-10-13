@@ -18,6 +18,7 @@ SRC = Path(__file__).resolve().parent.parent / "src"
 PURE_MODULES = (
     "indicators.py",
     "metrics.py",
+    "analytics.py",
     "alert_rules.py",
     "smc/config.py",
     "smc/swings.py",

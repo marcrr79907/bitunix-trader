@@ -633,15 +633,20 @@ def _serialize_smc(
     }
 
 
-def get_smc_payload(client, symbol: str, interval: str, limit: int) -> dict:
+def get_smc_payload(
+    client, symbol: str, interval: str, limit: int, *, before: int | None = None
+) -> dict:
     """Run the frozen SMC chain over the newest ``limit`` candles (no warm-up).
 
     Uses the shared ``_fetch_window`` seam (``want == limit``) so the SMC
-    window matches the chart's ``candles[-limit:]`` exactly. Raises like
+    window matches the chart's ``candles[-limit:]`` exactly. The keyword-only
+    ``before`` (UNIX seconds, exclusive upper bound) bounds the window to
+    candles older than it, so the chain can run over a historical trade's bar;
+    omitting it is byte-identical to before (newest window). Raises like
     ``get_kline_payload`` (view maps: BitunixError → 400, RequestException →
     502); thin windows degrade to empty arrays + ``range:null``, never 500.
     """
-    rows = _fetch_window(client, symbol, interval, limit)
+    rows = _fetch_window(client, symbol, interval, limit, before)
     if len(rows) < 3:
         # Below three candles no chain can compute; frozen empty shape (R4).
         return _serialize_smc(rows, symbol, interval, [], [], [], [], [], None, [])

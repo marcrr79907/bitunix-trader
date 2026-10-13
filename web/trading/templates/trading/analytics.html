@@ -1,0 +1,63 @@
+{% extends "registration/base.html" %}
+
+{% block title %}Analytics{% endblock %}
+
+{% block content %}
+<h1>Analytics</h1>
+{% if empty %}
+<div class="panel"><p>No trades yet. Sync runs in the worker once a credential is active.</p></div>
+{% else %}
+
+<section class="panel">
+  <h2>Equity</h2>
+  <p class="muted">Max drawdown: {{ equity_drawdown|default:"—" }}</p>
+  <div class="chart chart-equity">{{ equity_svg|safe }}</div>
+</section>
+
+<section class="panel">
+  <h2>Net PnL by symbol</h2>
+  <div class="chart chart-bars">{{ bars_svg|safe }}</div>
+</section>
+
+<section class="panel">
+  <h2>By hour (UTC)</h2>
+  <table>
+    <thead><tr><th scope="col">Hour</th><th scope="col" class="num">Trades</th><th scope="col" class="num">Win rate</th><th scope="col" class="num">Net PnL</th><th scope="col" class="num">Expectancy</th><th scope="col" class="num">Profit factor</th><th scope="col" class="num">Max DD</th></tr></thead>
+    <tbody>
+    {% for key, m in groups.hour.items %}
+      <tr><td>{{ key }}</td><td class="num">{{ m.trades }}</td><td class="num">{{ m.win_rate|floatformat:2 }}</td><td class="num net{% if m.net_pnl > 0 %} pos{% elif m.net_pnl < 0 %} neg{% endif %}">{{ m.net_pnl|stringformat:"+.2f" }}</td><td class="num">{{ m.expectancy|floatformat:2 }}</td><td class="num">{{ m.profit_factor|floatformat:2 }}</td><td class="num">{{ m.max_drawdown|floatformat:2 }}</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</section>
+
+<section class="panel">
+  <h2>By symbol</h2>
+  <table>
+    <thead><tr><th scope="col">Symbol</th><th scope="col" class="num">Trades</th><th scope="col" class="num">Win rate</th><th scope="col" class="num">Net PnL</th><th scope="col" class="num">Expectancy</th><th scope="col" class="num">Profit factor</th><th scope="col" class="num">Max DD</th></tr></thead>
+    <tbody>
+    {% for key, m in groups.symbol.items %}
+      <tr><td>{{ key }}</td><td class="num">{{ m.trades }}</td><td class="num">{{ m.win_rate|floatformat:2 }}</td><td class="num net{% if m.net_pnl > 0 %} pos{% elif m.net_pnl < 0 %} neg{% endif %}">{{ m.net_pnl|stringformat:"+.2f" }}</td><td class="num">{{ m.expectancy|floatformat:2 }}</td><td class="num">{{ m.profit_factor|floatformat:2 }}</td><td class="num">{{ m.max_drawdown|floatformat:2 }}</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</section>
+
+<section class="panel">
+  <h2>Calibration vs SMC setups</h2>
+  <p>Matched: <strong>{{ calibration.matched.trades }}</strong> · Unmatched: <strong>{{ calibration.unmatched.trades }}</strong></p>
+  <table>
+    <thead><tr><th scope="col">Setup</th><th scope="col" class="num">Trades</th><th scope="col" class="num">Win rate</th><th scope="col" class="num">Net PnL</th><th scope="col" class="num">Mean R</th></tr></thead>
+    <tbody>
+    {% for row in setup_rows %}
+      <tr><td>{{ row.key }}</td><td class="num">{{ row.metrics.trades }}</td><td class="num">{{ row.metrics.win_rate|floatformat:2 }}</td><td class="num net{% if row.metrics.net_pnl > 0 %} pos{% elif row.metrics.net_pnl < 0 %} neg{% endif %}">{{ row.metrics.net_pnl|stringformat:"+.2f" }}</td><td class="num">{% if row.risk is not None %}{{ row.risk|floatformat:2 }}{% else %}—{% endif %}</td></tr>
+    {% endfor %}
+    {% if calibration.unmatched.trades %}
+      <tr><td>unmatched</td><td class="num">{{ calibration.unmatched.trades }}</td><td class="num">{{ calibration.unmatched.win_rate|floatformat:2 }}</td><td class="num net{% if calibration.unmatched.net_pnl > 0 %} pos{% elif calibration.unmatched.net_pnl < 0 %} neg{% endif %}">{{ calibration.unmatched.net_pnl|stringformat:"+.2f" }}</td><td class="num">—</td></tr>
+    {% endif %}
+    </tbody>
+  </table>
+</section>
+
+{% endif %}
+{% endblock %}

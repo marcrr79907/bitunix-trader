@@ -1756,3 +1756,45 @@ def test_smc_endpoint_is_market_global_not_per_user(monkeypatch):
     body_b = b_client.get(url).json()
 
     assert body_a == body_b  # R5: no per-user scoping/filtering
+
+
+# --- AS5 (Slice 2): get_smc_payload(*, before=None) additive cursor ---------
+
+
+def test_smc_payload_before_bounds_the_window():
+    from market.quotes import get_smc_payload
+
+    # Persisted series at 1000s steps; before=25000 selects candles < 25000.
+    times = _seed_series(25)
+    client = StubClient([])
+
+    payload = get_smc_payload(client, "BTCUSDT", PERSISTED, 10, before=25000)
+
+    assert set(payload) == SMC_KEYS
+    emitted = payload["swings"] + payload["structure"]
+    assert all(r["time"] in times for r in emitted)
+    assert all(r["time"] < 25000 for r in emitted)
+    assert client.calls == []  # DB held the window; no upstream needed
+
+
+def test_smc_payload_before_omitted_is_newest_window():
+    from market.quotes import get_smc_payload
+
+    _seed_series(25)
+    client = StubClient([])
+
+    payload = get_smc_payload(client, "BTCUSDT", PERSISTED, 10)
+
+    # Omitted ``before`` keeps today's behavior: newest rows, no upstream.
+    assert set(payload) == SMC_KEYS
+    assert client.calls == []
+
+
+def test_smc_payload_before_forwards_to_upstream_end_time():
+    from market.quotes import get_smc_payload
+
+    client = StubClient(_smc_rows())
+    get_smc_payload(client, "BTCUSDT", "1m", 10, before=1700000000)
+
+    # ``before`` reaches the shared seam as the exclusive upstream end_time.
+    assert client.calls[0]["end_time"] == 1700000000 * 1000
