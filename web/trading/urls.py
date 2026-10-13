@@ -9,6 +9,7 @@ from trading import views
 urlpatterns = [
     path("positions/", views.positions, name="positions"),
     path("journal/", views.journal, name="journal"),
+    path("analytics/", views.analytics_view, name="analytics"),
     path("rules/", views.rules, name="rules"),
     path("rules/new/", views.rule_create, name="rule_create"),
     path("rules/<int:pk>/edit/", views.rule_edit, name="rule_edit"),

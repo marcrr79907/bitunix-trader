@@ -14,9 +14,17 @@ from django.http import Http404, HttpRequest, HttpResponse
 from django.shortcuts import redirect, render
 from django.views.decorators.http import require_http_methods
 
+from src.analytics import (
+    bars_svg,
+    calibrate,
+    equity_and_drawdown,
+    equity_svg,
+    group_metrics,
+)
 from src.journal import metrics as journal_metrics
 from src.metrics import equity_curve, expectancy, profit_factor
 from src.monitor import liq_distance_pct, margin_state
+from trading.analytics import extract_signals
 from trading.forms import AlertRuleForm
 from trading.models import (
     AccountSnapshot,
@@ -25,6 +33,12 @@ from trading.models import (
     TickerSnapshot,
     Trade,
 )
+
+# Calibration window: a trade matches an SMC signal within one hour (matches the
+# hourly signal bar). Hour is caller-supplied UTC: (ctime_ms // 3_600_000) % 24.
+CALIBRATION_WINDOW_SECONDS = 3600
+HOUR_MS = 3_600_000
+_ANALYTICS_DIMENSIONS = ("hour", "symbol")
 
 
 def _latest_marks(symbols: list[str]) -> dict[str, float | None]:
@@ -90,6 +104,87 @@ def journal(request: HttpRequest) -> HttpResponse:
             "profit_factor": profit_factor(nets),
             "equity_curve": equity_curve(nets),
             "empty": not rows,
+        },
+    )
+
+
+@login_required
+@require_http_methods(["GET"])
+def analytics_view(request: HttpRequest) -> HttpResponse:
+    """Read-only, per-user ``/analytics/`` breakdowns + calibration + inline SVG.
+
+    Every trade read routes through ``Trade.for_user(request.user)`` (R14) — no
+    unscoped query. All arithmetic is delegated to the pure ``src/analytics.py``
+    (``group_metrics`` the hour/symbol breakdowns, ``calibrate`` the setup join,
+    ``equity_and_drawdown``/``*_svg`` the charts); the view only reshapes rows and
+    never reimplements a metric or the join. Historical SMC signals come from the
+    ``trading.analytics`` seam, which swallows upstream failures (never 500).
+    """
+    user = request.user
+    trades = list(Trade.for_user(user))
+
+    # One net per fill (journal convention: realized PnL minus fee) and the
+    # caller-supplied UTC hour (Q4) — the only arithmetic the view does.
+    nets: list[float] = []
+    rows: list[dict] = []
+    trade_rows: list[dict] = []
+    ctimes_by_symbol: dict[str, list[int]] = {}
+    for t in trades:
+        net = (t.realized_pnl or 0.0) - (t.fee or 0.0)
+        hour = (t.ctime // HOUR_MS) % 24 if t.ctime is not None else None
+        nets.append(net)
+        rows.append({"net": net, "hour": hour, "symbol": t.symbol})
+        trade_rows.append(
+            {
+                "net": net,
+                "side": t.side,
+                "ctime": t.ctime,
+                "qty": t.qty or 0.0,
+                "symbol": t.symbol,
+            }
+        )
+        if t.ctime is not None:
+            ctimes_by_symbol.setdefault(t.symbol, []).append(t.ctime)
+
+    # Historical SMC signals per symbol (frozen seam; degrades to [] on failure).
+    signals: list[dict] = []
+    for symbol in sorted(ctimes_by_symbol):
+        signals.extend(extract_signals(symbol, ctimes_by_symbol[symbol]))
+
+    groups = {dim: group_metrics(rows, dim) for dim in _ANALYTICS_DIMENSIONS}
+    calibration = calibrate(
+        signals, trade_rows, window_seconds=CALIBRATION_WINDOW_SECONDS
+    )
+
+    equity = equity_and_drawdown(nets)
+    by_symbol_net: dict[str, float] = {}
+    for row in rows:
+        by_symbol_net[row["symbol"]] = (
+            by_symbol_net.get(row["symbol"], 0.0) + row["net"]
+        )
+    bars = [
+        {"label": symbol, "value": value}
+        for symbol, value in sorted(by_symbol_net.items())
+    ]
+
+    # Flatten the calibrate setup join into render rows (key + metrics + mean R),
+    # so the template needs no dict-index filter (single source stays in src/).
+    setup_rows = [
+        {"key": key, "metrics": metrics, "risk": calibration["r_by_setup"].get(key)}
+        for key, metrics in calibration["by_setup"].items()
+    ]
+
+    return render(
+        request,
+        "trading/analytics.html",
+        {
+            "groups": groups,
+            "calibration": calibration,
+            "setup_rows": setup_rows,
+            "equity_svg": equity_svg(equity["equity"]),
+            "equity_drawdown": equity["max_drawdown"],
+            "bars_svg": bars_svg(bars),
+            "empty": not trades,
         },
     )
 
