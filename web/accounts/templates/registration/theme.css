@@ -50,7 +50,26 @@ code{font-family:var(--mono); background:var(--surface); padding:1px 5px; border
 /* market chart layout (existing dead hooks) */
 .market-layout{display:grid; grid-template-columns:1fr 300px; gap:var(--sp-4)}
 .panel{background:var(--surface); border:1px solid var(--border); border-radius:var(--r); padding:var(--sp-3)}
-#chart{min-height:460px}
+#chart{min-height:460px; position:relative}
+
+/* chart legend overlay (F1): anchored top-left inside #chart, read-only.
+   pointer-events:none so it never eats chart/crosshair input; tabs/nums keep
+   columns from jittering as values tick. */
+.chart-legend{
+  position:absolute; top:var(--sp-2); left:var(--sp-2); z-index:1;
+  pointer-events:none; background:var(--surface); border:1px solid var(--border);
+  border-radius:var(--r); padding:var(--sp-1) var(--sp-2);
+  font-family:var(--mono); font-size:var(--fs-3);
+  max-width:min(90%,320px); overflow:hidden; white-space:nowrap;
+}
+.chart-legend .lg-ohlc{color:var(--text)}
+.chart-legend .lg-chg{margin-left:var(--sp-2)}
+.chart-legend .lg-chg.up{color:var(--up)}
+.chart-legend .lg-chg.dn{color:var(--dn)}
+.chart-legend .lg-chg.flat{color:var(--muted)}
+.chart-legend .lg-row{display:flex; gap:var(--sp-2); justify-content:space-between}
+.chart-legend .lg-token{color:var(--muted)}
+.chart-legend .lg-val{color:var(--text)}
 .pairs{display:flex; flex-wrap:wrap; gap:var(--sp-2)}
 .pairs .pair{background:var(--surface); border:1px solid var(--border); color:var(--text)}
 .indicators{display:flex; flex-direction:column; gap:var(--sp-1);
