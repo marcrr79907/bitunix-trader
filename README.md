@@ -49,6 +49,11 @@ se desactivan con aviso y el monitor sigue funcionando.
 - La API key debe ser **sin permiso de retiro** y con **IP whitelist**.
 - Etapas 0-3 corren sin clave. Etapa 4-5 requieren clave solo lectura. Etapa 6 requiere token de Telegram.
 
+## Arquitectura
+
+- Chart del panel web (módulos ESM): [`docs/architecture/chart-modules.md`](docs/architecture/chart-modules.md)
+- Deployment (CI/CD, Railway, cron): [`docs/deployment.md`](docs/deployment.md)
+
 ## Riesgo
 
 Apalancamiento sugerido para arrancar: 5-10x. Riesgo por operación ≤ 1-2% del capital.
