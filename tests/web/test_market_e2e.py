@@ -139,6 +139,102 @@ def per_interval_layouts(e2e_user):
     return e2e_user
 
 
+# --- /analytics/ E2E (AS3/AS4) ----------------------------------------------
+#
+# DOM-only assertions (no image diffs). Trades are seeded for user A BEFORE any
+# Playwright context (sync ORM rule). User B owns nothing: A sees the inline
+# SVG charts + breakdown/calibration sections, B sees the empty state and none
+# of A's symbols. Self-contained contexts (cookies are per-context) so A and B
+# are exercised in one test with no shared session.
+
+
+@pytest.fixture
+def analytics_trades(db):
+    """Seed a real trade set for the E2E session user BEFORE the browser opens."""
+    from django.contrib.auth import get_user_model
+    from trading.models import Trade
+
+    user = get_user_model().objects.create_user(
+        email="e2e-analytics@example.com", password="pw-123456"
+    )
+    Trade.objects.create(
+        user=user,
+        trade_id="AN1",
+        symbol="BTCUSDT",
+        side="BUY",
+        qty=1.0,
+        realized_pnl=10.0,
+        fee=0.0,
+        ctime=1_700_000_000_000,
+    )
+    Trade.objects.create(
+        user=user,
+        trade_id="AN2",
+        symbol="ETHUSDT",
+        side="SELL",
+        qty=2.0,
+        realized_pnl=-5.0,
+        fee=0.0,
+        ctime=1_700_003_600_000,
+    )
+    return user
+
+
+def _analytics_cookie(user):
+    """A fresh session cookie for ``user`` (its own client — no clobbering)."""
+    from django.test import Client
+
+    client = Client()
+    client.force_login(user)
+    return {
+        "name": "sessionid",
+        "value": client.cookies["sessionid"].value,
+        "domain": "localhost",
+        "path": "/",
+    }
+
+
+@p
+def test_analytics_e2e_charts_and_isolation(
+    live_server, analytics_trades, user_b, monkeypatch
+):
+    # Signals come from the network seam; stub it (no upstream in E2E).
+    from trading import views
+
+    monkeypatch.setattr(views, "extract_signals", lambda symbol, ctimes: [])
+
+    cookie_a = _analytics_cookie(analytics_trades)
+    cookie_b = _analytics_cookie(user_b)
+
+    from playwright.sync_api import sync_playwright
+
+    with sync_playwright() as pw:
+        browser = pw.chromium.launch()
+        try:
+            # User A: charts + breakdown + calibration render.
+            ctx_a = browser.new_context()
+            ctx_a.add_cookies([cookie_a])
+            page_a = ctx_a.new_page()
+            page_a.goto(f"{live_server.url}/analytics/")
+            assert page_a.locator("svg[role='img']").count() >= 2
+            assert page_a.locator("table").count() >= 3  # hour/symbol/calibration
+            body_a = page_a.content()
+            assert "BTCUSDT" in body_a
+            assert "Calibration" in body_a
+
+            # User B: empty state, none of A's data.
+            ctx_b = browser.new_context()
+            ctx_b.add_cookies([cookie_b])
+            page_b = ctx_b.new_page()
+            page_b.goto(f"{live_server.url}/analytics/")
+            body_b = page_b.content()
+            assert "No trades yet" in body_b
+            assert "BTCUSDT" not in body_b
+            assert page_b.locator("table").count() == 0
+        finally:
+            browser.close()
+
+
 @p
 def test_chart_page_wires_up(browser_page):
     page, base_url = browser_page

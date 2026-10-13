@@ -24,12 +24,12 @@ a:focus-visible,button:focus-visible,input:focus-visible,select:focus-visible{
 
 /* app shell */
 .topbar{
-  display:flex; align-items:center; gap:var(--sp-4);
+  display:flex; align-items:center; gap:var(--sp-4); flex-wrap:wrap;
   padding:var(--sp-3) var(--sp-4);
   background:var(--bg-2); border-bottom:1px solid var(--border);
 }
 .topbar .brand{font-weight:600; color:var(--text)}
-.topbar nav{display:flex; gap:var(--sp-3)}
+.topbar nav{display:flex; gap:var(--sp-3); flex-wrap:wrap}
 .topbar nav a{color:var(--muted)}
 .topbar nav a:hover,.topbar nav a[aria-current="page"]{color:var(--text)}
 .topbar .whoami{margin-left:auto; color:var(--muted); font-size:var(--fs-3)}
@@ -107,3 +107,21 @@ dialog form{display:flex; flex-direction:column; gap:var(--sp-2)}
 .rule-actions form{display:inline}
 .rule-actions button{background:var(--surface); border-color:var(--border); color:var(--text); padding:var(--sp-1) var(--sp-2)}
 .rule-actions button.danger{color:var(--dn); border-color:var(--dn)}
+
+/* analytics (Slice 3): inline SVG + numeric/state cues.
+   The SVG builder emits no colour attributes, so every mark is themed here via
+   CSS selectors — SVG defaults (black fill/stroke) are invisible on --bg. */
+.chart{margin-top:var(--sp-2)}
+.chart svg{display:block; width:100%; height:auto; max-width:100%}
+.chart-equity svg{color:var(--accent)}
+.chart-equity polyline{fill:none; stroke:currentColor; stroke-width:2;
+  vector-effect:non-scaling-stroke}
+.chart-bars rect{fill:var(--muted)}
+.chart-bars text{fill:var(--text); font-size:6px}
+/* Non-colour state cue: net PnL always carries a signed value; the class only
+   tints it, so the sign (not colour alone) communicates win/loss. */
+.net.pos{color:var(--up)}
+.net.neg{color:var(--dn)}
+/* Wide data tables scroll inside their panel instead of overflowing the page
+   (375px still shows every column). */
+.panel:has(table){overflow-x:auto}

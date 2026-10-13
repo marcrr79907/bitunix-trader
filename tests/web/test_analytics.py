@@ -237,6 +237,63 @@ def test_analytics_svg_labels_are_escaped(login_a, user_a, monkeypatch):
         ET.fromstring(svg)  # still parses with the escaped label
 
 
+@pytest.mark.django_db
+def test_analytics_csp_unchanged(login_a, user_a, monkeypatch):
+    """AS4: inline SVG is HTML, not script — the CSP header is untouched."""
+    from config.middleware import CSP_POLICY
+    from trading import views
+
+    monkeypatch.setattr(views, "extract_signals", SignalRecorder({}))
+
+    response = login_a.get(URL)
+
+    assert response.headers["Content-Security-Policy"] == CSP_POLICY
+
+
+@pytest.mark.django_db
+def test_analytics_svg_carries_accessible_labels(login_a, user_a, monkeypatch):
+    """AS4: every inline SVG exposes role="img" plus an aria-label/title."""
+    from trading import views
+
+    _trade(user_a, "TA1", "BTCUSDT", 10.0, CTIME_A1)
+    monkeypatch.setattr(
+        views, "extract_signals", SignalRecorder({"BTCUSDT": [_signal()]})
+    )
+
+    body = login_a.get(URL).content.decode()
+
+    svgs = re.findall(r"<svg\b.*?</svg>", body, re.S)
+    assert svgs
+    for svg in svgs:
+        root = ET.fromstring(svg)
+        assert root.get("role") == "img"
+        has_label = root.get("aria-label") or root.find(
+            "{http://www.w3.org/2000/svg}title"
+        )
+        assert has_label, svg
+
+
+@pytest.mark.django_db
+def test_analytics_non_color_state_cue(login_a, user_a, monkeypatch):
+    """AS4/theme: a sign marks a winning bucket — state is not colour-only."""
+    from trading import views
+
+    _trade(user_a, "TA1", "BTCUSDT", 10.0, CTIME_A1)  # winner
+    _trade(user_a, "TA2", "ETHUSDT", -5.0, CTIME_A2)  # loser
+    monkeypatch.setattr(
+        views,
+        "extract_signals",
+        SignalRecorder({"BTCUSDT": [], "ETHUSDT": []}),
+    )
+
+    body = login_a.get(URL).content.decode()
+
+    # Positive net PnL carries an explicit "+" cue alongside the colour class.
+    assert "+10.00" in body
+    assert "-5.00" in body  # the loss keeps its sign (also a non-colour cue)
+    assert 'class="num pos"' in body or "pos" in body
+
+
 # --- AS5: historical signal seam --------------------------------------------
 
 
