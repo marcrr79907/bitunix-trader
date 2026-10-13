@@ -16,6 +16,7 @@
       <a href="{% url 'rules' %}"{% if request.resolver_match.url_name == 'rules' %} aria-current="page"{% endif %}>Rules</a>
       <a href="/positions/">Positions</a>
       <a href="/journal/">Journal</a>
+      <a href="{% url 'analytics' %}"{% if request.resolver_match.url_name == 'analytics' %} aria-current="page"{% endif %}>Analytics</a>
     </nav>
     {% if user.is_authenticated %}
       <span class="whoami">{{ user.email }}</span>
