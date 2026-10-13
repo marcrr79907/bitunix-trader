@@ -1266,3 +1266,87 @@ def test_shell_keeps_seam_at_eight_keys(seeded_5m_candles, browser_page):
     )
     assert page.evaluate("() => Object.keys(window.marketChart).length") == 8
     assert page.evaluate("() => typeof window.SmcOverlayCore") == "object"
+
+
+@pytest.fixture
+def saved_interval_preference(e2e_user):
+    """Seed a user-global last-interval preference BEFORE the Playwright context.
+
+    Boot fetches this preference before the first chart build (R10); a saved
+    ``5m`` makes the restore observable on the chip row + select.
+    """
+    from trading.models import ChartPreference
+
+    ChartPreference.objects.create(user=e2e_user, last_interval="5m")
+    return e2e_user
+
+
+@p
+def test_boot_restores_saved_interval_preference(
+    seeded_5m_candles, saved_interval_preference, browser_page
+):
+    # R10: a persisted last-interval wins on boot — the 5m chip is active and
+    # the retained select reflects it (the chart builds at 5m, not the 1m default).
+    page, base_url = browser_page
+    page.goto(f"{base_url}/market/")
+    _wait_ready(page)
+
+    assert (
+        page.locator('.interval-chip[data-interval="5m"]').get_attribute("aria-pressed")
+        == "true"
+    )
+    assert (
+        page.locator('.interval-chip[data-interval="1m"]').get_attribute("aria-pressed")
+        == "false"
+    )
+    assert page.locator("#interval").input_value() == "5m"
+
+
+@p
+def test_boot_preference_fetch_failure_defaults_to_1m(seeded_5m_candles, browser_page):
+    # R10: a failed preference GET MUST NOT blank the chart — boot falls back to
+    # "1m" and still reaches ready.
+    page, base_url = browser_page
+    page.route("**/market/api/preference*", lambda route: route.abort())
+    page.goto(f"{base_url}/market/")
+    _wait_ready(page)
+
+    assert (
+        page.locator('.interval-chip[data-interval="1m"]').get_attribute("aria-pressed")
+        == "true"
+    )
+    assert page.locator("#interval").input_value() == "1m"
+    # The chart still built (never blank): the candle series seam exists.
+    assert page.evaluate("() => typeof window.marketChart.candleSeries") == "object"
+
+
+@p
+def test_interval_change_debounce_saves_preference(seeded_5m_candles, browser_page):
+    # R10: an interval change debounce-PUTs the preference carrying the new value.
+    page, base_url = browser_page
+    puts = []
+    page.on(
+        "request",
+        lambda r: (
+            puts.append(r)
+            if "/market/api/preference" in r.url and r.method == "PUT"
+            else None
+        ),
+    )
+    page.goto(f"{base_url}/market/")
+    _wait_ready(page)
+
+    page.locator('.interval-chip[data-interval="5m"]').click()
+    page.wait_for_function(
+        "() => document.querySelector('.interval-chip[data-interval=\"5m\"]')"
+        ".getAttribute('aria-pressed') === 'true'",
+        timeout=10000,
+    )
+    page.wait_for_function(
+        "() => window.marketChart.candleSeries.data().length > 0",
+        timeout=10000,
+    )
+    # Debounce is 500ms; wait for exactly one PUT to have fired.
+    page.wait_for_timeout(1200)
+    assert len(puts) == 1, [r.url for r in puts]
+    assert json.loads(puts[0].post_data) == {"interval": "5m"}

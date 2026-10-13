@@ -15,6 +15,7 @@ from trading.models import (
     AccountSnapshot,
     AlertRule,
     ChartLayout,
+    ChartPreference,
     Drawing,
     ExchangeCredential,
     PositionSnapshot,
@@ -341,3 +342,49 @@ def test_alert_rule_index_and_no_unique_constraint():
     names = {idx.name for idx in AlertRule._meta.indexes}
     assert "ix_alertrule_user_active" in names
     assert AlertRule._meta.constraints == []
+
+
+@pytest.mark.django_db
+def test_chart_preference_cross_user_get_denied(user_a, user_b):
+    # R14.2: B cannot read A's preference through the scoped accessor.
+    pref = ChartPreference.objects.create(user=user_a, last_interval="4h")
+
+    with pytest.raises(ChartPreference.DoesNotExist):
+        ChartPreference.for_user(user_b).get(pk=pref.pk)
+
+    assert ChartPreference.for_user(user_a).get(pk=pref.pk) == pref
+    assert ChartPreference.for_user(user_b).count() == 0
+
+
+@pytest.mark.django_db
+def test_chart_preference_for_user_scopes_to_the_owner(user_a, user_b):
+    ChartPreference.objects.create(user=user_a, last_interval="1h")
+    assert ChartPreference.for_user(user_a).count() == 1
+    assert ChartPreference.for_user(user_b).count() == 0
+
+
+@pytest.mark.django_db
+def test_chart_preference_default_interval_and_round_trip(user_a):
+    pref = ChartPreference.objects.create(user=user_a)
+    assert pref.last_interval == "1m"
+
+    pref.last_interval = "4h"
+    pref.save(update_fields=["last_interval"])
+    assert ChartPreference.for_user(user_a).get(pk=pref.pk).last_interval == "4h"
+
+
+@pytest.mark.django_db
+def test_chart_preference_one_row_per_user(user_a):
+    # R8: OneToOne — a second create for the same user violates the constraint.
+    ChartPreference.objects.create(user=user_a, last_interval="1h")
+    with pytest.raises(IntegrityError):
+        with transaction.atomic():
+            ChartPreference.objects.create(user=user_a, last_interval="4h")
+
+
+@pytest.mark.django_db
+def test_chart_preference_owner_is_required():
+    # no user-less rows: the owner is mandatory (OneToOne, non-null).
+    with pytest.raises(IntegrityError):
+        with transaction.atomic():
+            ChartPreference.objects.create(last_interval="1m")

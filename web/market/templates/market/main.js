@@ -60,7 +60,7 @@ export function boot(config) {
   const stream = createStream({ store, bus, host, config });
   const drawings = createDrawings({ store, bus, host, config });
   const smc = createSmc({ store, bus, host, config });
-  createToolbar({ store, bus, config });
+  const toolbar = createToolbar({ store, bus, config });
   // Read-only legend overlay: re-subscribes on chart:built internally, so no
   // buildChart change is needed (design: keeps main wiring to +1 line).
   createLegend({ store, bus, host, config });
@@ -126,28 +126,72 @@ export function boot(config) {
   // Commands travel the bus (chart-bus.js) so main owns orchestration: the
   // config:changed command switches, indicator:changed rebuilds (config change
   // -> setData path; the live WS stream keeps update() only).
-  bus.on("config:changed", function (p) { switchTo(p.symbol, p.interval); });
+  bus.on("config:changed", function (p) {
+    // Persist a genuine interval change only (mirrors saveLayout); a pair
+    // switch keeps the same interval and must not PUT.
+    if (p.interval !== state.interval) savePreference(p.interval);
+    switchTo(p.symbol, p.interval);
+  });
   bus.on("indicator:changed", rebuild);
 
-  // Async boot (R4/R7): layout -> build -> connect -> drawings -> history, all
-  // sequential so no two API fetches race the session (the E2E live server is
-  // single-session). A failed drawings fetch is non-fatal. ``ready`` flips only
-  // after the drawings resolve so tests can read the seam deterministically.
+  function csrfToken() {
+    const meta = document.querySelector('meta[name="csrf-token"]');
+    return meta ? meta.content : "";
+  }
+
+  // Debounced preference PUT on interval change (R10), mirroring saveLayout.
+  // A failed save is silent — the in-session chart is unaffected.
+  let savePrefTimer = null;
+  function savePreference(interval) {
+    if (savePrefTimer) clearTimeout(savePrefTimer);
+    savePrefTimer = setTimeout(function () {
+      savePrefTimer = null;
+      fetch(config.urls.preference, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json", "X-CSRFToken": csrfToken() },
+        body: JSON.stringify({ interval: interval }),
+      }).catch(function () { /* non-fatal */ });
+    }, config.saveDelay);
+  }
+
+  // Fetch the saved interval before boot; any failure (or a miss) falls back to
+  // "1m" so the chart is never blank and boot is never blocked (R10).
+  function loadPreference() {
+    return fetch(config.urls.preference)
+      .then(function (r) {
+        if (!r.ok) throw new Error("preference " + r.status);
+        return r.json();
+      })
+      .then(function (body) { return (body && body.interval) || "1m"; })
+      .catch(function () { return "1m"; });
+  }
+
+  // Async boot (R4/R7/R10): preference -> layout -> build -> connect ->
+  // drawings -> history, all sequential so no two API fetches race the session
+  // (the E2E live server is single-session). The saved interval is applied
+  // BEFORE the first build; a failed/empty fetch falls back to "1m". A failed
+  // drawings fetch is non-fatal. ``ready`` flips only after the drawings
+  // resolve so tests can read the seam deterministically.
   function start() {
-    const mine = ++gen;
-    indicators.loadLayout(state.symbol, state.interval).then(function () {
-      if (mine !== gen) return; // a switch raced ahead of boot
-      buildChart();
-      stream.connect({ symbol: state.symbol, interval: state.interval });
-      return drawings.refreshDrawings();
-    }).then(function () {
-      if (mine !== gen) return;
-      return smc.loadSmc(); // attach the SMC layer before history (R8 ordering)
-    }).then(function () {
-      if (mine !== gen) return;
-      history.fetchHistory();
-      window.marketChart.ready = true;
-      bus.emit("ready");
+    loadPreference().then(function (interval) {
+      if (gen !== 0) return; // a switch raced ahead of boot — it owns the chart
+      const mine = ++gen;
+      state.interval = interval;
+      toolbar.setInterval(interval);
+      return indicators.loadLayout(state.symbol, state.interval).then(function () {
+        if (mine !== gen) return; // a switch raced ahead of boot
+        buildChart();
+        stream.connect({ symbol: state.symbol, interval: state.interval });
+        return drawings.refreshDrawings();
+      }).then(function () {
+        if (mine !== gen) return;
+        return smc.loadSmc(); // attach the SMC layer before history (R8 ordering)
+      }).then(function () {
+        if (mine !== gen) return;
+        history.fetchHistory();
+        window.marketChart.ready = true;
+        bus.emit("ready");
+      });
     });
   }
 
