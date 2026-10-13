@@ -21,6 +21,7 @@ import { createStream } from "./controllers/stream.js";
 import { createDrawings } from "./controllers/drawings.js";
 import { createSmc, readSmc } from "./controllers/smc.js";
 import { createToolbar } from "./controllers/toolbar.js";
+import { createLegend } from "./controllers/legend.js";
 
 export function boot(config) {
   // Sanctioned test seam (R18): the E2E reads window.SmcOverlayCore.setupMarkers.
@@ -60,6 +61,9 @@ export function boot(config) {
   const drawings = createDrawings({ store, bus, host, config });
   const smc = createSmc({ store, bus, host, config });
   createToolbar({ store, bus, config });
+  // Read-only legend overlay: re-subscribes on chart:built internally, so no
+  // buildChart change is needed (design: keeps main wiring to +1 line).
+  createLegend({ store, bus, host, config });
 
   // Monotonic chart generation: a switch bumps it so a slow boot/switch load
   // for the previous chart cannot clobber the current one.
