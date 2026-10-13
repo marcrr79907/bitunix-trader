@@ -185,21 +185,6 @@ export function createHost() {
     if (candleSeries) candleSeries.update(bar); // the ONLY live candle write
   }
 
-  // --- coordinate converters (scales / crosshair) -----------------------------
-
-  function timeToCoordinate(time) {
-    return chart ? chart.timeScale().timeToCoordinate(time) : null;
-  }
-  function priceToCoordinate(price) {
-    return candleSeries ? candleSeries.priceToCoordinate(price) : null;
-  }
-  function coordinateToPrice(y) {
-    return candleSeries ? candleSeries.coordinateToPrice(y) : null;
-  }
-  function coordinateToTime(x) {
-    return chart ? chart.timeScale().coordinateToTime(x) : null;
-  }
-
   function subscribeClick(fn) {
     if (chart) chart.subscribeClick(fn);
   }
@@ -224,10 +209,6 @@ export function createHost() {
     seriesFromPayload,
     rsiValues,
     setRsi,
-    timeToCoordinate,
-    priceToCoordinate,
-    coordinateToPrice,
-    coordinateToTime,
     subscribeClick,
     subscribeVisibleRange,
   };

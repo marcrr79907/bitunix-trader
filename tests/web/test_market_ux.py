@@ -128,6 +128,44 @@ def test_controller_allowlist_routes_serve_javascript(logged_in_client):
     assert main["Content-Type"] == "text/javascript"
 
 
+def test_import_graph_routes_resolve(logged_in_client):
+    # R15 final net: every relative ``import`` specifier across the SERVED chart
+    # modules resolves to a 200 JS route. The allowlist-iteration tests above only
+    # prove the listed names are served; they stay green if a module gains a new
+    # ``./x.js`` import whose route was never added — that import would 404 and
+    # blank the chart. Deriving the expected routes from the real import graph
+    # closes that gap (missing route -> import 404 -> blank chart).
+    import re
+
+    from market import views
+
+    served = [("", name) for name in views.MODULE_ALLOWLIST]
+    served += [("controllers/", name) for name in views.CONTROLLER_ALLOWLIST]
+    specifier = re.compile(r"""from\s+["']([^"']+)["']""")
+
+    resolved: set[str] = set()
+    for subdir, name in served:
+        body = logged_in_client.get(f"/market/{subdir}{name}.js").content.decode()
+        for target in specifier.findall(body):
+            if not target.startswith("."):
+                continue  # only relative, same-origin ESM imports
+            # Normalise ``../chart-core.js`` (from controllers/) and ``./x.js``.
+            parts = (subdir + target).split("/")
+            stack: list[str] = []
+            for part in parts:
+                if part == "..":
+                    stack.pop()
+                elif part not in (".", ""):
+                    stack.append(part)
+            resolved.add("/".join(stack))
+
+    assert resolved, "no relative imports parsed — regex or layout changed"
+    for path in sorted(resolved):
+        response = logged_in_client.get(f"/market/{path}")
+        assert response.status_code == 200, path
+        assert response["Content-Type"] == "text/javascript", path
+
+
 def test_market_page_has_no_inline_script_or_handler(logged_in_client):
     # R11: no inline script and no inline event handler (CSP-safe).
     import re
