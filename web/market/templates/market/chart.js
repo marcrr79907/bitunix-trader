@@ -18,6 +18,9 @@
 import * as Core from "./chart-core.js";
 import * as Draw from "./drawing-core.js";
 import * as Smc from "./smc-overlay-core.js";
+import { createStore } from "./chart-store.js";
+import { createBus } from "./chart-bus.js";
+import { createHost } from "./chart-host.js";
 
 // Sanctioned test seam (R18): the E2E reads window.SmcOverlayCore.setupMarkers.
 window.SmcOverlayCore = Smc;
@@ -46,54 +49,8 @@ window.SmcOverlayCore = Smc;
     "1w": "market_kline_1week", "1M": "market_kline_1month",
   };
 
-  // Static pane registry: token -> placement + series factory. Presentation
-  // metadata only; the values come from the server payload. Tokens are the
-  // server's param-driven vocabulary: ``sma``/``ema`` carry editable ``_len``
-  // (their defaults are 20, so the old ``sma20``/``ema20`` render identically).
-  var REGISTRY = {
-    sma: { place: "overlay", series: [{ key: "sma", type: "line", color: "#2962ff" }] },
-    ema: { place: "overlay", series: [{ key: "ema", type: "line", color: "#ff6d00" }] },
-    bollinger: {
-      place: "overlay",
-      series: [
-        { key: "bollinger_upper", type: "line", color: "#7e57c2" },
-        { key: "bollinger_middle", type: "line", color: "#7e57c2" },
-        { key: "bollinger_lower", type: "line", color: "#7e57c2" },
-      ],
-    },
-    vwap: { place: "overlay", series: [{ key: "vwap", type: "line", color: "#26a69a" }] },
-    rsi: {
-      place: "pane",
-      pane: "rsi",
-      series: [{ key: "rsi", type: "line", color: "#ab47bc" }],
-    },
-    macd: {
-      place: "pane",
-      pane: "macd",
-      series: [
-        { key: "macd", type: "line", color: "#2962ff" },
-        { key: "signal", type: "line", color: "#ff6d00" },
-        { key: "histogram", type: "histogram", color: "#26a69a" },
-      ],
-    },
-    stochastic: {
-      place: "pane",
-      pane: "stochastic",
-      series: [
-        { key: "k", type: "line", color: "#2962ff" },
-        { key: "d", type: "line", color: "#ff6d00" },
-      ],
-    },
-    atr: { place: "pane", pane: "atr", series: [{ key: "atr", type: "line", color: "#ff6d00" }] },
-    volume: {
-      place: "pane",
-      pane: "volume",
-      series: [{ key: "volume", type: "histogram", color: "#26a69a" }],
-    },
-  };
-
-  // Fixed pane order -> contiguous indices 1..n (index 0 = price scale).
-  var PANE_ORDER = ["rsi", "macd", "stochastic", "atr", "volume"];
+  // Static pane registry + pane order now live in chart-host.js (single
+  // consumer boundary: chart build). The adapter no longer owns them.
   var DEFAULT_INDICATORS = ["sma", "ema", "rsi"];
 
   var toggles = Array.prototype.slice.call(
@@ -159,19 +116,28 @@ window.SmcOverlayCore = Smc;
     });
   };
 
-  var state = {
+  // Observable UI/config state (chart-store.js). The adapter keeps the SAME
+  // object reference in ``state`` via get(), so every existing ``state.x``
+  // read/write is unchanged. Candle data never enters the store (#68) — it
+  // lives in the host.
+  var store = createStore({
     symbol: SYMBOLS[0],
     interval: "1m",
     indicators: readIndicators(),
     params: readParams(),
     smc: readSmc(), // session-only SMC family toggles (R7)
     tool: null, // active drawing tool ("hline"|"trendline"|"fib"|"rect"|"text")
-  };
+  });
+  var state = store.get();
 
+  // Event bus (chart-bus.js): commands travel here so main has no cycles.
+  var bus = createBus();
+  // Host owns LightweightCharts construction + the candle data (#68).
+  var host = createHost();
   var el = document.getElementById("chart");
   var chart = null;
   var candleSeries = null;
-  // Active series descriptors: {token, key, place, pane, series}.
+  // Active series descriptors: {token, key, place, pane, series} (from host).
   var activeSeries = [];
   // In-memory series arrays, keyed by dataKey(place,pane,key).
   var seriesData = {};
@@ -197,83 +163,26 @@ window.SmcOverlayCore = Smc;
   var closeTimer = null;
   var lastBucket = 0;
 
-  var candles = [];
   var EDGE = 5;
   var loadingOlder = false;
   var hasMore = true;
 
-  var dataKey = function (place, pane, key) {
-    return place === "overlay" ? "o:" + key : "p:" + pane + ":" + key;
-  };
-
-  // Payload -> flat series array for a descriptor (gaps already omitted server-side).
-  var seriesFromPayload = function (a, payload) {
-    if (a.place === "overlay") {
-      return (payload.overlays && payload.overlays[a.key]) || [];
-    }
-    var pane = payload.panes && payload.panes[a.pane];
-    return (pane && pane.series && pane.series[a.key]) || [];
-  };
-
-  // RSI text (kept): read the pane's RSI last value, else the legacy overlay.
-  var rsiValues = function (payload) {
-    if (payload.panes && payload.panes.rsi) return payload.panes.rsi.rsi;
-    if (payload.overlays) return payload.overlays.rsi14 || payload.overlays.rsi;
-    return null;
-  };
-
-  var setRsi = function (values) {
-    var last = values && values.length ? values[values.length - 1].value : null;
-    document.getElementById("rsi").textContent =
-      last === null || last === undefined ? "–" : last.toFixed(2);
-  };
+  // Payload <-> series helpers + the candle-data store live in chart-host.js
+  // (#68 single-write-path). Aliased here so the render code stays unchanged.
+  var dataKey = host.dataKey;
+  var seriesFromPayload = host.seriesFromPayload;
+  var rsiValues = host.rsiValues;
+  var setRsi = host.setRsi;
 
   // --- chart build / rebuild (config changes) ---------------------------------
 
   var buildChart = function () {
-    if (chart) chart.remove();
-    chart = LightweightCharts.createChart(el, {
-      height: 480,
-      timeScale: { timeVisible: true },
-    });
-    candleSeries = chart.addSeries(LightweightCharts.CandlestickSeries);
-    activeSeries = [];
-
-    var enabled = state.indicators;
-    var isOn = function (token) { return enabled.indexOf(token) !== -1; };
-    var addSeries = function (token, paneIndex) {
-      REGISTRY[token].series.forEach(function (s) {
-        var Ctor =
-          s.type === "histogram"
-            ? LightweightCharts.HistogramSeries
-            : LightweightCharts.LineSeries;
-        var series = chart.addSeries(Ctor, { color: s.color }, paneIndex);
-        activeSeries.push({
-          token: token,
-          key: s.key,
-          place: REGISTRY[token].place,
-          pane: REGISTRY[token].pane,
-          series: series,
-        });
-      });
-    };
-
-    Object.keys(REGISTRY).forEach(function (token) {
-      if (REGISTRY[token].place === "overlay" && isOn(token)) addSeries(token, 0);
-    });
-    PANE_ORDER.filter(isOn).forEach(function (token, i) {
-      addSeries(token, i + 1);
-    });
-
-    // Pane test seam: {paneName: {seriesKey: series}}.
-    var panes = {};
-    activeSeries.forEach(function (a) {
-      if (a.place !== "pane") return;
-      (panes[a.pane] = panes[a.pane] || {})[a.key] = a.series;
-    });
-    window.marketChart.chart = chart;
-    window.marketChart.candleSeries = candleSeries;
-    window.marketChart.panes = panes;
+    // chart-host.js is the ONLY LightweightCharts construction surface; it
+    // writes the {chart,candleSeries,panes} seam in place.
+    var built = host.build(state);
+    chart = built.chart;
+    candleSeries = built.candleSeries;
+    activeSeries = built.activeSeries;
 
     // Drawings live on the primitive layer (own canvas), so a rebuild must
     // re-attach them — no series setData/update involved (#68 preserved).
@@ -281,11 +190,11 @@ window.SmcOverlayCore = Smc;
     // SMC overlay lives on the same primitive layer; re-attach after a rebuild
     // (the previous chart's primitives are gone with chart.remove()).
     attachSmcLayer();
-    chart.subscribeClick(onChartClick);
-
-    chart.timeScale().subscribeVisibleLogicalRangeChange(function (range) {
+    host.subscribeClick(onChartClick);
+    host.subscribeVisibleRange(function (range) {
       if (range && range.from < EDGE) loadOlder();
     });
+    bus.emit("chart:built", { chart: chart, candleSeries: candleSeries, panes: host.getPanes() });
   };
 
   var backoff = function () {
@@ -311,16 +220,18 @@ window.SmcOverlayCore = Smc;
 
   var applyHistory = function (payload) {
     // setData is allowed HERE only: full history reset for a config change.
-    candles = payload.candles.slice();
-    candleSeries.setData(candles);
+    // The host owns the candle array + the single write path (#68).
+    host.setCandles(payload.candles.slice());
     activeSeries.forEach(function (a) {
       var arr = seriesFromPayload(a, payload).slice();
       seriesData[dataKey(a.place, a.pane, a.key)] = arr;
       a.series.setData(arr);
     });
     setRsi(rsiValues(payload));
+    var candles = host.getCandles();
     lastBucket = candles.length ? candles[candles.length - 1].time : 0;
     hasMore = true;
+    bus.emit("history:loaded", { candles: candles });
   };
 
   var fetchHistory = function () {
@@ -337,8 +248,9 @@ window.SmcOverlayCore = Smc;
   // --- pagination (setData with merge; viewport preserved) ---------------------
 
   var loadOlder = function () {
-    if (loadingOlder || !hasMore || !candles.length) return;
+    if (loadingOlder || !hasMore || !host.getCandles().length) return;
     loadingOlder = true;
+    var candles = host.getCandles();
     var before = candles[0].time;
     fetch(klineUrl("limit=200&before=" + before))
       .then(function (r) {
@@ -348,16 +260,17 @@ window.SmcOverlayCore = Smc;
       .then(function (p) {
         if (!p.candles.length) { hasMore = false; return; }
         var range = chart.timeScale().getVisibleLogicalRange();
-        var beforeLen = candles.length;
-        candles = Core.mergeCandles(p.candles, candles);
+        var current = host.getCandles();
+        var beforeLen = current.length;
+        var merged = Core.mergeCandles(p.candles, current);
         activeSeries.forEach(function (a) {
           var k = dataKey(a.place, a.pane, a.key);
           seriesData[k] = Core.mergeCandles(seriesFromPayload(a, p), seriesData[k] || []);
           a.series.setData(seriesData[k]);
         });
-        var added = candles.length - beforeLen;
+        var added = merged.length - beforeLen;
         if (!added) { hasMore = false; return; }
-        candleSeries.setData(candles);
+        host.setCandles(merged); // candle setData last (original order)
         if (range) {
           chart.timeScale().setVisibleLogicalRange({
             from: range.from + added,
@@ -378,11 +291,11 @@ window.SmcOverlayCore = Smc;
       time: t,
       open: +m.data.o, high: +m.data.h, low: +m.data.l, close: +m.data.c,
     };
-    Core.upsertCandle(candles, bar);
-    candleSeries.update(bar); // the ONLY live candle write
+    host.updateCandle(bar); // the ONLY live candle write (update, never setData)
 
     if (t > lastBucket) {
       lastBucket = t; // monotonic: a closed candle advanced the bucket
+      bus.emit("candle:closed", { time: t });
       scheduleCloseRefresh();
     }
   };
@@ -472,6 +385,7 @@ window.SmcOverlayCore = Smc;
         state.params = readParams(); // panel already synced below
         applyLayout(body.indicators);
         state.params = readParams();
+        bus.emit("layout:loaded", { indicators: body.indicators, params: state.params });
       })
       .catch(function () {
         // Fall back to the DOM defaults already reflected in state.
@@ -676,6 +590,7 @@ window.SmcOverlayCore = Smc;
     }
     window.marketChart.drawings = currentDrawings.slice();
     renderDrawingList();
+    bus.emit("drawings:changed", { rows: currentDrawings.slice() });
   };
 
   var loadDrawings = function (symbol, interval) {
@@ -1023,6 +938,7 @@ window.SmcOverlayCore = Smc;
     );
     window.marketChart.smc = smcBody;
     window.marketChart.smcCounts = Smc.counts(smcBody, state.smc);
+    bus.emit("smc:loaded", { payload: smcBody });
   };
 
   // Fetch the SMC payload for the ACTIVE key; a failed fetch is non-fatal.
@@ -1049,6 +965,7 @@ window.SmcOverlayCore = Smc;
   var refreshSmc = function () {
     state.smc = readSmc();
     window.marketChart.smcToggles = state.smc;
+    bus.emit("smc:toggles", { families: state.smc });
     if (smcCtx.requestUpdate) smcCtx.requestUpdate();
     if (smcMarkers) smcMarkers.setMarkers(Smc.setupMarkers(smcBody, state.smc));
     window.marketChart.smcCounts = smcBody ? Smc.counts(smcBody, state.smc) : null;
@@ -1105,16 +1022,26 @@ window.SmcOverlayCore = Smc;
 
   document.querySelectorAll(".pair").forEach(function (btn) {
     btn.addEventListener("click", function () {
-      switchTo(btn.dataset.symbol, state.interval);
+      bus.emit("config:changed", { symbol: btn.dataset.symbol, interval: state.interval });
     });
   });
   document.getElementById("interval").addEventListener("change", function (e) {
-    switchTo(state.symbol, e.target.value);
+    bus.emit("config:changed", { symbol: state.symbol, interval: e.target.value });
   });
 
+  // Commands travel the bus (chart-bus.js) so main owns orchestration: the
+  // config:changed command switches, indicator:changed rebuilds (config change
+  // -> setData path; the live WS stream keeps update() only).
+  bus.on("config:changed", function (p) { switchTo(p.symbol, p.interval); });
+  bus.on("indicator:changed", rebuild);
+
   // Toggle = config change -> rebuild the chart and refetch via the history path.
-  toggles.forEach(function (t) { t.addEventListener("change", rebuild); });
-  paramInputs.forEach(function (el) { el.addEventListener("change", rebuild); });
+  toggles.forEach(function (t) {
+    t.addEventListener("change", function () { bus.emit("indicator:changed"); });
+  });
+  paramInputs.forEach(function (el) {
+    el.addEventListener("change", function () { bus.emit("indicator:changed"); });
+  });
   // SMC family toggle -> re-render from the fetched payload; NO refetch (R7).
   smcToggles.forEach(function (t) { t.addEventListener("change", refreshSmc); });
 
@@ -1137,6 +1064,7 @@ window.SmcOverlayCore = Smc;
       if (mine !== gen) return;
       fetchHistory();
       window.marketChart.ready = true;
+      bus.emit("ready");
     });
   };
 
