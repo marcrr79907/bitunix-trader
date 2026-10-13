@@ -188,6 +188,11 @@ export function createHost() {
   function subscribeClick(fn) {
     if (chart) chart.subscribeClick(fn);
   }
+  // Crosshair is host-owned (R14); mirror subscribeClick's null guard. Because
+  // build() recreates the chart, consumers MUST re-subscribe after chart:built.
+  function subscribeCrosshairMove(fn) {
+    if (chart) chart.subscribeCrosshairMove(fn);
+  }
   function subscribeVisibleRange(fn) {
     if (chart) chart.timeScale().subscribeVisibleLogicalRangeChange(fn);
   }
@@ -210,6 +215,7 @@ export function createHost() {
     rsiValues,
     setRsi,
     subscribeClick,
+    subscribeCrosshairMove,
     subscribeVisibleRange,
   };
 }
