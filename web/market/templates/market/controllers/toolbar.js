@@ -1,5 +1,5 @@
 // controllers/toolbar.js — pair buttons + interval select + interval chips +
-// sidebar collapse toggle.
+// sidebar collapse toggle + F8 scale/type selects.
 //
 // DI factory (R14): ``createToolbar({store, bus, config})``. LEAF module — never
 // imports main. A pair/interval change is a command on the bus
@@ -9,6 +9,13 @@
 // The chips are DERIVED from the retained ``<select id="interval">`` options
 // (single source: no 4th interval copy) and the select is clipped, never
 // display:none, so the E2E ``select_option`` calls stay actionable.
+//
+// F8: the scale/type ``<select>``s are populated from the PURE core vocab
+// (SCALE_MODES/CHART_TYPES — single source, no option copy in HTML). Scale
+// emits the light ``scale:changed``; type reuses ``indicator:changed`` so main
+// owns the rebuild (R26).
+import { SCALE_MODES, CHART_TYPES } from "../chart-types-core.js";
+
 export function createToolbar({ store, bus }) {
   const select = document.getElementById("interval");
   const state = store.get();
@@ -68,6 +75,39 @@ export function createToolbar({ store, bus }) {
     bus.emit("config:changed", { symbol: store.get().symbol, interval: e.target.value });
   });
 
+  // --- scale / chart-type selects (F8) ---------------------------------------
+
+  // Populate an empty <select> from a core vocabulary (single source).
+  function fillOptions(el, values) {
+    values.forEach(function (value) {
+      const opt = document.createElement("option");
+      opt.value = value;
+      opt.textContent = value;
+      el.appendChild(opt);
+    });
+  }
+
+  const scaleSelect = document.getElementById("scale-mode");
+  const typeSelect = document.getElementById("chart-type");
+  if (scaleSelect) {
+    fillOptions(scaleSelect, SCALE_MODES);
+    scaleSelect.value = store.get().scaleMode || "linear";
+    scaleSelect.addEventListener("change", function (e) {
+      store.set({ scaleMode: e.target.value });
+      // Light event: host option only — no rebuild, no refetch (#68).
+      bus.emit("scale:changed", { mode: e.target.value });
+    });
+  }
+  if (typeSelect) {
+    fillOptions(typeSelect, CHART_TYPES);
+    typeSelect.value = store.get().chartType || "candles";
+    typeSelect.addEventListener("change", function (e) {
+      store.set({ chartType: e.target.value });
+      // Reuse the existing rebuild command (main owns rebuild + refetch).
+      bus.emit("indicator:changed");
+    });
+  }
+
   // --- sidebar collapse toggle (≤820px) ---------------------------------------
   const toggle = document.querySelector(".panel-toggle");
   const layout = document.querySelector(".market-layout");
@@ -84,5 +124,13 @@ export function createToolbar({ store, bus }) {
     setPressed(interval);
   }
 
-  return { setInterval };
+  // Reflect the restored scale/type on boot (Slice 3 persists; defaults now).
+  function setScaleMode(mode) {
+    if (scaleSelect && mode) scaleSelect.value = mode;
+  }
+  function setChartType(type) {
+    if (typeSelect && type) typeSelect.value = type;
+  }
+
+  return { setInterval, setScaleMode, setChartType };
 }
