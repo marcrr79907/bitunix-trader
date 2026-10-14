@@ -5,7 +5,33 @@
 // change emits ``indicator:changed`` (main rebuilds); a loaded layout emits
 // ``layout:loaded``. Owns the indicator checkbox/param DOM and the layout
 // GET/PUT (debounced save, R5).
+import { defaultsFor, normalize } from "../indicator-settings-core.js";
+import { REGISTRY } from "../chart-host.js";
+
 export const DEFAULT_INDICATORS = ["sma", "ema", "rsi"];
+
+// Tokens with an editable period and the server param key it maps to. Only
+// these show a Period control in the settings dialog (F2.6); every other token
+// keeps its style-only dialog.
+export const PERIOD_PARAMS = Object.freeze({ sma: "sma_len", ema: "ema_len" });
+
+// Dialog controls -> {style, period}. Pure: string inputs from the form are
+// coerced, then normalized (clamped/dropped/defaulted) into the frozen style
+// shape. ``period`` is the integer length for a PERIOD_PARAMS token (>= 1) or
+// null. Never throws; malformed input degrades to ``defaults``.
+export function settingsFromFields(token, fields, defaults) {
+  const f = fields || {};
+  const raw = {
+    color: f.color,
+    lineWidth: parseInt(f.lineWidth, 10),
+    precision: parseInt(f.precision, 10),
+  };
+  const style = normalize(token, raw, defaults);
+  const param = PERIOD_PARAMS[token];
+  const n = parseInt(f.period, 10);
+  const period = param && !isNaN(n) && n >= 1 ? n : null;
+  return { style: style, period: period };
+}
 
 // DOM -> {token: {param: number}} for the checked, param-capable overlays.
 export function readParams() {
@@ -54,6 +80,16 @@ export function createIndicators({ store, bus, config }) {
   const paramInputs = Array.prototype.slice.call(
     document.querySelectorAll(".indicator-param"),
   );
+  const gearButtons = Array.prototype.slice.call(
+    document.querySelectorAll(".indicator-settings"),
+  );
+  const dialog = document.getElementById("indicator-settings-dialog");
+  const colorInput = document.getElementById("is-color");
+  const widthInput = document.getElementById("is-width");
+  const periodLabel = dialog && dialog.querySelector(".is-period-label");
+  const periodInput = document.getElementById("is-period");
+  const precisionInput = document.getElementById("is-precision");
+  let dialogToken = null; // token the open dialog is editing
 
   // Sync the panel DOM from a layout so a saved set wins over the markup.
   function applyLayout(indicators) {
@@ -132,6 +168,75 @@ export function createIndicators({ store, bus, config }) {
     return { indicators: readIndicators(), params: readParams() };
   }
 
+  // Current style for ``token``: the stored style normalized over the registry
+  // default (single color source). Never throws for a partial/absent style.
+  function styleFor(token) {
+    const stored = state.styles && state.styles[token];
+    return normalize(token, stored, defaultsFor(REGISTRY, token));
+  }
+
+  // The visible param input for ``token`` (e.g. the sma_len number), if any.
+  function paramInputFor(token) {
+    const param = PERIOD_PARAMS[token];
+    if (!param) return null;
+    return (
+      paramInputs.find(function (el) {
+        return el.dataset.token === token && el.dataset.param === param;
+      }) || null
+    );
+  }
+
+  // Populate the shared dialog for ``token`` from styles[token] + params[token]
+  // (F2.6). The Period control is hidden for tokens without an editable param.
+  function openDialog(token) {
+    if (!dialog) return;
+    dialogToken = token;
+    const style = styleFor(token);
+    colorInput.value = style.color;
+    widthInput.value = style.lineWidth;
+    precisionInput.value = style.precision;
+    const param = PERIOD_PARAMS[token];
+    const paramEl = paramInputFor(token);
+    if (param && paramEl) {
+      periodLabel.hidden = false;
+      periodInput.hidden = false;
+      periodInput.value = paramEl.value;
+    } else {
+      periodLabel.hidden = true;
+      periodInput.hidden = true;
+      periodInput.value = "";
+    }
+    dialog.showModal();
+  }
+
+  // Apply on confirm only (F2.6): write styles[token] + period into params, then
+  // one ``indicator:changed`` (main rebuilds once, #68) + a debounced save.
+  function applyDialog() {
+    const token = dialogToken;
+    if (!token) return;
+    const out = settingsFromFields(
+      token,
+      {
+        color: colorInput.value,
+        lineWidth: widthInput.value,
+        precision: precisionInput.value,
+        period: PERIOD_PARAMS[token] ? periodInput.value : "",
+      },
+      defaultsFor(REGISTRY, token),
+    );
+    const styles = {};
+    Object.keys(state.styles || {}).forEach(function (k) { styles[k] = state.styles[k]; });
+    styles[token] = out.style;
+    store.set({ styles: styles });
+    // Period persists in params (unchanged channel, D3); readParams() reads the
+    // DOM input, so writing the input value is the write.
+    if (out.period !== null) {
+      const paramEl = paramInputFor(token);
+      if (paramEl) paramEl.value = out.period;
+    }
+    bus.emit("indicator:changed");
+  }
+
   // Toggle = config change -> main rebuilds (setData path).
   toggles.forEach(function (t) {
     t.addEventListener("change", function () { bus.emit("indicator:changed"); });
@@ -139,6 +244,18 @@ export function createIndicators({ store, bus, config }) {
   paramInputs.forEach(function (el) {
     el.addEventListener("change", function () { bus.emit("indicator:changed"); });
   });
+  gearButtons.forEach(function (btn) {
+    btn.addEventListener("click", function () { openDialog(btn.dataset.token); });
+  });
+  if (dialog) {
+    // Native <dialog> closes on Esc / cancel with an empty returnValue: only
+    // "ok" applies (drawings precedent). Focus returns to the opener natively.
+    dialog.addEventListener("close", function () {
+      if (dialog.returnValue === "ok") applyDialog();
+      dialogToken = null;
+      dialog.returnValue = "";
+    });
+  }
 
   return { loadLayout, saveLayout, readState };
 }
