@@ -8,6 +8,7 @@
 // Static presentation registry (token -> placement + series factory). Values
 // come from the server payload; the host only maps them onto chart series.
 import * as Core from "./chart-core.js";
+import * as Types from "./chart-types-core.js";
 
 export const REGISTRY = {
   sma: { place: "overlay", series: [{ key: "sma", type: "line", color: "#2962ff" }] },
@@ -54,12 +55,38 @@ export const REGISTRY = {
 // Fixed pane order -> contiguous indices 1..n (index 0 = price scale).
 export const PANE_ORDER = ["rsi", "macd", "stochastic", "atr", "volume"];
 
+// Candle-series Ctor per chart type (F8). HA has no v5 series (D2) — it wraps
+// the transform over CandlestickSeries. Unknown type degrades to candles.
+const CANDLE_CTORS = {
+  candles: "CandlestickSeries",
+  "heikin-ashi": "CandlestickSeries",
+  line: "LineSeries",
+  area: "AreaSeries",
+};
+
+// scaleMode -> LightweightCharts.PriceScaleMode member. The SYMBOL is read at
+// call time (never a magic number); unknown -> Normal (CS2 fallback).
+const SCALE_MODES = {
+  linear: "Normal",
+  log: "Logarithmic",
+  percentage: "Percentage",
+};
+
 export function createHost() {
   let chart = null;
   let candleSeries = null;
   let activeSeries = [];
   let panes = {};
   let candles = [];
+  // F8: the live chart type + scale mode (applied in build; scale is an
+  // applyOptions option, never a data write). HA live state: the HA of the
+  // last WRITTEN bar and the state after the second-to-last bar (the chain a
+  // forming same-bucket replace needs). Both reset on setCandles.
+  let chartType = "candles";
+  let scaleMode = "linear";
+  let lastHa = null;
+  let prevHa = null;
+  let lastBarTime = 0;
   // Overlay/pane series arrays keyed by dataKey() — the indicator series data
   // (NOT candles). Shared by the history (setData) and stream (last-point
   // update) paths so the #68 single-write-path keeps one bookkeeping array.
@@ -143,7 +170,13 @@ export function createHost() {
       autoSize: true,
       timeScale: { timeVisible: true },
     });
-    candleSeries = chart.addSeries(LightweightCharts.CandlestickSeries);
+    chartType = Types.isValidType(state.chartType) ? state.chartType : "candles";
+    scaleMode = Types.isValidScale(state.scaleMode) ? state.scaleMode : "linear";
+    const Ctor = LightweightCharts[CANDLE_CTORS[chartType]];
+    candleSeries = chart.addSeries(Ctor);
+    // F8: re-apply the scale after createChart (a fresh chart has the default
+    // scale); an applyOptions option, never a data write (#68).
+    applyScale();
     activeSeries = [];
 
     const enabled = state.indicators;
@@ -196,15 +229,64 @@ export function createHost() {
   function getLastBucket() { return lastBucket; }
   function setLastBucket(t) { lastBucket = t; }
 
+  // --- scale mode (F8) --------------------------------------------------------
+
+  // Map the UI vocab to the v5 PriceScaleMode SYMBOL and apply it to the right
+  // price scale. Option-only: never setData/update (#68). Unknown -> Normal.
+  function applyScale() {
+    if (!chart) return;
+    const member = SCALE_MODES[scaleMode] || "Normal";
+    chart.priceScale("right").applyOptions({
+      mode: LightweightCharts.PriceScaleMode[member],
+    });
+  }
+
+  // Public scale setter (option-only; no rebuild, no refetch). Invalid input
+  // degrades to linear without throwing (CS2).
+  function setScaleMode(mode, _autoScale) {
+    scaleMode = Types.isValidScale(mode) ? mode : "linear";
+    applyScale();
+  }
+
   // Candle data write path (#68). History/config -> setData; live -> update().
+  // HA (F8) transforms both paths; state resets on a fresh history page.
   function setCandles(arr) {
     candles = arr;
-    if (candleSeries) candleSeries.setData(candles);
+    prevHa = null;
+    lastHa = null;
+    lastBarTime = 0;
+    if (!candleSeries) return;
+    if (chartType === "heikin-ashi") {
+      const out = Types.heikinAshi(candles);
+      candleSeries.setData(out);
+      const n = out.length;
+      lastHa = n ? { haOpen: out[n - 1].open, haClose: out[n - 1].close } : null;
+      prevHa = n > 1 ? { haOpen: out[n - 2].open, haClose: out[n - 2].close } : null;
+      lastBarTime = n ? out[n - 1].time : 0;
+    } else {
+      candleSeries.setData(candles);
+    }
   }
 
   function updateCandle(bar) {
     Core.upsertCandle(candles, bar);
-    if (candleSeries) candleSeries.update(bar); // the ONLY live candle write
+    if (!candleSeries) return;
+    if (chartType === "heikin-ashi") {
+      // A same-bucket replace chains from the last CLOSED bar's HA (``prevHa``);
+      // a new bar chains from the current bar's HA (``lastHa``). ``prevHa`` MUST
+      // advance only when the previous bar CLOSES — otherwise repeated same-bucket
+      // ticks chain the forming bar onto an old version of ITSELF and drift.
+      // Either way: update() only (#68).
+      const sameBucket = bar.time === lastBarTime;
+      const base = sameBucket ? prevHa : lastHa;
+      const ha = Types.nextHeikinAshi(base, bar);
+      candleSeries.update(ha);
+      if (!sameBucket) prevHa = lastHa;
+      lastHa = { haOpen: ha.open, haClose: ha.close };
+      lastBarTime = bar.time;
+    } else {
+      candleSeries.update(bar); // the ONLY live candle write
+    }
   }
 
   function subscribeClick(fn) {
@@ -232,6 +314,7 @@ export function createHost() {
     setLastBucket,
     setCandles,
     updateCandle,
+    setScaleMode,
     dataKey,
     seriesFromPayload,
     rsiValues,

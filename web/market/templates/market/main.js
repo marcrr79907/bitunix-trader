@@ -36,6 +36,8 @@ export function boot(config) {
     params: readParams(),
     styles: {}, // per-token presentation style (F2.4; loaded from layout, never in params)
     smc: readSmc(), // session-only SMC family toggles (R7)
+    scaleMode: "linear", // F8 price-scale option (persistence is Slice 3)
+    chartType: "candles", // F8 candle-series Ctor (persistence is Slice 3)
     tool: null, // active drawing tool ("hline"|"trendline"|"fib"|"rect"|"text")
   });
   const state = store.get();
@@ -89,6 +91,7 @@ export function boot(config) {
 
   // A config change (toggle/param) is legitimate to rebuild (setData path); the
   // live WS stream keeps using update() only.
+  let savedChartType = state.chartType;
   function rebuild() {
     const r = indicators.readState();
     state.indicators = r.indicators;
@@ -96,6 +99,12 @@ export function boot(config) {
     buildChart();
     history.fetchHistory();
     indicators.saveLayout();
+    // A chart-type change reuses this rebuild command (CS5); persist the type
+    // only when it actually changed (CS6 "only the changed field").
+    if (state.chartType !== savedChartType) {
+      savedChartType = state.chartType;
+      savePreference({ chart_type: state.chartType });
+    }
   }
 
   function switchTo(symbol, interval) {
@@ -130,41 +139,63 @@ export function boot(config) {
   bus.on("config:changed", function (p) {
     // Persist a genuine interval change only (mirrors saveLayout); a pair
     // switch keeps the same interval and must not PUT.
-    if (p.interval !== state.interval) savePreference(p.interval);
+    if (p.interval !== state.interval) savePreference({ interval: p.interval });
     switchTo(p.symbol, p.interval);
   });
   bus.on("indicator:changed", rebuild);
+  // F8: a scale change is a host price-scale OPTION only — no rebuild, no
+  // fetchHistory (#68 held). The store already holds the new mode. Persist it
+  // (debounced, changed field only).
+  bus.on("scale:changed", function () {
+    host.setScaleMode(state.scaleMode);
+    savePreference({ scale_mode: state.scaleMode });
+  });
 
   function csrfToken() {
     const meta = document.querySelector('meta[name="csrf-token"]');
     return meta ? meta.content : "";
   }
 
-  // Debounced preference PUT on interval change (R10), mirroring saveLayout.
-  // A failed save is silent — the in-session chart is unaffected.
+  // Debounced preference PUT (R10/CS6), mirroring saveLayout. Each call merges
+  // only its patch into the pending body, so two quick changes coalesce into one
+  // PUT that still carries just the changed fields. A failed save is silent —
+  // the in-session chart is unaffected.
   let savePrefTimer = null;
-  function savePreference(interval) {
+  let savePrefPending = null;
+  function savePreference(patch) {
+    savePrefPending = Object.assign(savePrefPending || {}, patch);
     if (savePrefTimer) clearTimeout(savePrefTimer);
     savePrefTimer = setTimeout(function () {
       savePrefTimer = null;
+      const body = savePrefPending;
+      savePrefPending = null;
       fetch(config.urls.preference, {
         method: "PUT",
         headers: { "Content-Type": "application/json", "X-CSRFToken": csrfToken() },
-        body: JSON.stringify({ interval: interval }),
+        body: JSON.stringify(body),
       }).catch(function () { /* non-fatal */ });
     }, config.saveDelay);
   }
 
-  // Fetch the saved interval before boot; any failure (or a miss) falls back to
-  // "1m" so the chart is never blank and boot is never blocked (R10).
+  // Fetch the saved preference before boot; any failure (or a miss) falls back
+  // to the defaults so the chart is never blank and boot is never blocked
+  // (R10/CS6).
   function loadPreference() {
     return fetch(config.urls.preference)
       .then(function (r) {
         if (!r.ok) throw new Error("preference " + r.status);
         return r.json();
       })
-      .then(function (body) { return (body && body.interval) || "1m"; })
-      .catch(function () { return "1m"; });
+      .then(function (body) {
+        return {
+          interval: (body && body.interval) || "1m",
+          scaleMode: (body && body.scale_mode) || "linear",
+          chartType: (body && body.chart_type) || "candles",
+        };
+      })
+      .catch(function () {
+        return { interval: "1m", scaleMode: "linear", chartType: "candles" };
+      });
   }
 
   // Async boot (R4/R7/R10): preference -> layout -> build -> connect ->
@@ -174,11 +205,18 @@ export function boot(config) {
   // drawings fetch is non-fatal. ``ready`` flips only after the drawings
   // resolve so tests can read the seam deterministically.
   function start() {
-    loadPreference().then(function (interval) {
+    loadPreference().then(function (pref) {
       if (gen !== 0) return; // a switch raced ahead of boot — it owns the chart
       const mine = ++gen;
-      state.interval = interval;
-      toolbar.setInterval(interval);
+      // Apply the restored scale/type BEFORE the first build (CS6): the host
+      // picks the series Ctor and price-scale mode from state.
+      state.scaleMode = pref.scaleMode;
+      state.chartType = pref.chartType;
+      savedChartType = pref.chartType;
+      state.interval = pref.interval;
+      toolbar.setInterval(pref.interval);
+      toolbar.setScaleMode(pref.scaleMode);
+      toolbar.setChartType(pref.chartType);
       return indicators.loadLayout(state.symbol, state.interval).then(function () {
         if (mine !== gen) return; // a switch raced ahead of boot
         buildChart();

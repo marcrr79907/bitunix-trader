@@ -70,6 +70,12 @@ code{font-family:var(--mono); background:var(--surface); padding:1px 5px; border
   min-height:36px; display:inline-flex; align-items:center}
 .interval-chip[aria-pressed="true"]{border-color:var(--accent); color:var(--accent)}
 
+/* F8 scale/type controls: label above a full-width native select (matches the
+   interval block rhythm instead of running label+select inline). */
+.control-label{display:block; margin:var(--sp-2) 0 var(--sp-1);
+  color:var(--muted); font-size:var(--fs-3)}
+.control-select{display:block; width:100%}
+
 /* collapsible sidebar toggle: visible only ≤820px */
 .panel-toggle{display:none}
 

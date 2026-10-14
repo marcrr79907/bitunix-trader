@@ -1883,17 +1883,32 @@ def test_preference_get_default_when_absent():
     response = USER.get(PREF_URL)
 
     assert response.status_code == 200
-    assert response.json() == {"interval": "1m", "exists": False}
+    assert response.json() == {
+        "interval": "1m",
+        "scale_mode": "linear",
+        "chart_type": "candles",
+        "exists": False,
+    }
     assert ChartPreference.objects.count() == 0
 
 
 def test_preference_put_then_get_round_trip():
     put = _put_pref(USER, {"interval": "1h"})
     assert put.status_code == 200
-    assert put.json() == {"interval": "1h", "exists": True}
+    assert put.json() == {
+        "interval": "1h",
+        "scale_mode": "linear",
+        "chart_type": "candles",
+        "exists": True,
+    }
 
     body = USER.get(PREF_URL).json()
-    assert body == {"interval": "1h", "exists": True}
+    assert body == {
+        "interval": "1h",
+        "scale_mode": "linear",
+        "chart_type": "candles",
+        "exists": True,
+    }
 
 
 def test_preference_put_upserts_one_row_for_the_user():
@@ -1915,6 +1930,37 @@ def test_preference_put_invalid_interval_is_400_and_writes_nothing():
     assert response.status_code == 400
     assert "error" in response.json()
     assert ChartPreference.objects.count() == 0
+
+
+def test_preference_put_empty_body_writes_nothing_and_returns_defaults():
+    from trading.models import ChartPreference
+
+    response = _put_pref(USER, {})
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "interval": "1m",
+        "scale_mode": "linear",
+        "chart_type": "candles",
+        "exists": False,
+    }
+    assert ChartPreference.objects.count() == 0
+
+
+def test_preference_put_empty_body_returns_saved_when_present():
+    from trading.models import ChartPreference
+
+    _put_pref(USER, {"interval": "2h", "scale_mode": "log", "chart_type": "area"})
+    response = _put_pref(USER, {})
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "interval": "2h",
+        "scale_mode": "log",
+        "chart_type": "area",
+        "exists": True,
+    }
+    assert ChartPreference.for_user(AUTH_USER).count() == 1
 
 
 def test_preference_put_invalid_json_is_400():
@@ -1952,7 +1998,12 @@ def test_preference_isolation_b_get_never_sees_a():
     )
     b_client.force_login(b)
 
-    assert b_client.get(PREF_URL).json() == {"interval": "1m", "exists": False}
+    assert b_client.get(PREF_URL).json() == {
+        "interval": "1m",
+        "scale_mode": "linear",
+        "chart_type": "candles",
+        "exists": False,
+    }
 
 
 def test_preference_isolation_b_put_does_not_touch_a_row():
@@ -1980,4 +2031,110 @@ def test_preference_get_is_not_scoped_to_interval_query_param():
     from trading.models import ChartPreference
 
     ChartPreference.objects.create(user=AUTH_USER, last_interval="12h")
-    assert USER.get(PREF_URL).json() == {"interval": "12h", "exists": True}
+    assert USER.get(PREF_URL).json() == {
+        "interval": "12h",
+        "scale_mode": "linear",
+        "chart_type": "candles",
+        "exists": True,
+    }
+
+
+# --- Slice 3: chart type + scale persistence (R8/R9/R12) ---------------------
+
+
+def test_preference_put_scale_then_get_round_trip():
+    put = _put_pref(USER, {"scale_mode": "log"})
+    assert put.status_code == 200
+    assert put.json() == {
+        "interval": "1m",
+        "scale_mode": "log",
+        "chart_type": "candles",
+        "exists": True,
+    }
+    assert USER.get(PREF_URL).json()["scale_mode"] == "log"
+
+
+def test_preference_put_chart_type_then_get_round_trip():
+    put = _put_pref(USER, {"chart_type": "heikin-ashi"})
+    assert put.status_code == 200
+    assert put.json() == {
+        "interval": "1m",
+        "scale_mode": "linear",
+        "chart_type": "heikin-ashi",
+        "exists": True,
+    }
+    assert USER.get(PREF_URL).json()["chart_type"] == "heikin-ashi"
+
+
+def test_preference_partial_put_updates_only_present_key():
+    from trading.models import ChartPreference
+
+    _put_pref(USER, {"interval": "1h", "scale_mode": "log", "chart_type": "area"})
+    response = _put_pref(USER, {"chart_type": "line"})
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "interval": "1h",
+        "scale_mode": "log",
+        "chart_type": "line",
+        "exists": True,
+    }
+    row = ChartPreference.for_user(AUTH_USER).get()
+    assert (row.last_interval, row.scale_mode, row.chart_type) == ("1h", "log", "line")
+
+
+def test_preference_put_invalid_scale_mode_is_400_and_writes_nothing():
+    from trading.models import ChartPreference
+
+    response = _put_pref(USER, {"scale_mode": "bogus"})
+
+    assert response.status_code == 400
+    assert "error" in response.json()
+    assert ChartPreference.objects.count() == 0
+
+
+def test_preference_put_invalid_chart_type_is_400_and_writes_nothing():
+    from trading.models import ChartPreference
+
+    response = _put_pref(USER, {"chart_type": "notreal"})
+
+    assert response.status_code == 400
+    assert "error" in response.json()
+    assert ChartPreference.objects.count() == 0
+
+
+def test_preference_invalid_field_on_partial_put_writes_no_partial_change():
+    from trading.models import ChartPreference
+
+    _put_pref(USER, {"interval": "1h", "scale_mode": "log", "chart_type": "area"})
+    response = _put_pref(USER, {"interval": "4h", "scale_mode": "bogus"})
+
+    assert response.status_code == 400
+    row = ChartPreference.for_user(AUTH_USER).get()
+    # No partial write: the valid interval in the same body is NOT applied.
+    assert (row.last_interval, row.scale_mode, row.chart_type) == ("1h", "log", "area")
+
+
+def test_preference_isolation_b_never_sees_a_scale_or_type():
+    from django.contrib.auth import get_user_model
+    from trading.models import ChartPreference
+
+    ChartPreference.objects.create(
+        user=AUTH_USER,
+        last_interval="4h",
+        scale_mode="percentage",
+        chart_type="heikin-ashi",
+    )
+
+    b_client = Client()
+    b = get_user_model().objects.create_user(
+        email="pref-b3@example.com", password="pw-123456"
+    )
+    b_client.force_login(b)
+
+    assert b_client.get(PREF_URL).json() == {
+        "interval": "1m",
+        "scale_mode": "linear",
+        "chart_type": "candles",
+        "exists": False,
+    }

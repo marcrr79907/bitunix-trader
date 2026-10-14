@@ -18,8 +18,10 @@ from django.views.decorators.http import require_http_methods
 from trading.models import AlertRule, ChartLayout, ChartPreference, Drawing
 
 from market.quotes import (
+    CHART_TYPES,
     DEFAULT_LAYOUT,
     INTERVALS,
+    SCALE_MODES,
     get_kline_payload,
     get_smc_payload,
     parse_drawing,
@@ -40,6 +42,7 @@ SIGNALS_LIMIT = 200
 MODULE_ALLOWLIST = frozenset(
     {
         "chart-core",
+        "chart-types-core",
         "drawing-core",
         "smc-overlay-core",
         "legend-core",
@@ -285,20 +288,36 @@ def _put_layout(request: HttpRequest) -> JsonResponse:
 @login_required
 @require_http_methods(["GET", "PUT"])
 def api_preference(request: HttpRequest) -> JsonResponse:
-    """Per-user, user-global last-interval preference (R8/R9): GET reads, PUT upserts.
+    """Per-user, user-global chart preference (R8/R9): GET reads, PUT upserts.
 
     All access routes through ``ChartPreference.for_user`` — no unscoped query in
-    this request path (R14.3). A GET miss returns ``{interval:"1m",
-    exists:false}`` (never 404). A PUT validates ``interval`` against
-    ``INTERVALS`` BEFORE writing; an invalid value → 400 with no row touched.
+    this request path (R14.3). A GET miss returns the defaults with
+    ``exists:false`` (never 404). A PUT accepts a PARTIAL body: each present field
+    is validated BEFORE any write; an invalid value → 400 with no row touched.
     """
     if request.method == "PUT":
         return _put_preference(request)
 
     saved = ChartPreference.for_user(request.user).first()
     if saved is None:
-        return JsonResponse({"interval": "1m", "exists": False})
-    return JsonResponse({"interval": saved.last_interval, "exists": True})
+        return JsonResponse(
+            {
+                "interval": "1m",
+                "scale_mode": "linear",
+                "chart_type": "candles",
+                "exists": False,
+            }
+        )
+    return JsonResponse(_preference_body(saved))
+
+
+def _preference_body(pref) -> dict:
+    return {
+        "interval": pref.last_interval,
+        "scale_mode": pref.scale_mode,
+        "chart_type": pref.chart_type,
+        "exists": True,
+    }
 
 
 def _put_preference(request: HttpRequest) -> JsonResponse:
@@ -309,16 +328,43 @@ def _put_preference(request: HttpRequest) -> JsonResponse:
     if not isinstance(body, dict):
         return JsonResponse({"error": "invalid body"}, status=400)
 
-    interval = body.get("interval", "")
-    if interval not in INTERVALS:
-        return JsonResponse({"error": "invalid interval"}, status=400)
+    # Validate every PRESENT field before any write (per-field 400, no partial
+    # write). Absent keys are left untouched (partial body).
+    defaults: dict[str, str] = {}
+    if "interval" in body:
+        if body["interval"] not in INTERVALS:
+            return JsonResponse({"error": "invalid interval"}, status=400)
+        defaults["last_interval"] = body["interval"]
+    if "scale_mode" in body:
+        if body["scale_mode"] not in SCALE_MODES:
+            return JsonResponse({"error": "invalid scale_mode"}, status=400)
+        defaults["scale_mode"] = body["scale_mode"]
+    if "chart_type" in body:
+        if body["chart_type"] not in CHART_TYPES:
+            return JsonResponse({"error": "invalid chart_type"}, status=400)
+        defaults["chart_type"] = body["chart_type"]
+
+    if not defaults:
+        # Nothing to apply: return the current preference (or the defaults)
+        # without creating a row.
+        saved = ChartPreference.for_user(request.user).first()
+        if saved is None:
+            return JsonResponse(
+                {
+                    "interval": "1m",
+                    "scale_mode": "linear",
+                    "chart_type": "candles",
+                    "exists": False,
+                }
+            )
+        return JsonResponse(_preference_body(saved))
 
     # for_user filters; it does NOT inject the owner (A2 gotcha) — pass user.
     pref, _ = ChartPreference.for_user(request.user).update_or_create(
         user=request.user,
-        defaults={"last_interval": interval},
+        defaults=defaults,
     )
-    return JsonResponse({"interval": pref.last_interval, "exists": True})
+    return JsonResponse(_preference_body(pref))
 
 
 @login_required
