@@ -2163,3 +2163,149 @@ def test_style_change_rebuilds_exactly_once(seeded_5m_candles, browser_page):
     assert page.evaluate("() => window.__builds") == 1
     # The seam is still frozen after the rebuild.
     assert page.evaluate("() => Object.keys(window.marketChart).length") == 8
+
+
+# --- F3 chart-shell regression guards (Slice 3 / #145) -----------------------
+#
+# Committed regressions for the three probe-only F3 shell scenarios. DOM/
+# computed-style only (no image diffs, no new seam key). Each test is
+# anti-vacuous: it FAILS if the guarded behavior is removed (RED-check noted in
+# the docstring).
+
+
+def _active_element(page):
+    """The focused element's tag + interval/class (for focus-move assertions)."""
+    return page.evaluate(
+        "() => { const el = document.activeElement;"
+        " return { tag: el.tagName, interval: el.dataset ? el.dataset.interval : null,"
+        "   cls: el.className }; }"
+    )
+
+
+@p
+def test_interval_chips_keyboard_navigation(seeded_5m_candles, browser_page):
+    # W1 (RED: drop the chip keydown listener -> ArrowRight no longer moves
+    # focus -> activeElement stays on 1m). R22: arrows move focus across the
+    # group; Enter/Space activate the focused chip and sync the store.
+    page, base_url = browser_page
+    page.goto(f"{base_url}/market/")
+    page.wait_for_function(
+        "() => window.marketChart && window.marketChart.candleSeries"
+        " && window.marketChart.candleSeries.data().length > 0",
+        timeout=10000,
+    )
+    first = page.locator('.interval-chip[data-interval="1m"]')
+    first.focus()
+    assert _active_element(page)["interval"] == "1m"
+
+    # ArrowRight moves DOM focus to the adjacent chip (5m), not activation.
+    page.keyboard.press("ArrowRight")
+    assert _active_element(page)["interval"] == "5m", _active_element(page)
+    assert first.get_attribute("aria-pressed") == "true", "focus move must not activate"
+
+    # Enter activates the focused chip: aria-pressed flips + select syncs.
+    page.keyboard.press("Enter")
+    page.wait_for_function(
+        "() => document.querySelector('.interval-chip[data-interval=\"5m\"]')"
+        ".getAttribute('aria-pressed') === 'true'",
+        timeout=10000,
+    )
+    assert (
+        page.locator('.interval-chip[data-interval="1m"]').get_attribute("aria-pressed")
+        == "false"
+    )
+    assert page.locator("#interval").input_value() == "5m"
+
+    # Space on another chip activates it too (native button activation).
+    page.locator('.interval-chip[data-interval="15m"]').focus()
+    page.keyboard.press("Space")
+    page.wait_for_function(
+        "() => document.querySelector('.interval-chip[data-interval=\"15m\"]')"
+        ".getAttribute('aria-pressed') === 'true'",
+        timeout=10000,
+    )
+    assert (
+        page.locator('.interval-chip[data-interval="5m"]').get_attribute("aria-pressed")
+        == "false"
+    )
+    assert page.locator("#interval").input_value() == "15m"
+    assert page.evaluate("() => Object.keys(window.marketChart).length") == 8
+
+
+@p
+def test_chart_autosize_follows_viewport_resize(seeded_5m_candles, browser_page):
+    # W2 (RED: remove ``autoSize: true`` -> the chart root keeps its boot size
+    # and no longer tracks #chart after the viewport resize). R20: the chart
+    # root tracks the container height via the ResizeObserver, and no re-boot.
+    page, base_url = browser_page
+    page.set_viewport_size({"width": 1280, "height": 900})
+    page.goto(f"{base_url}/market/")
+    page.wait_for_function(
+        "() => window.marketChart && window.marketChart.ready === true",
+        timeout=10000,
+    )
+    before = page.evaluate(
+        "() => document.getElementById('chart').getBoundingClientRect().height"
+    )
+
+    page.set_viewport_size({"width": 640, "height": 800})
+    # The container height changed at the narrow viewport (70dvh), so a tracked
+    # root must change too — proving it is not a boot-frozen snapshot.
+    page.wait_for_function(
+        "() => { const c = document.getElementById('chart');"
+        " const root = document.querySelector('#chart .tv-lightweight-charts');"
+        " if (!c || !root) return false;"
+        " return Math.abs(root.getBoundingClientRect().height"
+        " - c.getBoundingClientRect().height) <= 2; }",
+        timeout=10000,
+    )
+    boxes = page.evaluate(
+        "() => { const c = document.getElementById('chart');"
+        " const root = document.querySelector('#chart .tv-lightweight-charts');"
+        " return { chartH: c.getBoundingClientRect().height,"
+        "   rootH: root.getBoundingClientRect().height }; }"
+    )
+    assert abs(boxes["rootH"] - boxes["chartH"]) <= 2, boxes
+    assert abs(boxes["chartH"] - before) > 2, (before, boxes)
+    # A resize adapts in place: the chart never re-boots (ready stays true).
+    assert page.evaluate("() => window.marketChart.ready") is True
+    assert page.evaluate("() => Object.keys(window.marketChart).length") == 8
+
+
+@p
+def test_shell_desktop_panel_and_chip_a11y(seeded_5m_candles, browser_page):
+    # W3 (RED: drop ``:focus-visible`` outline rule -> the focused chip's
+    # outline-style is 'none'; drop group/toggle names -> role lookups fail).
+    # R23: at >820px the toggle is hidden, the panel/chart are visible, and the
+    # chips/toggle carry accessible names + aria state + a visible focus outline.
+    page, base_url = browser_page
+    page.set_viewport_size({"width": 1280, "height": 900})
+    page.goto(f"{base_url}/market/")
+    page.wait_for_function(
+        "() => window.marketChart && window.marketChart.ready === true",
+        timeout=10000,
+    )
+
+    # Desktop: the responsive toggle is display:none; panel + chart are visible.
+    assert page.locator(".panel-toggle").is_visible() is False
+    assert page.locator("#panel").is_visible() is True
+    assert page.locator("#chart").is_visible() is True
+
+    # Accessible names + aria state on the chip group, a chip, and the toggle.
+    # The toggle is display:none here, so its name is read from the DOM (role
+    # queries exclude hidden elements); the group/chip are visible.
+    assert page.get_by_role("group", name="Interval").count() == 1
+    toggle = page.locator(".panel-toggle")
+    assert toggle.evaluate("el => el.textContent.trim()") == "Panel"
+    assert toggle.get_attribute("aria-expanded") == "true"
+    assert toggle.get_attribute("aria-controls") == "panel"
+    chip = page.locator('.interval-chip[data-interval="1m"]')
+    assert chip.get_attribute("aria-pressed") == "true"
+    # Keyboard focus paints a visible outline (:focus-visible policy in theme.css).
+    chip.focus()
+    page.keyboard.press("ArrowRight")  # keyboard focus -> :focus-visible matches
+    outline = page.evaluate(
+        "() => { const el = document.activeElement;"
+        " return getComputedStyle(el).outlineStyle; }"
+    )
+    assert outline != "none", outline
