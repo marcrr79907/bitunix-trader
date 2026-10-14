@@ -26,10 +26,15 @@ Every user-owned model MUST inherit an abstract `UserOwnedModel` providing a `us
 
 Cross-user reads MUST be denied for ALL owned models. Using
 `for_user(other).get(pk=<this user's row pk>)` MUST raise `DoesNotExist`; a
-lookup that bypasses `for_user` MUST NOT be used by request-serving code.
+lookup that bypasses `for_user` MUST NOT be used by request-serving code. The
+denial MUST hold when the owned row carries per-indicator `style` data (F2.9),
+proven by a committed assertion in `tests/web/test_isolation.py`: A's
+`ChartLayout` with a styled indicator yields `for_user(B).count() == 0` and
+`for_user(B).get(...)` raises `DoesNotExist`.
 (Delivered with: `ExchangeCredential`, `Watchlist`, `PositionSnapshot`,
 `AccountSnapshot`, `Trade`, `ChartLayout`, `Drawing`, `AlertRule`,
 `ChartPreference`.)
+(Previously: the A≠B evidence covered the layout row but not an attached indicator `style`.)
 
 #### Scenario: A cannot read B's ExchangeCredential
 
@@ -66,6 +71,12 @@ lookup that bypasses `for_user` MUST NOT be used by request-serving code.
 - GIVEN a `ChartLayout` owned by A
 - WHEN `for_user(B).get(pk=row.pk)` is called
 - THEN it raises `DoesNotExist`
+
+#### Scenario: A cannot read B's styled ChartLayout
+
+- GIVEN a `ChartLayout` owned by A carrying an indicator `style`
+- WHEN `tests/web/test_isolation.py` evaluates `for_user(B)`
+- THEN `for_user(B).count() == 0` and `for_user(B).get(...)` raises `DoesNotExist` — B never sees the row carrying A's style
 
 #### Scenario: A cannot read B's Drawing
 

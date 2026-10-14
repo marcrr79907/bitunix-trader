@@ -568,9 +568,13 @@ and `main.js` (ALL orchestration + boot/switch). No module MUST exceed ~300 line
 Controllers MUST import host/store/bus directly but MUST NOT import `main`;
 commands MUST travel the bus, so `main.js` has no circular imports. Every imported
 module MUST be served same-origin under `/market/` via its Django route (core →
-`MODULE_ALLOWLIST`, controller → `CONTROLLER_ALLOWLIST`).
-(Previously: the store vocabulary had 7 keys without `scaleMode`/`chartType`, and
-the pure-core list had no `chart-types-core.js`.)
+`MODULE_ALLOWLIST`, controller → `CONTROLLER_ALLOWLIST`). The size rule MUST be
+enforced by the committed guard `tests/web/test_module_size_guard.py`
+(`CEILING = 300`; scans `web/market/templates/market/**/*.js` via `rglob` +
+`splitlines()`) with an explicit annotated allowlist exempting `chart-host.js`
+(326 lines today; DEBT-5 / #146). Any OTHER module above `CEILING` MUST fail the
+guard.
+(Previously: the size rule was verified by inspection only; no committed guard existed.)
 
 #### Scenario: Inventory and no-cycle
 
@@ -582,7 +586,8 @@ the pure-core list had no `chart-types-core.js`.)
 
 #### Scenario: Size ceiling
 
-- GIVEN every module, WHEN line counts are read, THEN each is ≤ ~300 lines
+- GIVEN every module, WHEN `tests/web/test_module_size_guard.py` reads line counts
+- THEN it passes at `CEILING = 300` with `chart-host.js` exempted by the annotated allowlist (DEBT-5 / #146), and fails any other module above the ceiling
 
 #### Scenario: New core is served
 
