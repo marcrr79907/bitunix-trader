@@ -257,6 +257,40 @@ test("HA live same-bucket forming bar re-transforms from the prior HA state (CS4
   });
 });
 
+test("HA live is stable across MULTIPLE same-bucket ticks (C1 regression)", () => {
+  // Regression for the drift where repeated same-bucket pushes chained the
+  // forming bar onto an old version of ITSELF (prevHa advanced every tick
+  // instead of only on a bar close), cascading the next bucket. Every tick of
+  // the SAME forming bar MUST reuse the prior CLOSED bar's HA → identical haOpen.
+  withChartStub((created) => {
+    const host = createHost();
+    host.build({ chartType: "heikin-ashi", indicators: [] });
+    const cs = candleSeriesOf(created);
+    host.setCandles([HA_B0, HA_B1]);
+    host.updateCandle(HA_B2); // HA(B2) = {open:11, close:12.5} (closed)
+
+    const baseOpen = 11; // (prevClosedHaOpen 10.5 + prevClosedHaClose 11.5) / 2
+    // Three ticks of the SAME forming bar (time 300) with a moving close.
+    const ticks = [
+      { time: 300, open: 12, high: 15, low: 11, close: 14 },
+      { time: 300, open: 12, high: 16, low: 11, close: 15.5625 },
+      { time: 300, open: 12, high: 16, low: 11, close: 16 },
+    ];
+    const opens = ticks.map((b) => {
+      host.updateCandle(b);
+      return cs.calls.slice(-1)[0].data.open;
+    });
+    // haOpen must NOT drift across repeated same-bucket ticks.
+    assert.deepStrictEqual(opens, [baseOpen, baseOpen, baseOpen]);
+
+    // A NEW bucket then chains from the FINAL forming bar's HA, not a stale one.
+    host.updateCandle({ time: 400, open: 16, high: 18, low: 15, close: 17 });
+    const last = cs.calls.slice(-1)[0].data;
+    // haOpen = (prevHaOpen 11 + prevHaClose 13.75) / 2 = 12.375
+    assert.strictEqual(last.open, 12.375);
+  });
+});
+
 test("setCandles resets the HA state from the new first bar (CS4)", () => {
   withChartStub((created) => {
     const host = createHost();

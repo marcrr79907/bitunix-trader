@@ -272,12 +272,16 @@ export function createHost() {
     Core.upsertCandle(candles, bar);
     if (!candleSeries) return;
     if (chartType === "heikin-ashi") {
-      // Same-bucket replace chains from the SECOND-to-last bar's HA; a new
-      // bar chains from the last written bar's HA. Either way: update() only.
-      const base = bar.time === lastBarTime ? prevHa : lastHa;
+      // A same-bucket replace chains from the last CLOSED bar's HA (``prevHa``);
+      // a new bar chains from the current bar's HA (``lastHa``). ``prevHa`` MUST
+      // advance only when the previous bar CLOSES — otherwise repeated same-bucket
+      // ticks chain the forming bar onto an old version of ITSELF and drift.
+      // Either way: update() only (#68).
+      const sameBucket = bar.time === lastBarTime;
+      const base = sameBucket ? prevHa : lastHa;
       const ha = Types.nextHeikinAshi(base, bar);
       candleSeries.update(ha);
-      prevHa = lastHa;
+      if (!sameBucket) prevHa = lastHa;
       lastHa = { haOpen: ha.open, haClose: ha.close };
       lastBarTime = bar.time;
     } else {
