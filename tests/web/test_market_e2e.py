@@ -1952,3 +1952,360 @@ def test_scale_and_type_round_trip_persists_across_reload(
     assert page.locator("#chart-type").input_value() == "line"
     assert page.evaluate("() => window.marketChart.candleSeries.seriesType()") == "Line"
     assert page.evaluate("() => Object.keys(window.marketChart).length") == 8
+
+
+# --- F1 legend regression guards (Slice 1 / #143) ----------------------------
+#
+# Committed regressions for the three probe-only scenarios in the F1 verify
+# report. DOM/computed-style only (no image diffs, no new seam key). Each test
+# is anti-vacuous: it FAILS if the guarded behavior is removed (RED-check noted
+# in the docstring).
+
+
+@p
+def test_legend_resubscribes_across_rebuild(seeded_5m_candles, browser_page):
+    # LC4 (RED: unwire the `chart:built` re-subscribe -> the rebuilt chart's
+    # crosshair handler never fires -> the hover readout never changes). Forces
+    # a 2nd `chart:built` via the bollinger toggle, then proves the legend is
+    # still a single overlay AND still tracks the crosshair.
+    page, base_url = browser_page
+    page.goto(f"{base_url}/market/")
+    page.select_option("#interval", "5m")
+    page.wait_for_function(
+        "() => window.marketChart && window.marketChart.candleSeries.data().length > 0",
+        timeout=10000,
+    )
+    # Default actives: sma + ema (overlays) + rsi (pane) -> exactly 3 rows.
+    # (The legend idle render is the readiness gate after an interval switch.)
+    page.wait_for_function(
+        "() => document.querySelectorAll('#chart .chart-legend .lg-row').length === 3",
+        timeout=10000,
+    )
+
+    # Config change -> 2nd `chart:built`. bollinger adds 3 overlay series, so a
+    # completed rebuild + legend re-render yields exactly 6 rows.
+    page.locator('.indicator-toggle[value="bollinger"]').check()
+    page.wait_for_function(
+        "() => document.querySelectorAll('#chart .chart-legend .lg-row').length === 6",
+        timeout=10000,
+    )
+
+    # No duplicate legend overlay after the rebuild (idempotent injection).
+    assert page.locator("#chart .chart-legend").count() == 1
+
+    # Hover the rebuilt chart: the readout must MOVE (stale handler -> no change).
+    idle_text = page.locator("#chart .chart-legend .lg-ohlc").inner_text()
+    page.evaluate("(t) => { window.__legendIdleOhlc = t; }", idle_text)
+    canvas = page.locator("#chart canvas").first
+    canvas.scroll_into_view_if_needed()
+    box = canvas.bounding_box()
+    page.mouse.move(box["x"] + box["width"] * 0.3, box["y"] + box["height"] * 0.4)
+    page.wait_for_function(
+        "() => document.querySelector('#chart .chart-legend .lg-ohlc').textContent"
+        " !== window.__legendIdleOhlc",
+        timeout=5000,
+    )
+    hover_text = page.locator("#chart .chart-legend .lg-ohlc").inner_text()
+    assert "H " in hover_text and hover_text != idle_text
+    # Seam still frozen after the rebuild.
+    assert page.evaluate("() => Object.keys(window.marketChart).length") == 8
+
+
+@p
+def test_legend_aria_live_debounced_not_per_move(seeded_5m_candles, browser_page):
+    # LC5 (RED: remove the hover->off / debounce-on-leave policy -> aria-live
+    # churns per mousemove, transitions spike far past 2). Counts the
+    # aria-live attribute transitions actually emitted during a hover->leave.
+    page, base_url = browser_page
+    page.goto(f"{base_url}/market/")
+    page.select_option("#interval", "5m")
+    page.wait_for_function(
+        "() => window.marketChart && window.marketChart.candleSeries.data().length > 0",
+        timeout=10000,
+    )
+    page.wait_for_function(
+        "() => document.querySelector('#chart .chart-legend') !== null",
+        timeout=10000,
+    )
+    # Boot starts polite (idle); observe every aria-live write on the overlay.
+    assert page.locator("#chart .chart-legend").get_attribute("aria-live") == "polite"
+    page.evaluate(
+        "() => { window.__liveTransitions = [];"
+        " const el = document.querySelector('#chart .chart-legend');"
+        " window.__liveObs = new MutationObserver((muts) => {"
+        "   muts.forEach((m) => { if (m.attributeName === 'aria-live')"
+        "     window.__liveTransitions.push(el.getAttribute('aria-live')); }); });"
+        " window.__liveObs.observe(el,"
+        "   { attributes: true, attributeFilter: ['aria-live'] }); }"
+    )
+
+    canvas = page.locator("#chart canvas").first
+    canvas.scroll_into_view_if_needed()
+    box = canvas.bounding_box()
+    for i in range(20):
+        page.mouse.move(
+            box["x"] + box["width"] * (0.2 + (i % 10) * 0.05),
+            box["y"] + box["height"] * 0.4,
+        )
+    page.wait_for_timeout(150)
+    # During hover the region is muted: no per-move announcement.
+    assert page.locator("#chart .chart-legend").get_attribute("aria-live") == "off"
+
+    # Leave the chart; the >=300ms debounce settles into exactly one polite flip.
+    page.mouse.move(0, 0)
+    page.wait_for_timeout(400)
+    transitions = page.evaluate("() => window.__liveTransitions")
+    assert len(transitions) <= 2, transitions
+    assert page.locator("#chart .chart-legend").get_attribute("aria-live") == "polite"
+
+
+@p
+def test_legend_idle_lists_all_active_series_exact(seeded_5m_candles, browser_page):
+    # LC6 (RED: drop the `rsi` default -> the row count is no longer 3). Closes
+    # the vacuous `>= 1` at test_legend_overlay_shows_ohlc_and_updates_on_crosshair
+    # with EXACT default-actives counts and labels (overlays first, then pane).
+    page, base_url = browser_page
+    page.goto(f"{base_url}/market/")
+    page.select_option("#interval", "5m")
+    page.wait_for_function(
+        "() => window.marketChart && window.marketChart.candleSeries.data().length > 0",
+        timeout=10000,
+    )
+    page.wait_for_function(
+        "() => document.querySelectorAll('#chart .chart-legend .lg-row').length > 0",
+        timeout=10000,
+    )
+    assert page.locator("#chart .chart-legend .lg-row").count() == 3
+    assert page.locator("#chart .chart-legend .lg-token").all_inner_texts() == [
+        "SMA 20",
+        "EMA 20",
+        "RSI",
+    ]
+
+
+# --- F2 settings regression guards (Slice 2 / #144) --------------------------
+#
+# Committed regressions for the probe-only F2 scenarios. DOM/options only; no
+# new seam key. Each test is anti-vacuous: it FAILS if the guarded behavior is
+# removed (RED-check noted in the docstring).
+
+
+def _install_create_chart_counter(page):
+    """Count CDN ``LightweightCharts.createChart`` calls in ``window.__builds``.
+
+    The counter wraps the CDN global — NOT a ``window.marketChart`` seam key —
+    so the frozen 8-key seam is untouched. The CDN global is itself frozen after
+    load, so its ``createChart`` cannot be patched in place; on first access we
+    copy the enumerable API surface into a mutable object and count calls there.
+    The getter is installed before ``goto`` so the deferred module boots against
+    the counting copy.
+    """
+    page.add_init_script(
+        """
+        window.__builds = 0;
+        let _lc = null;
+        Object.defineProperty(window, "LightweightCharts", {
+          configurable: true,
+          get() {
+            if (_lc && !_lc.__wrapped) {
+              const src = _lc;
+              const copy = {};
+              Object.getOwnPropertyNames(src).forEach((k) => {
+                try { copy[k] = src[k]; } catch (e) { /* skip non-readable */ }
+              });
+              const orig = src.createChart;
+              if (typeof orig === "function") {
+                copy.createChart = function () {
+                  window.__builds += 1;
+                  return orig.apply(src, arguments);
+                };
+              }
+              copy.__wrapped = true;
+              _lc = copy;
+            }
+            return _lc;
+          },
+          set(v) { _lc = v; },
+        });
+        """
+    )
+
+
+@p
+def test_style_change_rebuilds_exactly_once(seeded_5m_candles, browser_page):
+    # W2 (RED: emit a second rebuild for one style change -> __builds === 2).
+    # F2.5/#68: confirming a style travels ``indicator:changed`` -> ONE rebuild()
+    # on the setData path; exactly one createChart per confirmed change. The
+    # counter is reset AFTER boot so the delta isolates the style change.
+    # Fallback (if the CDN wrap proves brittle): count one ``/market/api/kline``
+    # GET via ``page.on("request")`` instead of the global counter.
+    page, base_url = browser_page
+    _install_create_chart_counter(page)
+    page.goto(f"{base_url}/market/")
+    _wait_ready(page)
+    assert page.evaluate("() => window.__builds") >= 1, "boot must build at least once"
+
+    # Count builds attributable ONLY to the confirmed style change.
+    page.evaluate("() => { window.__builds = 0; }")
+
+    page.locator(_SETTINGS_GEAR).click()
+    assert _dialog_open(page)
+    page.evaluate("() => { document.getElementById('is-color').value = '#ff0000'; }")
+    page.locator("#is-width").fill("3")
+    page.locator('#indicator-settings-dialog button[value="ok"]').click()
+
+    # The change landed (series took the new color) before we read the count.
+    page.wait_for_function(
+        "() => window.marketChart.chart.panes()[0].getSeries().some("
+        " (s) => s.options().color === '#ff0000')",
+        timeout=10000,
+    )
+    assert page.evaluate("() => window.__builds") == 1
+    # The seam is still frozen after the rebuild.
+    assert page.evaluate("() => Object.keys(window.marketChart).length") == 8
+
+
+# --- F3 chart-shell regression guards (Slice 3 / #145) -----------------------
+#
+# Committed regressions for the three probe-only F3 shell scenarios. DOM/
+# computed-style only (no image diffs, no new seam key). Each test is
+# anti-vacuous: it FAILS if the guarded behavior is removed (RED-check noted in
+# the docstring).
+
+
+def _active_element(page):
+    """The focused element's tag + interval/class (for focus-move assertions)."""
+    return page.evaluate(
+        "() => { const el = document.activeElement;"
+        " return { tag: el.tagName, interval: el.dataset ? el.dataset.interval : null,"
+        "   cls: el.className }; }"
+    )
+
+
+@p
+def test_interval_chips_keyboard_navigation(seeded_5m_candles, browser_page):
+    # W1 (RED: drop the chip keydown listener -> ArrowRight no longer moves
+    # focus -> activeElement stays on 1m). R22: arrows move focus across the
+    # group; Enter/Space activate the focused chip and sync the store.
+    page, base_url = browser_page
+    page.goto(f"{base_url}/market/")
+    page.wait_for_function(
+        "() => window.marketChart && window.marketChart.candleSeries"
+        " && window.marketChart.candleSeries.data().length > 0",
+        timeout=10000,
+    )
+    first = page.locator('.interval-chip[data-interval="1m"]')
+    first.focus()
+    assert _active_element(page)["interval"] == "1m"
+
+    # ArrowRight moves DOM focus to the adjacent chip (5m), not activation.
+    page.keyboard.press("ArrowRight")
+    assert _active_element(page)["interval"] == "5m", _active_element(page)
+    assert first.get_attribute("aria-pressed") == "true", "focus move must not activate"
+
+    # Enter activates the focused chip: aria-pressed flips + select syncs.
+    page.keyboard.press("Enter")
+    page.wait_for_function(
+        "() => document.querySelector('.interval-chip[data-interval=\"5m\"]')"
+        ".getAttribute('aria-pressed') === 'true'",
+        timeout=10000,
+    )
+    assert (
+        page.locator('.interval-chip[data-interval="1m"]').get_attribute("aria-pressed")
+        == "false"
+    )
+    assert page.locator("#interval").input_value() == "5m"
+
+    # Space on another chip activates it too (native button activation).
+    page.locator('.interval-chip[data-interval="15m"]').focus()
+    page.keyboard.press("Space")
+    page.wait_for_function(
+        "() => document.querySelector('.interval-chip[data-interval=\"15m\"]')"
+        ".getAttribute('aria-pressed') === 'true'",
+        timeout=10000,
+    )
+    assert (
+        page.locator('.interval-chip[data-interval="5m"]').get_attribute("aria-pressed")
+        == "false"
+    )
+    assert page.locator("#interval").input_value() == "15m"
+    assert page.evaluate("() => Object.keys(window.marketChart).length") == 8
+
+
+@p
+def test_chart_autosize_follows_viewport_resize(seeded_5m_candles, browser_page):
+    # W2 (RED: remove ``autoSize: true`` -> the chart root keeps its boot size
+    # and no longer tracks #chart after the viewport resize). R20: the chart
+    # root tracks the container height via the ResizeObserver, and no re-boot.
+    page, base_url = browser_page
+    page.set_viewport_size({"width": 1280, "height": 900})
+    page.goto(f"{base_url}/market/")
+    page.wait_for_function(
+        "() => window.marketChart && window.marketChart.ready === true",
+        timeout=10000,
+    )
+    before = page.evaluate(
+        "() => document.getElementById('chart').getBoundingClientRect().height"
+    )
+
+    page.set_viewport_size({"width": 640, "height": 800})
+    # The container height changed at the narrow viewport (70dvh), so a tracked
+    # root must change too — proving it is not a boot-frozen snapshot.
+    page.wait_for_function(
+        "() => { const c = document.getElementById('chart');"
+        " const root = document.querySelector('#chart .tv-lightweight-charts');"
+        " if (!c || !root) return false;"
+        " return Math.abs(root.getBoundingClientRect().height"
+        " - c.getBoundingClientRect().height) <= 2; }",
+        timeout=10000,
+    )
+    boxes = page.evaluate(
+        "() => { const c = document.getElementById('chart');"
+        " const root = document.querySelector('#chart .tv-lightweight-charts');"
+        " return { chartH: c.getBoundingClientRect().height,"
+        "   rootH: root.getBoundingClientRect().height }; }"
+    )
+    assert abs(boxes["rootH"] - boxes["chartH"]) <= 2, boxes
+    assert abs(boxes["chartH"] - before) > 2, (before, boxes)
+    # A resize adapts in place: the chart never re-boots (ready stays true).
+    assert page.evaluate("() => window.marketChart.ready") is True
+    assert page.evaluate("() => Object.keys(window.marketChart).length") == 8
+
+
+@p
+def test_shell_desktop_panel_and_chip_a11y(seeded_5m_candles, browser_page):
+    # W3 (RED: drop ``:focus-visible`` outline rule -> the focused chip's
+    # outline-style is 'none'; drop group/toggle names -> role lookups fail).
+    # R23: at >820px the toggle is hidden, the panel/chart are visible, and the
+    # chips/toggle carry accessible names + aria state + a visible focus outline.
+    page, base_url = browser_page
+    page.set_viewport_size({"width": 1280, "height": 900})
+    page.goto(f"{base_url}/market/")
+    page.wait_for_function(
+        "() => window.marketChart && window.marketChart.ready === true",
+        timeout=10000,
+    )
+
+    # Desktop: the responsive toggle is display:none; panel + chart are visible.
+    assert page.locator(".panel-toggle").is_visible() is False
+    assert page.locator("#panel").is_visible() is True
+    assert page.locator("#chart").is_visible() is True
+
+    # Accessible names + aria state on the chip group, a chip, and the toggle.
+    # The toggle is display:none here, so its name is read from the DOM (role
+    # queries exclude hidden elements); the group/chip are visible.
+    assert page.get_by_role("group", name="Interval").count() == 1
+    toggle = page.locator(".panel-toggle")
+    assert toggle.evaluate("el => el.textContent.trim()") == "Panel"
+    assert toggle.get_attribute("aria-expanded") == "true"
+    assert toggle.get_attribute("aria-controls") == "panel"
+    chip = page.locator('.interval-chip[data-interval="1m"]')
+    assert chip.get_attribute("aria-pressed") == "true"
+    # Keyboard focus paints a visible outline (:focus-visible policy in theme.css).
+    chip.focus()
+    page.keyboard.press("ArrowRight")  # keyboard focus -> :focus-visible matches
+    outline = page.evaluate(
+        "() => { const el = document.activeElement;"
+        " return getComputedStyle(el).outlineStyle; }"
+    )
+    assert outline != "none", outline

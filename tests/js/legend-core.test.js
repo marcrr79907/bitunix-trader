@@ -4,7 +4,42 @@
 // recomputes nothing (no window/EMA/RSI/ATR math). See specs/chart-legend.
 import test from "node:test";
 import assert from "node:assert";
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import * as core from "../../web/market/templates/market/legend-core.js";
+
+const CORE_PATH = fileURLToPath(
+  new URL("../../web/market/templates/market/legend-core.js", import.meta.url),
+);
+
+const LEGEND_CONTROLLER_PATH = fileURLToPath(
+  new URL("../../web/market/templates/market/controllers/legend.js", import.meta.url),
+);
+
+// Comment-aware source scan (LC2/R2): the header prose literally names EMA/RSI/
+// ATR, so a raw token scan would false-positive. Strip block comments first,
+// then line comments, THEN inspect. A line-leading `import`/`export … from` or a
+// `require(` marks the module as non-pure.
+function stripComments(src) {
+  return src
+    .replace(/\/\*[\s\S]*?\*\//g, "")
+    .replace(/\/\/.*$/gm, "");
+}
+
+function importsFree(src) {
+  const code = stripComments(src);
+  if (/^\s*(import|export\s+[^;]*\bfrom)\b/m.test(code)) return false;
+  if (/\brequire\s*\(/.test(code)) return false;
+  return true;
+}
+
+// Comment-aware style-purity scan (W3/R2): a style read would let a per-indicator
+// precision bleed into the legend. The header prose in both files mentions SMC/
+// params, so strip comments first, THEN look for the two tokens that would mark a
+// style dependency. `\b` keeps `styles` from matching inside another identifier.
+function styleFree(src) {
+  return !/\bstyles\b|\bpriceFormat\b/.test(stripComments(src));
+}
 
 test("DECIMALS is a frozen token->decimals map with the spec values", () => {
   assert.ok(Object.isFrozen(core.DECIMALS));
@@ -177,4 +212,50 @@ test("core never throws on garbage input", () => {
   assert.doesNotThrow(() => core.formatOhlc(undefined));
   assert.doesNotThrow(() => core.rows(undefined, undefined, undefined));
   assert.doesNotThrow(() => core.lastValues(undefined, undefined, undefined));
+});
+
+// RED-check: a synthetic module with an import/require is REJECTED by the same
+// guard used below, so the assertion is not vacuous.
+test("purity guard rejects modules that import or require", () => {
+  assert.strictEqual(importsFree('import x from "./y.js";'), false);
+  assert.strictEqual(importsFree("const x = require('y');"), false);
+  assert.strictEqual(importsFree("// import x from y\nexport const a = 1;"), true);
+});
+
+test("legend-core.js imports nothing (comment-aware source scan)", () => {
+  const src = readFileSync(CORE_PATH, "utf8");
+  assert.strictEqual(
+    importsFree(src),
+    true,
+    "legend-core.js must not import/require anything",
+  );
+  const code = stripComments(src);
+  assert.doesNotMatch(code, /\b(EMA|RSI|ATR|Math\.pow)\b/, "no indicator formula");
+});
+
+// --- W3 (#144 / S2): legend style-independence -------------------------------
+//
+// F2.5: a per-indicator `styles`/`priceFormat` precision must NOT reach the
+// legend. Proven at the source level (comment-aware) for BOTH the pure core and
+// the DOM controller — the only two files the legend render path runs through.
+
+// RED-check: the same guard REJECTS a module that reads `styles` (W3), so the
+// source assertions below cannot pass vacuously.
+test("style guard rejects modules that read styles or priceFormat", () => {
+  assert.strictEqual(styleFree("const s = state.styles[token];"), false);
+  assert.strictEqual(styleFree("const pf = o.priceFormat;"), false);
+  // A comment naming the tokens is prose, not a read -> accepted (R2).
+  assert.strictEqual(styleFree("// reads state.styles and priceFormat\nconst a = 1;"), true);
+  assert.strictEqual(styleFree("/* styles / priceFormat */\nconst a = 1;"), true);
+});
+
+test("legend-core.js and controllers/legend.js never read styles/priceFormat", () => {
+  const core = readFileSync(CORE_PATH, "utf8");
+  const legend = readFileSync(LEGEND_CONTROLLER_PATH, "utf8");
+  assert.strictEqual(styleFree(core), true, "legend-core.js must not read styles");
+  assert.strictEqual(
+    styleFree(legend),
+    true,
+    "controllers/legend.js must not read styles/priceFormat",
+  );
 });
