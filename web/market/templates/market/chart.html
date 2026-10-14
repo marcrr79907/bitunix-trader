@@ -92,13 +92,13 @@
 <dialog id="indicator-settings-dialog" aria-label="Indicator settings">
   <form method="dialog">
     <label for="is-color">Color</label>
-    <input id="is-color" type="color" value="#2962ff">
+    <input id="is-color" type="color" value="#2962ff" required>
     <label for="is-width">Line width</label>
-    <input id="is-width" type="number" min="1" max="4" step="1" value="1">
+    <input id="is-width" type="number" min="1" max="4" step="1" value="1" required>
     <label for="is-period" class="is-period-label">Period</label>
-    <input id="is-period" type="number" min="1" step="1" value="20">
+    <input id="is-period" type="number" min="1" step="1" value="20" required>
     <label for="is-precision">Precision</label>
-    <input id="is-precision" type="number" min="0" max="8" step="1" value="2">
+    <input id="is-precision" type="number" min="0" max="8" step="1" value="2" required>
     <button type="submit" value="ok">Apply</button>
     <button type="submit" value="cancel">Cancel</button>
   </form>

@@ -1410,6 +1410,34 @@ def test_gear_opens_dialog_prefilled(seeded_5m_candles, browser_page):
 
 
 @p
+def test_empty_required_field_blocks_submit(seeded_5m_candles, browser_page):
+    # F2.6: clearing a required numeric field must NOT apply — native form
+    # validation keeps the dialog open (no rebuild, no PUT).
+    page, base_url = browser_page
+    puts = []
+    page.on(
+        "request",
+        lambda r: (
+            puts.append(r)
+            if r.method == "PUT" and "/market/api/layout" in r.url
+            else None
+        ),
+    )
+    page.goto(f"{base_url}/market/")
+    page.wait_for_function(
+        "() => window.marketChart && window.marketChart.ready === true",
+        timeout=10000,
+    )
+    page.locator(_SETTINGS_GEAR).click()
+    page.locator("#is-width").fill("")  # clear the required field
+    page.locator('#indicator-settings-dialog button[value="ok"]').click()
+    page.wait_for_timeout(600)
+    # Native validation blocks the dialog from closing/applying.
+    assert _dialog_open(page)
+    assert puts == [], [r.url for r in puts]
+
+
+@p
 def test_confirm_updates_series_and_persists_across_reload(
     seeded_5m_candles, browser_page
 ):
