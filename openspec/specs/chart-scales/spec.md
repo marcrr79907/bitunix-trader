@@ -120,6 +120,17 @@ state and write the transformed series via `setData`; each live `updateCandle` M
 transform the forming/current bar via `update()` only (#68). A new bar MUST derive
 its `haOpen` from the previous bar's HA state.
 
+As of #146 the candle series construction, the raw candle array, and this
+incremental HA state MUST live in the host-layer sub-module
+`chart-host-candles.js` (`createCandles(chart, chartType)`), with `chart-host.js`
+delegating `setCandles`/`updateCandle`/`getCandleSeries`/`getCandles`/teardown to
+it. This is a module-boundary move with NO behavior change: the HA transform
+still comes from the pure `chart-types-core.js` core, the raw candle array is
+still returned by reference, and the C1 same-bucket `prevHa` rule MUST be
+preserved verbatim.
+
+(Previously: the candle channel and HA state lived inline in `chart-host.js`.)
+
 #### Scenario: Live push uses update only
 
 - GIVEN an active HA chart
@@ -143,6 +154,14 @@ its `haOpen` from the previous bar's HA state.
 - GIVEN `chartType="candles"`
 - WHEN history/live writes run
 - THEN bars are written verbatim (no transform)
+
+#### Scenario: HA live contract is unchanged after extraction
+
+- GIVEN an HA chart after the candle channel moved to `chart-host-candles.js`
+- WHEN history loads and a live push lands on a new bar
+- THEN behavior is byte-identical to before (C1 same-bucket `prevHa` rule
+  preserved) and the raw candle array is the same reference that `upsertCandle`
+  mutates
 
 ### Requirement: CS5 — UI control contract
 
