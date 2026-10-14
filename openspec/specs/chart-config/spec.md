@@ -15,8 +15,11 @@ chart). Default set `[{token:"sma"},{token:"ema"},{token:"rsi"}]` (lengths 20).
 `ChartLayout` MUST inherit `UserOwnedModel` (owner FK `on_delete=CASCADE` +
 `for_user`) and persist one layout per `(user, symbol, interval)` via a
 `UniqueConstraint`. It MUST carry `indicators` as a `JSONField` (list of
-`{token, params}`, `params` an object defaulting empty) and `updated_at`
-(`auto_now`). No owner-less rows MAY exist. The migration MUST be additive.
+`{token, params, style}`, `params` an object defaulting empty and `style` an
+optional object) and `updated_at` (`auto_now`). `style`, when present, MUST be the
+frozen shape `{color, lineWidth, precision}` with all three keys optional. No
+owner-less rows MAY exist. The migration MUST be additive (no new model field, no
+migration). (Previously: `indicators` entries carried only `{token, params}`.)
 
 #### Scenario: Distinct intervals coexist
 
@@ -30,11 +33,17 @@ chart). Default set `[{token:"sma"},{token:"ema"},{token:"rsi"}]` (lengths 20).
 - WHEN a second `(A, BTCUSDT, 1m)` is inserted
 - THEN `IntegrityError` is raised
 
-#### Scenario: JSON round-trip
+#### Scenario: JSON round-trip preserves style
 
-- GIVEN `indicators=[{"token":"macd","params":{"macd_fast":12}}]`
+- GIVEN `indicators=[{"token":"sma","params":{"sma_len":50},"style":{"color":"#ff0000","lineWidth":2,"precision":4}}]`
 - WHEN saved and re-read
-- THEN the nested list and params are equal
+- THEN the nested list, params, and style are equal
+
+#### Scenario: Additive migration
+
+- GIVEN the change
+- WHEN `makemigrations --check` runs
+- THEN it passes (no pending model drift)
 
 ### Requirement: R2 — Layout API
 
@@ -44,7 +53,11 @@ when none exists (never 404). `PUT /market/api/layout` MUST be login-required an
 CSRF-protected, and upsert the caller's layout for the payload's key (one row).
 Every read/write MUST route through `ChartLayout.for_user(request.user)`.
 Indicator `token`s MUST be validated against `quotes.REGISTRY`; an unknown token
-or bad param → 400 before any write.
+or bad param → 400 before any write. `quotes.parse_layout_indicators` MUST
+preserve and validate an optional `style`: unknown style keys, a non-`#rrggbb`
+color, or out-of-range ints MUST raise `ValueError` → 400 before any write, and
+a valid style MUST be stored verbatim (no defaults injected).
+(Previously: the parser rebuilt each entry as `{"token", ["params"]}` and silently dropped any `style`.)
 
 #### Scenario: GET with no layout returns default
 
@@ -54,9 +67,9 @@ or bad param → 400 before any write.
 
 #### Scenario: GET after PUT returns saved set
 
-- GIVEN A PUT a layout
+- GIVEN A PUT a layout with style
 - WHEN GET the same symbol and interval
-- THEN 200 with the saved set and `exists:true`
+- THEN 200 with the saved set including style and `exists:true`
 
 #### Scenario: PUT upserts one row
 
@@ -70,11 +83,23 @@ or bad param → 400 before any write.
 - WHEN handled
 - THEN 400 `{"error":"..."}` and no row is written
 
+#### Scenario: Invalid style → 400 before write
+
+- GIVEN PUT `indicators=[{"token":"sma","style":{"lineWidth":9}}]`
+- WHEN handled
+- THEN 400 `{"error":"..."}` and no row is written
+
 #### Scenario: Unauthenticated → redirect
 
 - GIVEN an anonymous session
 - WHEN GET or PUT `/market/api/layout`
 - THEN 302 to login
+
+#### Scenario: Parser is the sole drop point
+
+- GIVEN a PUT entry carrying `style`
+- WHEN `parse_layout_indicators` runs
+- THEN the returned entry retains the validated `style` (not dropped)
 
 ### Requirement: R3 — Per-user isolation (R14)
 
@@ -132,9 +157,12 @@ sync the toggle panel and parameter inputs → build the chart → connect the s
 
 ### Requirement: R5 — Save on change
 
-Toggling an indicator or editing its parameters MUST debounce-save via `PUT`. The
-payload MUST carry the current `symbol` and `interval` so a racing symbol switch
-cannot mis-save. A failed save MUST be non-fatal to the in-session chart.
+Toggling an indicator, editing its parameters, or confirming a style MUST
+debounce-save via `PUT`. The payload MUST carry the current `symbol` and
+`interval` so a racing symbol switch cannot mis-save, and each entry MUST carry
+its `style` when one is set. A failed save MUST be non-fatal to the in-session
+chart.
+(Previously: only toggles/params triggered the save; no style was emitted.)
 
 #### Scenario: Toggle triggers debounced PUT
 
@@ -148,6 +176,11 @@ cannot mis-save. A failed save MUST be non-fatal to the in-session chart.
 - WHEN `switchTo` changes the symbol first
 - THEN the payload's symbol/interval are those captured at change time
 
+#### Scenario: Style is included in the payload
+
+- GIVEN an active style for `sma`
+- WHEN a save fires
+- THEN the PUT body's `sma` entry contains its `style`
 ### Requirement: R6 — Parameter editing and token vocabulary
 
 SMA and EMA toggles MUST use the server's param-driven tokens `sma`/`ema` so their
