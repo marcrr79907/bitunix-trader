@@ -1952,3 +1952,132 @@ def test_scale_and_type_round_trip_persists_across_reload(
     assert page.locator("#chart-type").input_value() == "line"
     assert page.evaluate("() => window.marketChart.candleSeries.seriesType()") == "Line"
     assert page.evaluate("() => Object.keys(window.marketChart).length") == 8
+
+
+# --- F1 legend regression guards (Slice 1 / #143) ----------------------------
+#
+# Committed regressions for the three probe-only scenarios in the F1 verify
+# report. DOM/computed-style only (no image diffs, no new seam key). Each test
+# is anti-vacuous: it FAILS if the guarded behavior is removed (RED-check noted
+# in the docstring).
+
+
+@p
+def test_legend_resubscribes_across_rebuild(seeded_5m_candles, browser_page):
+    # LC4 (RED: unwire the `chart:built` re-subscribe -> the rebuilt chart's
+    # crosshair handler never fires -> the hover readout never changes). Forces
+    # a 2nd `chart:built` via the bollinger toggle, then proves the legend is
+    # still a single overlay AND still tracks the crosshair.
+    page, base_url = browser_page
+    page.goto(f"{base_url}/market/")
+    page.select_option("#interval", "5m")
+    page.wait_for_function(
+        "() => window.marketChart && window.marketChart.candleSeries.data().length > 0",
+        timeout=10000,
+    )
+    # Default actives: sma + ema (overlays) + rsi (pane) -> exactly 3 rows.
+    # (The legend idle render is the readiness gate after an interval switch.)
+    page.wait_for_function(
+        "() => document.querySelectorAll('#chart .chart-legend .lg-row').length === 3",
+        timeout=10000,
+    )
+
+    # Config change -> 2nd `chart:built`. bollinger adds 3 overlay series, so a
+    # completed rebuild + legend re-render yields exactly 6 rows.
+    page.locator('.indicator-toggle[value="bollinger"]').check()
+    page.wait_for_function(
+        "() => document.querySelectorAll('#chart .chart-legend .lg-row').length === 6",
+        timeout=10000,
+    )
+
+    # No duplicate legend overlay after the rebuild (idempotent injection).
+    assert page.locator("#chart .chart-legend").count() == 1
+
+    # Hover the rebuilt chart: the readout must MOVE (stale handler -> no change).
+    idle_text = page.locator("#chart .chart-legend .lg-ohlc").inner_text()
+    page.evaluate("(t) => { window.__legendIdleOhlc = t; }", idle_text)
+    canvas = page.locator("#chart canvas").first
+    canvas.scroll_into_view_if_needed()
+    box = canvas.bounding_box()
+    page.mouse.move(box["x"] + box["width"] * 0.3, box["y"] + box["height"] * 0.4)
+    page.wait_for_function(
+        "() => document.querySelector('#chart .chart-legend .lg-ohlc').textContent"
+        " !== window.__legendIdleOhlc",
+        timeout=5000,
+    )
+    hover_text = page.locator("#chart .chart-legend .lg-ohlc").inner_text()
+    assert "H " in hover_text and hover_text != idle_text
+    # Seam still frozen after the rebuild.
+    assert page.evaluate("() => Object.keys(window.marketChart).length") == 8
+
+
+@p
+def test_legend_aria_live_debounced_not_per_move(seeded_5m_candles, browser_page):
+    # LC5 (RED: remove the hover->off / debounce-on-leave policy -> aria-live
+    # churns per mousemove, transitions spike far past 2). Counts the
+    # aria-live attribute transitions actually emitted during a hover->leave.
+    page, base_url = browser_page
+    page.goto(f"{base_url}/market/")
+    page.select_option("#interval", "5m")
+    page.wait_for_function(
+        "() => window.marketChart && window.marketChart.candleSeries.data().length > 0",
+        timeout=10000,
+    )
+    page.wait_for_function(
+        "() => document.querySelector('#chart .chart-legend') !== null",
+        timeout=10000,
+    )
+    # Boot starts polite (idle); observe every aria-live write on the overlay.
+    assert page.locator("#chart .chart-legend").get_attribute("aria-live") == "polite"
+    page.evaluate(
+        "() => { window.__liveTransitions = [];"
+        " const el = document.querySelector('#chart .chart-legend');"
+        " window.__liveObs = new MutationObserver((muts) => {"
+        "   muts.forEach((m) => { if (m.attributeName === 'aria-live')"
+        "     window.__liveTransitions.push(el.getAttribute('aria-live')); }); });"
+        " window.__liveObs.observe(el,"
+        "   { attributes: true, attributeFilter: ['aria-live'] }); }"
+    )
+
+    canvas = page.locator("#chart canvas").first
+    canvas.scroll_into_view_if_needed()
+    box = canvas.bounding_box()
+    for i in range(20):
+        page.mouse.move(
+            box["x"] + box["width"] * (0.2 + (i % 10) * 0.05),
+            box["y"] + box["height"] * 0.4,
+        )
+    page.wait_for_timeout(150)
+    # During hover the region is muted: no per-move announcement.
+    assert page.locator("#chart .chart-legend").get_attribute("aria-live") == "off"
+
+    # Leave the chart; the >=300ms debounce settles into exactly one polite flip.
+    page.mouse.move(0, 0)
+    page.wait_for_timeout(400)
+    transitions = page.evaluate("() => window.__liveTransitions")
+    assert len(transitions) <= 2, transitions
+    assert page.locator("#chart .chart-legend").get_attribute("aria-live") == "polite"
+
+
+@p
+def test_legend_idle_lists_all_active_series_exact(seeded_5m_candles, browser_page):
+    # LC6 (RED: drop the `rsi` default -> the row count is no longer 3). Closes
+    # the vacuous `>= 1` at test_legend_overlay_shows_ohlc_and_updates_on_crosshair
+    # with EXACT default-actives counts and labels (overlays first, then pane).
+    page, base_url = browser_page
+    page.goto(f"{base_url}/market/")
+    page.select_option("#interval", "5m")
+    page.wait_for_function(
+        "() => window.marketChart && window.marketChart.candleSeries.data().length > 0",
+        timeout=10000,
+    )
+    page.wait_for_function(
+        "() => document.querySelectorAll('#chart .chart-legend .lg-row').length > 0",
+        timeout=10000,
+    )
+    assert page.locator("#chart .chart-legend .lg-row").count() == 3
+    assert page.locator("#chart .chart-legend .lg-token").all_inner_texts() == [
+        "SMA 20",
+        "EMA 20",
+        "RSI",
+    ]

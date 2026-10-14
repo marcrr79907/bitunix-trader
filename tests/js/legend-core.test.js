@@ -4,7 +4,30 @@
 // recomputes nothing (no window/EMA/RSI/ATR math). See specs/chart-legend.
 import test from "node:test";
 import assert from "node:assert";
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import * as core from "../../web/market/templates/market/legend-core.js";
+
+const CORE_PATH = fileURLToPath(
+  new URL("../../web/market/templates/market/legend-core.js", import.meta.url),
+);
+
+// Comment-aware source scan (LC2/R2): the header prose literally names EMA/RSI/
+// ATR, so a raw token scan would false-positive. Strip block comments first,
+// then line comments, THEN inspect. A line-leading `import`/`export … from` or a
+// `require(` marks the module as non-pure.
+function stripComments(src) {
+  return src
+    .replace(/\/\*[\s\S]*?\*\//g, "")
+    .replace(/\/\/.*$/gm, "");
+}
+
+function importsFree(src) {
+  const code = stripComments(src);
+  if (/^\s*(import|export\s+[^;]*\bfrom)\b/m.test(code)) return false;
+  if (/\brequire\s*\(/.test(code)) return false;
+  return true;
+}
 
 test("DECIMALS is a frozen token->decimals map with the spec values", () => {
   assert.ok(Object.isFrozen(core.DECIMALS));
@@ -177,4 +200,23 @@ test("core never throws on garbage input", () => {
   assert.doesNotThrow(() => core.formatOhlc(undefined));
   assert.doesNotThrow(() => core.rows(undefined, undefined, undefined));
   assert.doesNotThrow(() => core.lastValues(undefined, undefined, undefined));
+});
+
+// RED-check: a synthetic module with an import/require is REJECTED by the same
+// guard used below, so the assertion is not vacuous.
+test("purity guard rejects modules that import or require", () => {
+  assert.strictEqual(importsFree('import x from "./y.js";'), false);
+  assert.strictEqual(importsFree("const x = require('y');"), false);
+  assert.strictEqual(importsFree("// import x from y\nexport const a = 1;"), true);
+});
+
+test("legend-core.js imports nothing (comment-aware source scan)", () => {
+  const src = readFileSync(CORE_PATH, "utf8");
+  assert.strictEqual(
+    importsFree(src),
+    true,
+    "legend-core.js must not import/require anything",
+  );
+  const code = stripComments(src);
+  assert.doesNotMatch(code, /\b(EMA|RSI|ATR|Math\.pow)\b/, "no indicator formula");
 });
