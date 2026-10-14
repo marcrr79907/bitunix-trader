@@ -20,7 +20,11 @@ export function createStream({ store, bus, host, config }) {
 
   function onPush(m) {
     if (!sub || m.symbol !== state.symbol) return;
-    const t = Core.bucketTime(m.ts, state.interval);
+    // #150: drop frames whose exchange channel does not match the ACTIVE
+    // subscription. `sub.interval` (not state.interval, which mutates before the
+    // socket confirms) is authoritative for both the compare and the bucket.
+    if (!Core.isFrameForChannel(m, config.channels[sub.interval])) return;
+    const t = Core.bucketTime(m.ts, sub.interval);
     const bar = {
       time: t,
       open: +m.data.o, high: +m.data.h, low: +m.data.l, close: +m.data.c,

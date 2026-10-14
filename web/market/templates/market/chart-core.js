@@ -69,4 +69,20 @@ function lastPoint(series) {
   return series.length ? series[series.length - 1] : undefined;
 }
 
-export { intervalSeconds, bucketTime, upsertCandle, mergeCandles, lastPoint };
+// #150 frame-channel guard: a WS push may be applied ONLY when its exchange
+// channel matches the active subscription. Pure, deterministic, never throws
+// (fail-closed): a null frame, a missing/empty `ch`, or a missing/empty
+// `expectedChannel` all return false.
+function isFrameForChannel(frame, expectedChannel) {
+  if (!frame || !expectedChannel) return false;
+  return frame.ch === expectedChannel;
+}
+
+export {
+  intervalSeconds,
+  bucketTime,
+  upsertCandle,
+  mergeCandles,
+  lastPoint,
+  isFrameForChannel,
+};

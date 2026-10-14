@@ -71,3 +71,32 @@ test("lastPoint: last or undefined", () => {
   assert.strictEqual(core.lastPoint([]), undefined);
   assert.deepStrictEqual(core.lastPoint([{ t: 1 }, { t: 2 }]), { t: 2 });
 });
+
+test("isFrameForChannel: exact-channel truth table", () => {
+  const ch = "market_kline_5min";
+  // Same channel → true
+  assert.strictEqual(core.isFrameForChannel({ ch }, ch), true);
+  // Foreign channel → false
+  assert.strictEqual(core.isFrameForChannel({ ch: "market_kline_1min" }, ch), false);
+  // Missing / null / empty ch → false (fail closed)
+  assert.strictEqual(core.isFrameForChannel({}, ch), false);
+  assert.strictEqual(core.isFrameForChannel({ ch: null }, ch), false);
+  assert.strictEqual(core.isFrameForChannel({ ch: "" }, ch), false);
+  // Null / undefined frame → false
+  assert.strictEqual(core.isFrameForChannel(null, ch), false);
+  assert.strictEqual(core.isFrameForChannel(undefined, ch), false);
+  // Missing / empty expectedChannel → false
+  assert.strictEqual(core.isFrameForChannel({ ch }, undefined), false);
+  assert.strictEqual(core.isFrameForChannel({ ch }, ""), false);
+});
+
+test("isFrameForChannel: pure, deterministic, never throws", () => {
+  const frame = { ch: "market_kline_5min" };
+  const before = JSON.stringify(frame);
+  assert.strictEqual(core.isFrameForChannel(frame, "market_kline_5min"), true);
+  assert.strictEqual(core.isFrameForChannel(frame, "market_kline_5min"), true);
+  assert.strictEqual(JSON.stringify(frame), before, "input must not mutate");
+  // Malformed shapes must not throw
+  assert.doesNotThrow(() => core.isFrameForChannel(123, "market_kline_5min"));
+  assert.doesNotThrow(() => core.isFrameForChannel({}, {}));
+});
