@@ -26,7 +26,7 @@ The module MUST be served same-origin (added to `MODULE_ALLOWLIST`).
 
 - GIVEN candles `[{o:10,h:12,l:9,c:11},{o:11,h:13,l:10,c:12}]`
 - WHEN `heikinAshi(candles)` runs
-- THEN bar 0 is `{haOpen:10.5,haClose:10.5,haHigh:12,haLow:9}` and bar 1 `haOpen:10.5`, `haClose:11.5`, `haHigh:13`, `haLow:9.5`
+- THEN bar 0 is `{haOpen:10.5,haClose:10.5,haHigh:12,haLow:9}` and bar 1 `haOpen:10.5`, `haClose:11.5`, `haHigh:13`, `haLow:10`
 
 #### Scenario: Empty input is safe
 
