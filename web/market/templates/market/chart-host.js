@@ -98,16 +98,35 @@ export function createHost() {
 
   // --- construction -----------------------------------------------------------
 
-  function addSeries(token, paneIndex) {
-    REGISTRY[token].series.forEach(function (s) {
+  // One series per registry entry. ``style`` (F2.5) is presentation-only:
+  // color/lineWidth at construction, precision as the series priceFormat.
+  // Absent style → the registry default color, width 1 (no priceFormat forced).
+  function addSeries(token, paneIndex, style) {
+    const s = style || {};
+    REGISTRY[token].series.forEach(function (entry) {
       const Ctor =
-        s.type === "histogram"
+        entry.type === "histogram"
           ? LightweightCharts.HistogramSeries
           : LightweightCharts.LineSeries;
-      const series = chart.addSeries(Ctor, { color: s.color }, paneIndex);
+      const series = chart.addSeries(
+        Ctor,
+        { color: s.color || entry.color, lineWidth: s.lineWidth || 1 },
+        paneIndex,
+      );
+      if (typeof s.precision === "number") {
+        // ``Number("1e-" + n)`` is exactly representable; ``Math.pow(10, -n)``
+        // is not (V8-version-dependent: 10**-5 -> 0.000009999999999999999 on
+        // some Node builds), which would break the priceFormat minMove.
+        series.applyOptions({
+          priceFormat: {
+            precision: s.precision,
+            minMove: Number("1e-" + s.precision),
+          },
+        });
+      }
       activeSeries.push({
         token: token,
-        key: s.key,
+        key: entry.key,
         place: REGISTRY[token].place,
         pane: REGISTRY[token].pane,
         series: series,
@@ -128,13 +147,16 @@ export function createHost() {
     activeSeries = [];
 
     const enabled = state.indicators;
+    const styles = state.styles || {};
     const isOn = function (token) { return enabled.indexOf(token) !== -1; };
 
     Object.keys(REGISTRY).forEach(function (token) {
-      if (REGISTRY[token].place === "overlay" && isOn(token)) addSeries(token, 0);
+      if (REGISTRY[token].place === "overlay" && isOn(token)) {
+        addSeries(token, 0, styles[token]);
+      }
     });
     PANE_ORDER.filter(isOn).forEach(function (token, i) {
-      addSeries(token, i + 1);
+      addSeries(token, i + 1, styles[token]);
     });
 
     // Pane test seam: {paneName: {seriesKey: series}}.

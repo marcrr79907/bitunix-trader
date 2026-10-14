@@ -21,6 +21,7 @@ test("get returns the initial config state", () => {
     interval: "1m",
     indicators: ["sma"],
     params: { sma: { sma_len: 20 } },
+    styles: undefined,
     smc: { swings: true },
     tool: null,
   });
@@ -67,13 +68,30 @@ test("set never admits candle data — the key set is frozen (#68)", () => {
   assert.strictEqual(seeded.get().candles, undefined);
 });
 
-test("STORE_KEYS is exactly the UI/config vocabulary", () => {
+test("STORE_KEYS is exactly the UI/config vocabulary (7 incl. styles)", () => {
   assert.deepStrictEqual(STORE_KEYS.slice().sort(), [
     "indicators",
     "interval",
     "params",
     "smc",
+    "styles",
     "symbol",
     "tool",
   ]);
+});
+
+test("styles is a top-level slot, never nested under params", () => {
+  const store = createStore({
+    symbol: "BTCUSDT",
+    interval: "1m",
+    params: { sma: { sma_len: 20 } },
+    styles: { sma: { color: "#ff0000", lineWidth: 2, precision: 4 } },
+  });
+  assert.deepStrictEqual(store.get().styles, {
+    sma: { color: "#ff0000", lineWidth: 2, precision: 4 },
+  });
+  // The patch merge keeps styles a top-level key and does not leak into params.
+  store.set({ styles: { ema: { color: "#00ff00" } } });
+  assert.deepStrictEqual(store.get().styles, { ema: { color: "#00ff00" } });
+  assert.deepStrictEqual(store.get().params, { sma: { sma_len: 20 } });
 });

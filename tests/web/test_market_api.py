@@ -1093,6 +1093,60 @@ def test_parse_layout_indicators_rejects_bad_input(bad):
         parse_layout_indicators(bad)
 
 
+# --- parse_layout_indicators: style preservation (F2.7 / R2 delta) -----------
+
+
+def test_layout_put_then_get_round_trips_style_verbatim():
+    # The parser no longer drops ``style``; the frozen shape
+    # {color,lineWidth,precision} survives PUT -> GET byte-for-byte.
+    indicators = [
+        {
+            "token": "sma",
+            "params": {"sma_len": 50},
+            "style": {"color": "#ff0000", "lineWidth": 2, "precision": 4},
+        },
+        {"token": "macd"},
+    ]
+    put = _put_layout(
+        USER, {"symbol": "BTCUSDT", "interval": "1m", "indicators": indicators}
+    )
+    assert put.status_code == 200
+
+    body = USER.get(f"{LAYOUT_URL}?symbol=BTCUSDT&interval=1m").json()
+    assert body["indicators"] == indicators
+
+
+def test_parse_layout_indicators_preserves_partial_style_verbatim():
+    from market.quotes import parse_layout_indicators
+
+    out = parse_layout_indicators(
+        [{"token": "sma", "style": {"lineWidth": 3, "color": "#00ff00"}}]
+    )
+    # Stored verbatim: no defaults injected, key order preserved.
+    assert out == [{"token": "sma", "style": {"lineWidth": 3, "color": "#00ff00"}}]
+
+
+@pytest.mark.parametrize(
+    "bad_style",
+    [
+        "notadict",
+        {"lineWidth": 9},  # above 1..4
+        {"lineWidth": 0},  # below 1..4
+        {"lineWidth": True},  # bool is not an int
+        {"precision": 20},  # above 0..8
+        {"precision": -1},  # below 0..8
+        {"color": "red"},  # not #rrggbb
+        {"color": "#zzz"},  # not #rrggbb
+        {"foo": 1},  # unknown key
+    ],
+)
+def test_parse_layout_indicators_rejects_bad_style(bad_style):
+    from market.quotes import parse_layout_indicators
+
+    with pytest.raises(ValueError):
+        parse_layout_indicators([{"token": "sma", "style": bad_style}])
+
+
 # --- WU2: drawings CRUD endpoint (R2/R3/R4/R5) ------------------------------
 
 DRAWINGS_URL = "/market/api/drawings"
