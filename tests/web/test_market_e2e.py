@@ -382,6 +382,7 @@ def test_ws_same_bucket_updates_in_place(seeded_5m_candles, browser_page):
     t = last_time + 300  # next 5m bucket
 
     push = {
+        "ch": "market_kline_5min",  # #150: the guard requires the frame channel
         "symbol": "BTCUSDT",
         "ts": t * 1000,
         "data": {"o": 1.0, "h": 2.0, "l": 0.5, "c": 1.5},
@@ -439,6 +440,7 @@ def test_ws_stream_never_calls_setdata(seeded_5m_candles, browser_page):
         holder["route"].send(
             json.dumps(
                 {
+                    "ch": "market_kline_5min",  # #150: guard requires the channel
                     "symbol": "BTCUSDT",
                     "ts": t * 1000,
                     "data": {"o": 1.0, "h": 2.0, "l": 0.5, "c": 1.5},
@@ -452,6 +454,97 @@ def test_ws_stream_never_calls_setdata(seeded_5m_candles, browser_page):
 
     calls = page.evaluate("() => window.__setDataCalls")
     assert calls == 0, f"setData called {calls} times during the live stream"
+
+
+@p
+def test_ws_stale_channel_push_during_switch(seeded_5m_candles, browser_page):
+    # #150 (DEBT-1): a frame buffered across switchTo from the OUTGOING channel
+    # must be dropped by the channel guard, NOT re-bucketed under the new
+    # interval. Without the guard the stale frame is written at T-300 < T and
+    # LightweightCharts raises `Cannot update oldest data`.
+    page, base_url = browser_page
+    holder = {}
+    errors = []
+    page.on("pageerror", lambda e: errors.append(str(e)))
+    kline_5m = []
+    page.on(
+        "response",
+        lambda r: (
+            kline_5m.append(r.url)
+            if "/market/api/kline" in r.url and "interval=5m" in r.url
+            else None
+        ),
+    )
+
+    def handler(ws_route):
+        holder["route"] = ws_route
+
+    page.route_web_socket("wss://fapi.bitunix.com/**", handler)
+    page.goto(f"{base_url}/market/")  # boot on 1m
+    page.select_option("#interval", "5m")
+    page.wait_for_function(
+        "() => window.marketChart && window.marketChart.candleSeries.data().length > 0",
+        timeout=10000,
+    )
+    # The 5m rebuild loads history exactly once (single setData for the switch).
+    assert len(kline_5m) == 1, kline_5m
+
+    n = page.evaluate("() => window.marketChart.candleSeries.data().length")
+    T = page.evaluate("() => window.marketChart.candleSeries.data().slice(-1)[0].time")
+    # Spy AFTER the rebuild settles: the live path must never setData (#68).
+    page.evaluate(
+        "() => { const s = window.marketChart.candleSeries;"
+        " window.__setDataCalls = 0; const orig = s.setData.bind(s);"
+        " s.setData = function(){ window.__setDataCalls++;"
+        " return orig.apply(s, arguments); }; }"
+    )
+
+    # Stale frame: OLD channel, ts 1s into the PREVIOUS 5m bucket. A missing
+    # guard re-buckets it to T-300 (< T) -> `Cannot update oldest data`.
+    stale_ts = (T - 300) * 1000 + 1000
+    holder["route"].send(
+        json.dumps(
+            {
+                "ch": "market_kline_1min",
+                "symbol": "BTCUSDT",
+                "ts": stale_ts,
+                "data": {"o": 1.0, "h": 2.0, "l": 0.5, "c": 1.5},
+            }
+        )
+    )
+    page.wait_for_timeout(300)  # give the (buggy) handler a chance to raise
+
+    assert not any(
+        "Cannot update oldest data" in e or "Object is disposed" in e for e in errors
+    ), errors
+    after = page.evaluate("() => window.marketChart.candleSeries.data().length")
+    last_after = page.evaluate(
+        "() => window.marketChart.candleSeries.data().slice(-1)[0].time"
+    )
+    assert after == n, f"stale frame mutated the series: {n} -> {after}"
+    assert last_after == T
+
+    # Valid frame on the NEW channel in the NEXT bucket grows the series by 1.
+    holder["route"].send(
+        json.dumps(
+            {
+                "ch": "market_kline_5min",
+                "symbol": "BTCUSDT",
+                "ts": (T + 300) * 1000,
+                "data": {"o": 1.0, "h": 2.0, "l": 0.5, "c": 1.5},
+            }
+        )
+    )
+    page.wait_for_function(
+        f"() => window.marketChart.candleSeries.data().length === {n + 1}",
+        timeout=5000,
+    )
+    final = page.evaluate(
+        "() => window.marketChart.candleSeries.data().slice(-1)[0].time"
+    )
+    assert final == T + 300
+    calls = page.evaluate("() => window.__setDataCalls")
+    assert calls == 0, f"setData called {calls} times during the live path"
 
 
 def _wait_ready(page):
