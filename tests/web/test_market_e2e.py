@@ -1739,3 +1739,123 @@ def test_type_select_heikin_ashi_chains_and_rebuilds(seeded_5m_candles, browser_
     # not exposed, so assert the seam stays frozen and the series has data.
     assert page.evaluate("() => Object.keys(window.marketChart).length") == 8
     assert page.locator("#chart-type").input_value() == "heikin-ashi"
+
+
+# --- F8 persistence (Slice 3, add-only) --------------------------------------
+
+
+@pytest.fixture
+def saved_scale_and_type_preference(e2e_user):
+    """Seed scale_mode/chart_type BEFORE the Playwright context.
+
+    Boot fetches this preference before the first build (CS6); a saved
+    log/area makes the restore observable on both selects + the chart options.
+    """
+    from trading.models import ChartPreference
+
+    ChartPreference.objects.create(user=e2e_user, scale_mode="log", chart_type="area")
+    return e2e_user
+
+
+@p
+def test_boot_restores_saved_scale_and_type(
+    seeded_5m_candles, saved_scale_and_type_preference, browser_page
+):
+    # CS6: a persisted scale/type wins on boot — the selects reflect it AND the
+    # chart builds with the saved price-scale mode (linear is the default).
+    page, base_url = browser_page
+    page.goto(f"{base_url}/market/")
+    _wait_ready(page)
+
+    assert page.locator("#scale-mode").input_value() == "log"
+    assert page.locator("#chart-type").input_value() == "area"
+    # The right price scale is Logarithmic (mode 1), not the default Normal (0).
+    mode = page.evaluate(
+        "() => window.marketChart.chart.priceScale('right').options().mode"
+    )
+    assert mode != 0, mode
+    # An area type builds an Area series.
+    assert page.evaluate("() => window.marketChart.candleSeries.seriesType()") == "Area"
+
+
+@p
+def test_scale_change_debounce_persists_only_scale(seeded_5m_candles, browser_page):
+    # CS6: a scale change debounce-PUTs ONLY scale_mode (never interval/type).
+    page, base_url = browser_page
+    puts = []
+    page.on(
+        "request",
+        lambda r: (
+            puts.append(r)
+            if "/market/api/preference" in r.url and r.method == "PUT"
+            else None
+        ),
+    )
+    page.goto(f"{base_url}/market/")
+    _wait_ready(page)
+
+    page.select_option("#scale-mode", "percentage")
+    page.wait_for_function(
+        "() => document.getElementById('scale-mode').value === 'percentage'",
+        timeout=2000,
+    )
+    page.wait_for_timeout(800)  # let the debounce fire
+
+    assert puts, "a scale change must PUT the preference"
+    bodies = [json.loads(r.post_data or "{}") for r in puts]
+    assert bodies and bodies[-1] == {"scale_mode": "percentage"}, bodies
+
+
+@p
+def test_chart_type_change_debounce_persists_only_type(seeded_5m_candles, browser_page):
+    # CS6: a type change rebuilds and debounce-PUTs ONLY chart_type.
+    page, base_url = browser_page
+    puts = []
+    page.on(
+        "request",
+        lambda r: (
+            puts.append(r)
+            if "/market/api/preference" in r.url and r.method == "PUT"
+            else None
+        ),
+    )
+    page.goto(f"{base_url}/market/")
+    _wait_ready(page)
+
+    page.select_option("#chart-type", "line")
+    page.wait_for_function(
+        "() => window.marketChart.candleSeries"
+        " && window.marketChart.candleSeries.seriesType() === 'Line'",
+        timeout=10000,
+    )
+    page.wait_for_timeout(800)  # let the debounce fire
+
+    bodies = [json.loads(r.post_data or "{}") for r in puts]
+    assert bodies and bodies[-1] == {"chart_type": "line"}, bodies
+
+
+@p
+def test_scale_and_type_round_trip_persists_across_reload(
+    seeded_5m_candles, browser_page
+):
+    # CS6: change scale+type, reload, and both are restored from the server.
+    page, base_url = browser_page
+    page.goto(f"{base_url}/market/")
+    _wait_ready(page)
+
+    page.select_option("#scale-mode", "percentage")
+    page.select_option("#chart-type", "line")
+    page.wait_for_function(
+        "() => window.marketChart.candleSeries"
+        " && window.marketChart.candleSeries.seriesType() === 'Line'",
+        timeout=10000,
+    )
+    page.wait_for_timeout(800)  # let both debounce PUTs land
+
+    page.reload()
+    _wait_ready(page)
+
+    assert page.locator("#scale-mode").input_value() == "percentage"
+    assert page.locator("#chart-type").input_value() == "line"
+    assert page.evaluate("() => window.marketChart.candleSeries.seriesType()") == "Line"
+    assert page.evaluate("() => Object.keys(window.marketChart).length") == 8

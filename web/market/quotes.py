@@ -52,6 +52,12 @@ INTERVALS = (
     "1M",
 )
 
+# F8 chart-config vocabularies (R8/R9). Mirror the JS core
+# (``chart-types-core.js`` CHART_TYPES/SCALE_MODES) — server-side validation of
+# the two new ``ChartPreference`` fields. Membership checks only, no copies.
+SCALE_MODES = ("linear", "log", "percentage")
+CHART_TYPES = ("candles", "line", "area", "heikin-ashi")
+
 
 CHART_KEYS = ("time", "open", "high", "low", "close")
 
