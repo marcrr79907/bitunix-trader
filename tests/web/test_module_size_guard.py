@@ -3,13 +3,13 @@
 Committed, executable form of the R14 layer rule that used to be verified by
 inspection only. Pure filesystem (no Django client, no network, no dependency):
 it line-counts every ``web/market/templates/market/**/*.js`` file, including
-``controllers/``, and fails any module above ``CEILING`` unless it is in the
-documented allowlist.
+``controllers/``, and fails any module above ``CEILING``.
 
-``chart-host.js`` (326 lines) is the one exempt module: it is the tracked
-DEBT-5 refactor (#146), which will split host responsibilities so the file can
-drop under the ceiling. Every OTHER module — cores, controllers, entry — MUST
-comply; the guard names the offending file and its line count when it does not.
+The ``ALLOWLIST`` is EMPTY: no module is exempt. DEBT-5 / #146 extracted the
+candle channel out of ``chart-host.js`` (326 -> under the ceiling) and retired
+the old single-file exemption. ``chart-host.js`` MUST stay within ``CEILING``
+like every other module; the guard names the offending file and its line count
+when any module does not comply.
 """
 
 from __future__ import annotations
@@ -19,10 +19,8 @@ from pathlib import Path
 # R14: "no module MUST exceed ~300 lines".
 CEILING = 300
 
-# DEBT-5 / #146 — tracked refactor target. chart-host.js is 326 lines today (its
-# high-water mark); it is the single sanctioned exception, not a general escape
-# hatch. Removing this entry without refactoring the file fails the guard.
-ALLOWLIST = {"chart-host.js"}
+# DEBT-5 / #146 — the chart-host.js exemption is retired; no module is exempt.
+ALLOWLIST: frozenset[str] = frozenset()
 
 _MODULES_DIR = Path(__file__).resolve().parents[2] / "web/market/templates/market"
 # Anti-vacuity: the scan MUST see the real inventory, not a near-empty glob.
@@ -38,7 +36,7 @@ def over_ceiling(
     modules: dict[str, str],
     *,
     ceiling: int = CEILING,
-    allowlist: set[str] = ALLOWLIST,
+    allowlist: frozenset[str] = ALLOWLIST,
 ) -> dict[str, int]:
     """Return ``{name: line_count}`` for non-allowlisted modules over ``ceiling``.
 
@@ -75,12 +73,12 @@ def test_every_market_module_is_within_the_ceiling():
     )
 
 
-def test_allowlist_exempts_chart_host_but_not_others():
-    # The documented exception holds for chart-host.js (326 lines) ...
-    assert over_ceiling({"chart-host.js": "\n" * 326}) == {}
-    # ... and does NOT leak to any other file of the same size.
-    over = over_ceiling({"indicator-settings-core.js": "\n" * 326})
-    assert over == {"indicator-settings-core.js": 326}
+def test_no_module_is_exempt_and_chart_host_is_within_ceiling():
+    # The exemption is retired: an oversized chart-host.js is NOT tolerated.
+    assert over_ceiling({"chart-host.js": "\n" * 326}) == {"chart-host.js": 326}
+    # The real, extracted chart-host.js is back under the ceiling.
+    real = _scan_modules()["chart-host.js"]
+    assert _line_count(real) <= CEILING, _line_count(real)
 
 
 def test_negative_control_oversized_module_fails():

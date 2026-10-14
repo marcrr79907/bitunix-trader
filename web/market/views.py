@@ -50,6 +50,7 @@ MODULE_ALLOWLIST = frozenset(
         "chart-store",
         "chart-bus",
         "chart-host",
+        "chart-host-candles",
         "main",
     }
 )
