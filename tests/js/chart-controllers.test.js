@@ -5,7 +5,11 @@
 // unit-tested here, mirroring the Slice 1/2 core-test discipline.
 import test from "node:test";
 import assert from "node:assert";
-import { buildIndicators } from "../../web/market/templates/market/controllers/indicators.js";
+import {
+  buildIndicators,
+  settingsFromFields,
+  PERIOD_PARAMS,
+} from "../../web/market/templates/market/controllers/indicators.js";
 import { klineUrlFrom } from "../../web/market/templates/market/controllers/history.js";
 import {
   shapeEntries,
@@ -43,6 +47,50 @@ test("buildIndicators: 3rd styles arg emits style only for styled tokens", () =>
 
 test("buildIndicators: no styles arg keeps entries style-free", () => {
   assert.deepStrictEqual(buildIndicators(["sma"], {}), [{ token: "sma" }]);
+});
+
+test("PERIOD_PARAMS: only param tokens with an editable period", () => {
+  assert.deepStrictEqual(PERIOD_PARAMS, { sma: "sma_len", ema: "ema_len" });
+});
+
+test("settingsFromFields: coerces string controls into a normalized style", () => {
+  const out = settingsFromFields(
+    "sma",
+    { color: "#ff0000", lineWidth: "3", precision: "5", period: "50" },
+    { color: "#2962ff", lineWidth: 1, precision: 2 },
+  );
+  assert.deepStrictEqual(out.style, { color: "#ff0000", lineWidth: 3, precision: 5 });
+  assert.strictEqual(out.period, 50);
+});
+
+test("settingsFromFields: empty controls fall back to defaults and clamp", () => {
+  const out = settingsFromFields(
+    "sma",
+    { color: "", lineWidth: "", precision: "", period: "" },
+    { color: "#2962ff", lineWidth: 1, precision: 2 },
+  );
+  assert.deepStrictEqual(out.style, { color: "#2962ff", lineWidth: 1, precision: 2 });
+  assert.strictEqual(out.period, null);
+});
+
+test("settingsFromFields: out-of-range strings clamp into the frozen shape", () => {
+  const out = settingsFromFields(
+    "sma",
+    { color: "#zzz", lineWidth: "99", precision: "-3", period: "0" },
+    { color: "#2962ff", lineWidth: 1, precision: 2 },
+  );
+  assert.deepStrictEqual(out.style, { color: "#2962ff", lineWidth: 4, precision: 0 });
+  assert.strictEqual(out.period, null); // period 0 is not a valid length
+});
+
+test("settingsFromFields: period stays null for a token without a param", () => {
+  const out = settingsFromFields(
+    "rsi",
+    { color: "#00ff00", lineWidth: "2", precision: "3", period: "14" },
+    { color: "#ab47bc", lineWidth: 1, precision: 2 },
+  );
+  assert.deepStrictEqual(out.style, { color: "#00ff00", lineWidth: 2, precision: 3 });
+  assert.strictEqual(out.period, null);
 });
 
 test("klineUrlFrom: symbol+interval+indicators+params+extra", () => {

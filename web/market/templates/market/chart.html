@@ -35,17 +35,26 @@
     </select>
     <h2 id="indicators-heading">Indicators</h2>
     <fieldset class="indicators" aria-labelledby="indicators-heading">
-      <label><input type="checkbox" class="indicator-toggle" value="sma" checked> SMA
+      <div class="indicator-row"><label><input type="checkbox" class="indicator-toggle" value="sma" checked> SMA
         <input type="number" class="indicator-param" data-token="sma" data-param="sma_len" min="1" value="20" aria-label="SMA length"></label>
-      <label><input type="checkbox" class="indicator-toggle" value="ema" checked> EMA
+        <button type="button" class="indicator-settings" data-token="sma" aria-haspopup="dialog" aria-label="SMA settings">⚙</button></div>
+      <div class="indicator-row"><label><input type="checkbox" class="indicator-toggle" value="ema" checked> EMA
         <input type="number" class="indicator-param" data-token="ema" data-param="ema_len" min="1" value="20" aria-label="EMA length"></label>
-      <label><input type="checkbox" class="indicator-toggle" value="bollinger"> Bollinger</label>
-      <label><input type="checkbox" class="indicator-toggle" value="vwap"> VWAP</label>
-      <label><input type="checkbox" class="indicator-toggle" value="rsi" checked> RSI</label>
-      <label><input type="checkbox" class="indicator-toggle" value="macd"> MACD</label>
-      <label><input type="checkbox" class="indicator-toggle" value="stochastic"> Stochastic</label>
-      <label><input type="checkbox" class="indicator-toggle" value="atr"> ATR</label>
-      <label><input type="checkbox" class="indicator-toggle" value="volume"> Volume</label>
+        <button type="button" class="indicator-settings" data-token="ema" aria-haspopup="dialog" aria-label="EMA settings">⚙</button></div>
+      <div class="indicator-row"><label><input type="checkbox" class="indicator-toggle" value="bollinger"> Bollinger</label>
+        <button type="button" class="indicator-settings" data-token="bollinger" aria-haspopup="dialog" aria-label="Bollinger settings">⚙</button></div>
+      <div class="indicator-row"><label><input type="checkbox" class="indicator-toggle" value="vwap"> VWAP</label>
+        <button type="button" class="indicator-settings" data-token="vwap" aria-haspopup="dialog" aria-label="VWAP settings">⚙</button></div>
+      <div class="indicator-row"><label><input type="checkbox" class="indicator-toggle" value="rsi" checked> RSI</label>
+        <button type="button" class="indicator-settings" data-token="rsi" aria-haspopup="dialog" aria-label="RSI settings">⚙</button></div>
+      <div class="indicator-row"><label><input type="checkbox" class="indicator-toggle" value="macd"> MACD</label>
+        <button type="button" class="indicator-settings" data-token="macd" aria-haspopup="dialog" aria-label="MACD settings">⚙</button></div>
+      <div class="indicator-row"><label><input type="checkbox" class="indicator-toggle" value="stochastic"> Stochastic</label>
+        <button type="button" class="indicator-settings" data-token="stochastic" aria-haspopup="dialog" aria-label="Stochastic settings">⚙</button></div>
+      <div class="indicator-row"><label><input type="checkbox" class="indicator-toggle" value="atr"> ATR</label>
+        <button type="button" class="indicator-settings" data-token="atr" aria-haspopup="dialog" aria-label="ATR settings">⚙</button></div>
+      <div class="indicator-row"><label><input type="checkbox" class="indicator-toggle" value="volume"> Volume</label>
+        <button type="button" class="indicator-settings" data-token="volume" aria-haspopup="dialog" aria-label="Volume settings">⚙</button></div>
     </fieldset>
     <h2>RSI (14)</h2>
     <p id="rsi" aria-live="polite">–</p>
@@ -76,6 +85,21 @@
     <label for="text-dialog-input">Label</label>
     <input id="text-dialog-input" type="text" maxlength="80" autocomplete="off">
     <button type="submit" value="ok">Add</button>
+    <button type="submit" value="cancel">Cancel</button>
+  </form>
+</dialog>
+
+<dialog id="indicator-settings-dialog" aria-label="Indicator settings">
+  <form method="dialog">
+    <label for="is-color">Color</label>
+    <input id="is-color" type="color" value="#2962ff">
+    <label for="is-width">Line width</label>
+    <input id="is-width" type="number" min="1" max="4" step="1" value="1">
+    <label for="is-period" class="is-period-label">Period</label>
+    <input id="is-period" type="number" min="1" step="1" value="20">
+    <label for="is-precision">Precision</label>
+    <input id="is-precision" type="number" min="0" max="8" step="1" value="2">
+    <button type="submit" value="ok">Apply</button>
     <button type="submit" value="cancel">Cancel</button>
   </form>
 </dialog>

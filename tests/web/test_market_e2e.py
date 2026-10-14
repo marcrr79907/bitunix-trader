@@ -1350,3 +1350,228 @@ def test_interval_change_debounce_saves_preference(seeded_5m_candles, browser_pa
     page.wait_for_timeout(1200)
     assert len(puts) == 1, [r.url for r in puts]
     assert json.loads(puts[0].post_data) == {"interval": "5m"}
+
+
+# --- indicator settings gear + dialog (Slice 2 / F2.6-F2.8) ------------------
+#
+# DOM/computed-style only. The dialog writes the ``styles`` store slot, which
+# flows through the existing ``indicator:changed`` -> rebuild path; the series
+# color/lineWidth/priceFormat are read back via the public v5 pane API
+# (``chart.panes()[i].getSeries().options()``), never an image diff. Existing
+# assertions above are untouched (add-only).
+
+_SETTINGS_GEAR = '.indicator-settings[data-token="sma"]'
+
+
+def _dialog_open(page):
+    """True when the shared settings dialog is on screen (native .open)."""
+    return page.evaluate(
+        "() => document.getElementById('indicator-settings-dialog').open"
+    )
+
+
+def _pane0_series(page):
+    """Line-series options in the price pane: [{color,lineWidth,precision,minMove}]."""
+    return page.evaluate(
+        "() => window.marketChart.chart.panes()[0].getSeries().map((s) => {"
+        " const o = s.options();"
+        " const pf = o.priceFormat || {};"
+        " return { color: o.color, lineWidth: o.lineWidth,"
+        "   precision: pf.precision, minMove: pf.minMove }; }).filter("
+        " (r) => r.color !== undefined)"
+    )
+
+
+@p
+def test_gear_opens_dialog_prefilled(seeded_5m_candles, browser_page):
+    # F2.6/2.1: the gear opens the shared dialog pre-filled from the registry
+    # default style; the period control reflects the token's param.
+    page, base_url = browser_page
+    page.goto(f"{base_url}/market/")
+    page.wait_for_function(
+        "() => window.marketChart && window.marketChart.ready === true",
+        timeout=10000,
+    )
+
+    gear = page.locator(_SETTINGS_GEAR)
+    assert gear.get_attribute("aria-haspopup") == "dialog"
+    gear.focus()
+    gear.press("Enter")
+
+    dialogue = page.locator("#indicator-settings-dialog")
+    assert _dialog_open(page)
+    assert dialogue.get_attribute("aria-label") == "Indicator settings"
+    assert page.locator("#is-color").input_value() == "#2962ff"
+    assert page.locator("#is-width").input_value() == "1"
+    assert page.locator("#is-precision").input_value() == "2"
+    # sma has an editable period param -> visible, pre-filled from params.
+    assert page.locator("#is-period").input_value() == "20"
+    assert page.locator("#is-period").is_visible()
+
+
+@p
+def test_confirm_updates_series_and_persists_across_reload(
+    seeded_5m_candles, browser_page
+):
+    # F2.6/F2.5: applying writes the style slot -> one rebuild -> the sma series
+    # takes the new color/lineWidth/priceFormat; the debounced PUT persists it and
+    # a reload re-applies it from the layout.
+    page, base_url = browser_page
+    puts = []
+    page.on(
+        "request",
+        lambda r: (
+            puts.append(r)
+            if r.method == "PUT" and "/market/api/layout" in r.url
+            else None
+        ),
+    )
+    page.goto(f"{base_url}/market/")
+    page.wait_for_function(
+        "() => window.marketChart && window.marketChart.ready === true",
+        timeout=10000,
+    )
+
+    page.locator(_SETTINGS_GEAR).click()
+    page.evaluate("() => { document.getElementById('is-color').value = '#ff0000'; }")
+    page.locator("#is-width").fill("3")
+    page.locator("#is-precision").fill("4")
+    page.locator('#indicator-settings-dialog button[value="ok"]').click()
+
+    page.wait_for_function(
+        "() => window.marketChart.chart.panes()[0].getSeries().some("
+        " (s) => s.options().color === '#ff0000')",
+        timeout=10000,
+    )
+    red = [r for r in _pane0_series(page) if r["color"] == "#ff0000"]
+    assert red, _pane0_series(page)
+    assert red[0]["lineWidth"] == 3, red
+    assert red[0]["precision"] == 4, red
+    # Exact literal minMove (no Math.pow float drift across V8 versions).
+    assert red[0]["minMove"] == 0.0001, red
+    assert (
+        page.evaluate("() => document.getElementById('indicator-settings-dialog').open")
+        is False
+    )
+
+    # Debounced PUT carries the style for sma, then reload persists it.
+    page.wait_for_timeout(1200)
+    assert len(puts) == 1, [r.url for r in puts]
+    body = json.loads(puts[0].post_data or "{}")
+    sma = next(i for i in body["indicators"] if i["token"] == "sma")
+    assert sma["style"] == {"color": "#ff0000", "lineWidth": 3, "precision": 4}, sma
+
+    page.reload()
+    page.wait_for_function(
+        "() => window.marketChart && window.marketChart.candleSeries"
+        " && window.marketChart.candleSeries.data().length > 0",
+        timeout=10000,
+    )
+    persisted = [r for r in _pane0_series(page) if r["color"] == "#ff0000"]
+    assert persisted, _pane0_series(page)
+
+
+@p
+def test_cancel_makes_no_change(seeded_5m_candles, browser_page):
+    # F2.6: cancelling closes with no store write and no rebuild (no PUT).
+    page, base_url = browser_page
+    puts = []
+    page.on(
+        "request",
+        lambda r: (
+            puts.append(r)
+            if r.method == "PUT" and "/market/api/layout" in r.url
+            else None
+        ),
+    )
+    page.goto(f"{base_url}/market/")
+    page.wait_for_function(
+        "() => window.marketChart && window.marketChart.ready === true",
+        timeout=10000,
+    )
+    before = _pane0_series(page)
+    puts.clear()
+
+    page.locator(_SETTINGS_GEAR).click()
+    page.evaluate("() => { document.getElementById('is-color').value = '#ff0000'; }")
+    page.locator('#indicator-settings-dialog button[value="cancel"]').click()
+
+    page.wait_for_timeout(1200)
+    assert (
+        page.evaluate("() => document.getElementById('indicator-settings-dialog').open")
+        is False
+    )
+    assert _pane0_series(page) == before
+    assert puts == [], [r.url for r in puts]
+
+
+@p
+def test_escape_closes_and_returns_focus(seeded_5m_candles, browser_page):
+    # F2.8: native <dialog> + Esc closes without applying and returns focus to
+    # the gear.
+    page, base_url = browser_page
+    page.goto(f"{base_url}/market/")
+    page.wait_for_function(
+        "() => window.marketChart && window.marketChart.ready === true",
+        timeout=10000,
+    )
+    gear = page.locator(_SETTINGS_GEAR)
+    gear.focus()
+    gear.press("Enter")
+    assert _dialog_open(page)
+
+    page.keyboard.press("Escape")
+    assert (
+        page.evaluate("() => document.getElementById('indicator-settings-dialog').open")
+        is False
+    )
+    assert page.evaluate(
+        "() => document.activeElement === document.querySelector("
+        "'.indicator-settings[data-token=\"sma\"]')"
+    )
+
+
+@p
+def test_dialog_has_no_inline_handler_and_seam_frozen(seeded_5m_candles, browser_page):
+    # F2.8/R18: the dialog markup carries no inline script/handler; the global
+    # seam stays 8 keys.
+    page, base_url = browser_page
+    page.goto(f"{base_url}/market/")
+    page.wait_for_function(
+        "() => window.marketChart && window.marketChart.ready === true",
+        timeout=10000,
+    )
+    assert page.evaluate("() => Object.keys(window.marketChart).length") == 8
+    inline = page.evaluate(
+        "() => { const d = document.getElementById('indicator-settings-dialog');"
+        " if (!d) return ['missing'];"
+        " return Array.prototype.slice.call(d.querySelectorAll('*'))"
+        "   .flatMap((n) => Array.prototype.slice.call(n.attributes))"
+        "   .map((a) => a.name)"
+        "   .filter((n) => /^on/.test(n)); }"
+    )
+    assert inline == [], inline
+
+
+@p
+def test_gear_and_dialog_no_overflow_at_375(seeded_5m_candles, browser_page):
+    # F2.8: the gear and the open dialog cause no horizontal overflow at 375px.
+    page, base_url = browser_page
+    page.set_viewport_size({"width": 375, "height": 800})
+    page.goto(f"{base_url}/market/")
+    page.wait_for_function(
+        "() => window.marketChart && window.marketChart.ready === true",
+        timeout=10000,
+    )
+    page.locator(_SETTINGS_GEAR).click()
+    assert _dialog_open(page)
+    overflow = page.evaluate(
+        "() => document.documentElement.scrollWidth"
+        " - document.documentElement.clientWidth"
+    )
+    assert overflow <= 1, overflow
+    dialog_w = page.evaluate(
+        "() => document.getElementById('indicator-settings-dialog')"
+        ".getBoundingClientRect().width"
+    )
+    assert dialog_w <= 375, dialog_w
