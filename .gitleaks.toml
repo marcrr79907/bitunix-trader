@@ -6,7 +6,10 @@
 useDefault = true
 
 [allowlist]
-description = "Fake credentials in test fixtures are not secrets"
+description = "Fake credentials in tests and SDD planning docs are not secrets"
 paths = [
     '''tests/.*\.py$''',
+    # OpenSpec SDD artifacts are prose/planning docs (spec/design/tasks); the
+    # generic-api-key rule false-positives on phrases like "stays 8 keys".
+    '''openspec/.*\.md$''',
 ]
