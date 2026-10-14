@@ -10,7 +10,7 @@ The split exists so each concern is independently readable and testable
 
 | Layer | Modules | Responsibility | May import |
 |---|---|---|---|
-| Pure cores | `chart-core`, `drawing-core`, `smc-overlay-core` | Timeline/series math, drawing geometry, SMC mapping. No DOM, no chart lib, no network. | nothing |
+| Pure cores | `chart-core`, `chart-types-core`, `drawing-core`, `smc-overlay-core` | Timeline/series math, chart-type vocabulary + Heikin Ashi transform, drawing geometry, SMC mapping. No DOM, no chart lib, no network. | nothing |
 | State | `chart-store`, `chart-bus` | UI/config state + event bus. Store holds **config only, never candles**. | cores |
 | Host | `chart-host` | The ONLY `LightweightCharts` construction surface; owns candle data. | cores |
 | Controllers | `controllers/{indicators,history,stream,drawings,smc,toolbar}` | DOM, REST and stream concerns. DI factories `create({store,bus,host,config})`. | cores, store, bus, host — **never `main`** |
@@ -48,9 +48,9 @@ impossible (unknown name → 404).
 | `/market/<name>.js` | allowlisted module | `views.MODULE_ALLOWLIST` |
 | `/market/controllers/<name>.js` | allowlisted controller | `views.CONTROLLER_ALLOWLIST` |
 
-Allowlisted modules: `chart-core`, `drawing-core`, `smc-overlay-core`,
-`chart-store`, `chart-bus`, `chart-host`, `main`. Controllers: `indicators`,
-`history`, `stream`, `drawings`, `smc`, `toolbar`.
+Allowlisted modules: `chart-core`, `chart-types-core`, `drawing-core`,
+`smc-overlay-core`, `chart-store`, `chart-bus`, `chart-host`, `main`. Controllers:
+`indicators`, `history`, `stream`, `drawings`, `smc`, `toolbar`.
 
 `LightweightCharts` stays a classic CDN global (`unpkg.com`); every other
 script is same-origin ESM, so CSP `script-src 'self' https://unpkg.com` is
