@@ -2081,3 +2081,85 @@ def test_legend_idle_lists_all_active_series_exact(seeded_5m_candles, browser_pa
         "EMA 20",
         "RSI",
     ]
+
+
+# --- F2 settings regression guards (Slice 2 / #144) --------------------------
+#
+# Committed regressions for the probe-only F2 scenarios. DOM/options only; no
+# new seam key. Each test is anti-vacuous: it FAILS if the guarded behavior is
+# removed (RED-check noted in the docstring).
+
+
+def _install_create_chart_counter(page):
+    """Count CDN ``LightweightCharts.createChart`` calls in ``window.__builds``.
+
+    The counter wraps the CDN global — NOT a ``window.marketChart`` seam key —
+    so the frozen 8-key seam is untouched. The CDN global is itself frozen after
+    load, so its ``createChart`` cannot be patched in place; on first access we
+    copy the enumerable API surface into a mutable object and count calls there.
+    The getter is installed before ``goto`` so the deferred module boots against
+    the counting copy.
+    """
+    page.add_init_script(
+        """
+        window.__builds = 0;
+        let _lc = null;
+        Object.defineProperty(window, "LightweightCharts", {
+          configurable: true,
+          get() {
+            if (_lc && !_lc.__wrapped) {
+              const src = _lc;
+              const copy = {};
+              Object.getOwnPropertyNames(src).forEach((k) => {
+                try { copy[k] = src[k]; } catch (e) { /* skip non-readable */ }
+              });
+              const orig = src.createChart;
+              if (typeof orig === "function") {
+                copy.createChart = function () {
+                  window.__builds += 1;
+                  return orig.apply(src, arguments);
+                };
+              }
+              copy.__wrapped = true;
+              _lc = copy;
+            }
+            return _lc;
+          },
+          set(v) { _lc = v; },
+        });
+        """
+    )
+
+
+@p
+def test_style_change_rebuilds_exactly_once(seeded_5m_candles, browser_page):
+    # W2 (RED: emit a second rebuild for one style change -> __builds === 2).
+    # F2.5/#68: confirming a style travels ``indicator:changed`` -> ONE rebuild()
+    # on the setData path; exactly one createChart per confirmed change. The
+    # counter is reset AFTER boot so the delta isolates the style change.
+    # Fallback (if the CDN wrap proves brittle): count one ``/market/api/kline``
+    # GET via ``page.on("request")`` instead of the global counter.
+    page, base_url = browser_page
+    _install_create_chart_counter(page)
+    page.goto(f"{base_url}/market/")
+    _wait_ready(page)
+    assert page.evaluate("() => window.__builds") >= 1, "boot must build at least once"
+
+    # Count builds attributable ONLY to the confirmed style change.
+    page.evaluate("() => { window.__builds = 0; }")
+
+    page.locator(_SETTINGS_GEAR).click()
+    assert _dialog_open(page)
+    page.evaluate("() => { document.getElementById('is-color').value = '#ff0000'; }")
+    page.locator("#is-width").fill("3")
+    page.locator('#indicator-settings-dialog button[value="ok"]').click()
+
+    # The change landed (series took the new color) before we read the count.
+    page.wait_for_function(
+        "() => window.marketChart.chart.panes()[0].getSeries().some("
+        " (s) => s.options().color === '#ff0000')",
+        timeout=10000,
+    )
+    assert page.evaluate("() => window.__builds") == 1
+    # The seam is still frozen after the rebuild.
+    assert page.evaluate("() => Object.keys(window.marketChart).length") == 8

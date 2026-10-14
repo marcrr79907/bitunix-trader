@@ -169,6 +169,27 @@ def test_chart_layout_json_round_trip(user_a):
 
 
 @pytest.mark.django_db
+def test_styled_chart_layout_style_never_crosses_users(user_a, user_b):
+    # F2.9 (#144 W5): a per-indicator ``style`` rides the owned layout row, so the
+    # A≠B isolation contract must cover it too. B's scoped queryset must not see
+    # the row that carries A's style — neither by count nor by pk lookup.
+    styled = [
+        {"token": "sma", "style": {"color": "#ff0000", "lineWidth": 3, "precision": 5}}
+    ]
+    row = ChartLayout.objects.create(
+        user=user_a, symbol="BTCUSDT", interval="1m", indicators=styled
+    )
+
+    assert ChartLayout.for_user(user_b).count() == 0
+    with pytest.raises(ChartLayout.DoesNotExist):
+        ChartLayout.for_user(user_b).get(pk=row.pk)
+
+    # The owner still reads the style back intact (the row is not lost).
+    mine = ChartLayout.for_user(user_a).get(pk=row.pk)
+    assert mine.indicators == styled
+
+
+@pytest.mark.django_db
 def test_chart_layout_owner_is_required():
     with pytest.raises(IntegrityError):
         with transaction.atomic():
