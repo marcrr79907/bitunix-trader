@@ -52,6 +52,7 @@ test("emitting inside a listener does not corrupt the listener list", () => {
 test("EVENTS freezes the command/notification names", () => {
   assert.strictEqual(EVENTS.configChanged, "config:changed");
   assert.strictEqual(EVENTS.indicatorChanged, "indicator:changed");
+  assert.strictEqual(EVENTS.scaleChanged, "scale:changed");
   assert.strictEqual(EVENTS.ready, "ready");
   assert.ok(Object.isFrozen(EVENTS));
 });

@@ -23,6 +23,8 @@ test("get returns the initial config state", () => {
     params: { sma: { sma_len: 20 } },
     styles: undefined,
     smc: { swings: true },
+    scaleMode: undefined,
+    chartType: undefined,
     tool: null,
   });
 });
@@ -68,11 +70,13 @@ test("set never admits candle data — the key set is frozen (#68)", () => {
   assert.strictEqual(seeded.get().candles, undefined);
 });
 
-test("STORE_KEYS is exactly the UI/config vocabulary (7 incl. styles)", () => {
+test("STORE_KEYS is exactly the UI/config vocabulary (9 incl. styles/scaleMode/chartType)", () => {
   assert.deepStrictEqual(STORE_KEYS.slice().sort(), [
+    "chartType",
     "indicators",
     "interval",
     "params",
+    "scaleMode",
     "smc",
     "styles",
     "symbol",

@@ -36,6 +36,8 @@ export function boot(config) {
     params: readParams(),
     styles: {}, // per-token presentation style (F2.4; loaded from layout, never in params)
     smc: readSmc(), // session-only SMC family toggles (R7)
+    scaleMode: "linear", // F8 price-scale option (persistence is Slice 3)
+    chartType: "candles", // F8 candle-series Ctor (persistence is Slice 3)
     tool: null, // active drawing tool ("hline"|"trendline"|"fib"|"rect"|"text")
   });
   const state = store.get();
@@ -134,6 +136,11 @@ export function boot(config) {
     switchTo(p.symbol, p.interval);
   });
   bus.on("indicator:changed", rebuild);
+  // F8: a scale change is a host price-scale OPTION only — no rebuild, no
+  // fetchHistory (#68 held). The store already holds the new mode.
+  bus.on("scale:changed", function () {
+    host.setScaleMode(state.scaleMode);
+  });
 
   function csrfToken() {
     const meta = document.querySelector('meta[name="csrf-token"]');
