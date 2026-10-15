@@ -106,11 +106,13 @@ export function createStream({ store, bus, host, config }) {
     ws.onerror = function () { ws.close(); };
   }
 
-  // Subscribe to the given key: unsubscribe+subscribe on a live socket, else
-  // just record the pending key (the socket connects/subscribes on open).
+  // Subscribe to the given key: unsubscribe+subscribe on a live socket; open the
+  // socket when none exists yet (pre-boot switch); otherwise queue the newest key
+  // while CONNECTING/CLOSING (the socket subscribes it on open).
   function subscribe(next) {
     if (ws && ws.readyState === 1) sendSubscribe(next);
-    else sub = next;
+    else if (!ws) connect(next); // pre-boot: no socket -> open it now
+    else sub = next; // connecting/closing: queue the newest key
   }
 
   return { connect, subscribe };

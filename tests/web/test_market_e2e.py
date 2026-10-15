@@ -8,7 +8,11 @@ The two live-candle scenarios mock the exchange socket via
 ``page.route_web_socket`` (installed BEFORE ``goto``) so frame ordering and
 same-bucket updates are asserted deterministically, no live network/CDN.
 
-Run locally: `playwright install chromium` once, then `python -m pytest -m e2e`.
+Run locally: `playwright install chromium` once, then
+`python -m pytest -m e2e -p no:randomly` on an IDLE machine — the mocked-socket
+tests are timing-sensitive, so a loaded host can flake. Each WS test waits for
+boot readiness (`window.marketChart.ready`) before switching interval or
+injecting frames; readiness, not retry, is the determinism mechanism.
 Deselected by default via addopts; CI never downloads a browser.
 """
 
@@ -267,7 +271,8 @@ def test_chart_renders_seeded_candles(seeded_5m_candles, browser_page):
     page.select_option("#interval", "5m")
     # The page's JS exposes the series for DOM-only assertions (no image diff).
     page.wait_for_function(
-        "() => window.marketChart && window.marketChart.candleSeries.data().length > 0",
+        "() => window.marketChart && window.marketChart.candleSeries &&"
+        " window.marketChart.candleSeries.data().length > 0",
         timeout=10000,
     )
     n = page.evaluate("() => window.marketChart.candleSeries.data().length")
@@ -288,7 +293,8 @@ def test_chart_infinite_scroll_loads_older_page(seeded_5m_candles, browser_page)
     page.goto(f"{base_url}/market/")
     page.select_option("#interval", "5m")
     page.wait_for_function(
-        "() => window.marketChart && window.marketChart.candleSeries.data().length > 0",
+        "() => window.marketChart && window.marketChart.candleSeries &&"
+        " window.marketChart.candleSeries.data().length > 0",
         timeout=10000,
     )
     initial = page.evaluate("() => window.marketChart.candleSeries.data().length")
@@ -345,7 +351,8 @@ def test_ws_switch_unsubscribes_before_subscribing(seeded_5m_candles, browser_pa
 
     page.select_option("#interval", "5m")
     page.wait_for_function(
-        "() => window.marketChart && window.marketChart.candleSeries.data().length > 0",
+        "() => window.marketChart && window.marketChart.candleSeries &&"
+        " window.marketChart.candleSeries.data().length > 0",
         timeout=10000,
     )
 
@@ -369,9 +376,11 @@ def test_ws_same_bucket_updates_in_place(seeded_5m_candles, browser_page):
 
     page.route_web_socket("wss://fapi.bitunix.com/**", handler)
     page.goto(f"{base_url}/market/")
+    _wait_ready(page)  # socket OPEN before switching + injecting frames
     page.select_option("#interval", "5m")
     page.wait_for_function(
-        "() => window.marketChart && window.marketChart.candleSeries.data().length > 0",
+        "() => window.marketChart && window.marketChart.candleSeries &&"
+        " window.marketChart.candleSeries.data().length > 0",
         timeout=10000,
     )
 
@@ -418,9 +427,11 @@ def test_ws_stream_never_calls_setdata(seeded_5m_candles, browser_page):
 
     page.route_web_socket("wss://fapi.bitunix.com/**", handler)
     page.goto(f"{base_url}/market/")
+    _wait_ready(page)  # socket OPEN before switching + injecting frames
     page.select_option("#interval", "5m")
     page.wait_for_function(
-        "() => window.marketChart && window.marketChart.candleSeries.data().length > 0",
+        "() => window.marketChart && window.marketChart.candleSeries &&"
+        " window.marketChart.candleSeries.data().length > 0",
         timeout=10000,
     )
 
@@ -481,9 +492,11 @@ def test_ws_stale_channel_push_during_switch(seeded_5m_candles, browser_page):
 
     page.route_web_socket("wss://fapi.bitunix.com/**", handler)
     page.goto(f"{base_url}/market/")  # boot on 1m
+    _wait_ready(page)  # socket OPEN before switching + injecting frames
     page.select_option("#interval", "5m")
     page.wait_for_function(
-        "() => window.marketChart && window.marketChart.candleSeries.data().length > 0",
+        "() => window.marketChart && window.marketChart.candleSeries &&"
+        " window.marketChart.candleSeries.data().length > 0",
         timeout=10000,
     )
     # The 5m rebuild loads history exactly once (single setData for the switch).
@@ -686,7 +699,8 @@ def test_selected_indicator_renders_a_pane(seeded_5m_candles, browser_page):
     page.goto(f"{base_url}/market/")
     page.select_option("#interval", "5m")
     page.wait_for_function(
-        "() => window.marketChart && window.marketChart.candleSeries.data().length > 0",
+        "() => window.marketChart && window.marketChart.candleSeries &&"
+        " window.marketChart.candleSeries.data().length > 0",
         timeout=10000,
     )
     page.wait_for_function(
@@ -825,7 +839,8 @@ def test_click_with_tool_fires_post(seeded_5m_candles, browser_page):
     _wait_ready(page)
     page.select_option("#interval", "5m")
     page.wait_for_function(
-        "() => window.marketChart && window.marketChart.candleSeries.data().length > 0",
+        "() => window.marketChart && window.marketChart.candleSeries &&"
+        " window.marketChart.candleSeries.data().length > 0",
         timeout=10000,
     )
     page.locator('.draw-tool[data-kind="hline"]').click()
@@ -1083,7 +1098,8 @@ def test_legend_overlay_shows_ohlc_and_updates_on_crosshair(
     page.goto(f"{base_url}/market/")
     page.select_option("#interval", "5m")
     page.wait_for_function(
-        "() => window.marketChart && window.marketChart.candleSeries.data().length > 0",
+        "() => window.marketChart && window.marketChart.candleSeries &&"
+        " window.marketChart.candleSeries.data().length > 0",
         timeout=10000,
     )
 
@@ -1141,7 +1157,8 @@ def test_legend_overlay_styling_and_375px_fit(seeded_5m_candles, browser_page):
     page.goto(f"{base_url}/market/")
     page.select_option("#interval", "5m")
     page.wait_for_function(
-        "() => window.marketChart && window.marketChart.candleSeries.data().length > 0",
+        "() => window.marketChart && window.marketChart.candleSeries &&"
+        " window.marketChart.candleSeries.data().length > 0",
         timeout=10000,
     )
 
@@ -1972,7 +1989,8 @@ def test_legend_resubscribes_across_rebuild(seeded_5m_candles, browser_page):
     page.goto(f"{base_url}/market/")
     page.select_option("#interval", "5m")
     page.wait_for_function(
-        "() => window.marketChart && window.marketChart.candleSeries.data().length > 0",
+        "() => window.marketChart && window.marketChart.candleSeries &&"
+        " window.marketChart.candleSeries.data().length > 0",
         timeout=10000,
     )
     # Default actives: sma + ema (overlays) + rsi (pane) -> exactly 3 rows.
@@ -2020,7 +2038,8 @@ def test_legend_aria_live_debounced_not_per_move(seeded_5m_candles, browser_page
     page.goto(f"{base_url}/market/")
     page.select_option("#interval", "5m")
     page.wait_for_function(
-        "() => window.marketChart && window.marketChart.candleSeries.data().length > 0",
+        "() => window.marketChart && window.marketChart.candleSeries &&"
+        " window.marketChart.candleSeries.data().length > 0",
         timeout=10000,
     )
     page.wait_for_function(
@@ -2068,7 +2087,8 @@ def test_legend_idle_lists_all_active_series_exact(seeded_5m_candles, browser_pa
     page.goto(f"{base_url}/market/")
     page.select_option("#interval", "5m")
     page.wait_for_function(
-        "() => window.marketChart && window.marketChart.candleSeries.data().length > 0",
+        "() => window.marketChart && window.marketChart.candleSeries &&"
+        " window.marketChart.candleSeries.data().length > 0",
         timeout=10000,
     )
     page.wait_for_function(
