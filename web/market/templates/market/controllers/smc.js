@@ -12,6 +12,20 @@ const MAP_WIDTH_REF = { width: 0 }; // live canvas width, refreshed each draw
 const RAY_WIDTH = 40; // px length of a BOS/CHoCH ray
 const FVG_HALF_WIDTH = 6; // px half-width of an FVG box
 
+// Theme-aware swing connector (D3): read the resolved token from the shell so
+// light (dark text) and dark (#8b949e) both stay legible on the canvas. Falls
+// back to the light literal (#616161, 6.2:1 on white) if the var is absent.
+function connectorColor() {
+  try {
+    const v = getComputedStyle(document.documentElement)
+      .getPropertyValue("--chart-connector")
+      .trim();
+    return v || "#616161";
+  } catch (_e) {
+    return "#616161";
+  }
+}
+
 // DOM -> {family: bool} for the SMC overlay (absent element => all ON).
 export function readSmc() {
   const out = {};
@@ -121,9 +135,9 @@ export function createSmc({ store, bus, host, config }) {
     });
 
     // Swing zig-zag polyline + pivot labels (label-less first swing still draws).
-    // #616161 keeps the connector at 6.2:1 on the white chart canvas (WCAG 1.4.11
-    // non-text floor is 3:1; the old #9e9e9e fell to 2.7:1).
-    ctx.strokeStyle = "#616161";
+    // The connector color is theme-aware (D3): dark #8b949e, light #616161
+    // (both clear the WCAG 1.4.11 non-text floor of 3:1 on their canvas).
+    ctx.strokeStyle = connectorColor();
     ctx.beginPath();
     let started = false;
     d.swings.forEach(function (s) {

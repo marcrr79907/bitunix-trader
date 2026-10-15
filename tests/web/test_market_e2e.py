@@ -2309,3 +2309,180 @@ def test_shell_desktop_panel_and_chip_a11y(seeded_5m_candles, browser_page):
         " return getComputedStyle(el).outlineStyle; }"
     )
     assert outline != "none", outline
+
+
+# --- chart-theme persistence + shell + control (Slice 2, add-only) -----------
+#
+# DOM/computed-style/options assertions only (no image diffs, no new seam key).
+# The theme control (native <select id="theme">) resolves against the OS media
+# query, writes ``data-theme`` on the root (never "system"), and flips the
+# canvas options option-only (#68). Reload persists; system tracks emulate_media.
+# Kept OFF the WS path (no route_web_socket) so it never rides the DEBT-8 flake.
+
+
+@p
+def test_theme_control_present_labelled_and_options(seeded_5m_candles, browser_page):
+    # R27: the theme control renders with an accessible name + the frozen vocab,
+    # inside the existing toolbar (no new controller), with no inline handler.
+    page, base_url = browser_page
+    page.goto(f"{base_url}/market/")
+    _wait_ready(page)
+
+    theme = page.locator("#theme")
+    assert theme.count() == 1
+    assert theme.get_attribute("aria-label") == "Theme"
+    opts = page.evaluate(
+        "() => Array.from(document.getElementById('theme').options).map((o) => o.value)"
+    )
+    assert opts == ["light", "dark", "system"], opts
+    inline = page.evaluate(
+        "() => Array.prototype.slice.call(document.getElementById('theme').attributes)"
+        ".map((a) => a.name).filter((n) => /^on/.test(n))"
+    )
+    assert inline == [], inline
+    # The control is not display:none/hidden (native + Playwright-actionable).
+    assert theme.is_visible()
+
+
+@p
+def test_theme_change_flips_data_theme_and_canvas_options(
+    seeded_5m_candles, browser_page
+):
+    # CT2/CT5/R27 (#68): choosing light sets data-theme="light" AND swaps the
+    # canvas options via applyOptions only — no setData on the candle series.
+    page, base_url = browser_page
+    page.goto(f"{base_url}/market/")
+    _wait_ready(page)
+    # Force a starting dark for a deterministic DOM flip.
+    page.select_option("#theme", "dark")
+    page.wait_for_function(
+        "() => document.documentElement.dataset.theme === 'dark'", timeout=5000
+    )
+    dark_bg = page.evaluate(
+        "() => window.marketChart.chart.options().layout.background.color"
+    )
+    assert dark_bg == "#0e1117", dark_bg
+
+    # Spy on setData AFTER boot: a live theme flip must never write data.
+    page.evaluate(
+        "() => { const s = window.marketChart.candleSeries; window.__setDataCalls = 0;"
+        " const orig = s.setData.bind(s); s.setData = function(){"
+        " window.__setDataCalls++; return orig.apply(s, arguments); }; }"
+    )
+    page.select_option("#theme", "light")
+    page.wait_for_function(
+        "() => document.documentElement.dataset.theme === 'light'", timeout=5000
+    )
+    light_bg = page.evaluate(
+        "() => window.marketChart.chart.options().layout.background.color"
+    )
+    assert light_bg == "#ffffff", light_bg
+    assert page.evaluate("() => window.__setDataCalls") == 0
+    # Never the preference value "system" (CT2).
+    assert page.evaluate("() => document.documentElement.dataset.theme") == "light"
+
+
+@p
+def test_theme_change_debounce_persists_only_theme(seeded_5m_candles, browser_page):
+    # CT6/R27: a theme change debounce-PUTs only {theme} to the preference API.
+    page, base_url = browser_page
+    puts = []
+    page.on(
+        "request",
+        lambda r: (
+            puts.append(r)
+            if "/market/api/preference" in r.url and r.method == "PUT"
+            else None
+        ),
+    )
+    page.goto(f"{base_url}/market/")
+    _wait_ready(page)
+
+    page.select_option("#theme", "dark")
+    page.wait_for_function(
+        "() => document.documentElement.dataset.theme === 'dark'", timeout=5000
+    )
+    page.wait_for_timeout(900)  # let the debounce fire
+
+    bodies = [json.loads(r.post_data or "{}") for r in puts]
+    assert bodies and bodies[-1] == {"theme": "dark"}, bodies
+
+
+@p
+def test_theme_round_trip_persists_across_reload(seeded_5m_candles, browser_page):
+    # CT6: change the theme, reload, and both layers restore from the server.
+    page, base_url = browser_page
+    page.goto(f"{base_url}/market/")
+    _wait_ready(page)
+
+    page.select_option("#theme", "light")
+    page.wait_for_function(
+        "() => document.documentElement.dataset.theme === 'light'", timeout=5000
+    )
+    page.wait_for_timeout(900)  # let the debounce PUT land
+
+    page.reload()
+    _wait_ready(page)
+    assert page.evaluate("() => document.documentElement.dataset.theme") == "light"
+    assert page.locator("#theme").input_value() == "light"
+    assert (
+        page.evaluate(
+            "() => window.marketChart.chart.options().layout.background.color"
+        )
+        == "#ffffff"
+    )
+    assert page.evaluate("() => Object.keys(window.marketChart).length") == 8
+
+
+@pytest.fixture
+def saved_theme_preference(e2e_user):
+    """Seed a theme preference BEFORE the Playwright context (CT6 boot restore)."""
+    from trading.models import ChartPreference
+
+    ChartPreference.objects.create(user=e2e_user, theme="dark")
+    return e2e_user
+
+
+@p
+def test_boot_restores_saved_theme(
+    seeded_5m_candles, saved_theme_preference, browser_page
+):
+    # CT6: a persisted theme wins on boot — the select + root attribute + chart
+    # options all reflect it before any interaction.
+    page, base_url = browser_page
+    page.goto(f"{base_url}/market/")
+    _wait_ready(page)
+
+    assert page.locator("#theme").input_value() == "dark"
+    assert page.evaluate("() => document.documentElement.dataset.theme") == "dark"
+    assert (
+        page.evaluate(
+            "() => window.marketChart.chart.options().layout.background.color"
+        )
+        == "#0e1117"
+    )
+
+
+@p
+def test_system_theme_follows_emulated_color_scheme(seeded_5m_candles, browser_page):
+    # CT3: with the preference "system", the resolved theme follows the OS media
+    # query — emulate dark -> "dark", emulate light -> "light" (never "system").
+    page, base_url = browser_page
+    page.emulate_media(color_scheme="dark")
+    page.goto(f"{base_url}/market/")
+    _wait_ready(page)
+    assert page.locator("#theme").input_value() == "system"
+    assert page.evaluate("() => document.documentElement.dataset.theme") == "dark"
+
+    page.emulate_media(color_scheme="light")
+    page.select_option("#theme", "light")
+    page.select_option("#theme", "system")
+    page.wait_for_function(
+        "() => document.documentElement.dataset.theme === 'light'", timeout=5000
+    )
+    assert (
+        page.evaluate(
+            "() => window.marketChart.chart.options().layout.background.color"
+        )
+        == "#ffffff"
+    )

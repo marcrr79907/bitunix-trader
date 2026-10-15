@@ -309,4 +309,5 @@ class ChartPreference(UserOwnedModel):
     last_interval = models.CharField(max_length=8, default="1m")
     scale_mode = models.CharField(max_length=16, default="linear")
     chart_type = models.CharField(max_length=16, default="candles")
+    theme = models.CharField(max_length=16, default="system")
     updated_at = models.DateTimeField(auto_now=True)
