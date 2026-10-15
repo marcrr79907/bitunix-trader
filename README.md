@@ -54,6 +54,12 @@ se desactivan con aviso y el monitor sigue funcionando.
 - Chart del panel web (módulos ESM): [`docs/architecture/chart-modules.md`](docs/architecture/chart-modules.md)
 - Deployment (CI/CD, Railway, cron): [`docs/deployment.md`](docs/deployment.md)
 
+## Tests
+
+- Unitarios + integración: `python -m pytest` (los E2E quedan deseleccionados por `addopts`).
+- E2E (solo dev, requieren navegador): `playwright install chromium` una vez, luego
+  `python -m pytest -m e2e -p no:randomly` en una máquina ociosa (sin otras cargas).
+
 ## Riesgo
 
 Apalancamiento sugerido para arrancar: 5-10x. Riesgo por operación ≤ 1-2% del capital.
