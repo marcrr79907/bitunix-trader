@@ -34,6 +34,10 @@ function withChartStub(fn) {
   const prevWin = globalThis.window;
   const created = [];
   const priceScales = [];
+  // Captured createChart calls: {el, opts} — theme-core option assertions read
+  // opts.layout. ColorType.Solid is DELIBERATELY NON-STANDARD (99) so a magic
+  // number (0/1/2) fails, mirroring the PriceScaleMode discipline.
+  const charts = [];
   function makeSeries() {
     const s = { optionsArgs: null, calls: [] };
     s.applyOptions = (o) => { s.style = { ...(s.style || {}), ...o }; };
@@ -48,12 +52,16 @@ function withChartStub(fn) {
     HistogramSeries: "hist",
     CandlestickSeries: "candles",
     PriceScaleMode: { Normal: 70, Logarithmic: 71, Percentage: 72 },
-    createChart: () => {
+    ColorType: { Solid: 99 },
+    createChart: (el, opts) => {
+      const chartObj = {};
       const ps = { id: null, applied: [] };
-      return {
-        addSeries: (Ctor, opts) => { const s = makeSeries(); s.optionsArgs = opts || {}; s.ctor = Ctor; return s; },
+      chartObj.applied = [];
+      Object.assign(chartObj, {
+        addSeries: (Ctor, opts2) => { const s = makeSeries(); s.optionsArgs = opts2 || {}; s.ctor = Ctor; return s; },
         remove: () => {},
         timeScale: () => ({ subscribeVisibleLogicalRangeChange: () => {} }),
+        applyOptions: (o) => chartObj.applied.push(o),
         priceScale: (id) => {
           ps.id = id;
           if (!priceScales.includes(ps)) priceScales.push(ps);
@@ -62,13 +70,15 @@ function withChartStub(fn) {
             options: () => Object.assign({}, ...ps.applied),
           };
         },
-      };
+      });
+      charts.push({ el, opts, chart: chartObj });
+      return chartObj;
     },
   };
   globalThis.document = { getElementById: () => ({}) };
   globalThis.window = { marketChart: {} };
   try {
-    return fn(created, priceScales);
+    return fn(created, priceScales, charts);
   } finally {
     globalThis.LightweightCharts = prevLC;
     globalThis.document = prevDoc;
@@ -288,6 +298,73 @@ test("HA live is stable across MULTIPLE same-bucket ticks (C1 regression)", () =
     const last = cs.calls.slice(-1)[0].data;
     // haOpen = (prevHaOpen 11 + prevHaClose 13.75) / 2 = 12.375
     assert.strictEqual(last.open, 12.375);
+  });
+});
+
+// --- theme host contract (R22 / CT4 / CT5) ---------------------------------
+//
+// The chart is BORN themed: build() merges optionsFor(state.theme) into the sole
+// createChart call. A live flip is OPTION-ONLY (#68): setTheme -> applyOptions,
+// never setData/update. ColorType.Solid is a SYMBOL (stub = 99, never a number).
+
+test("build is born themed: createChart carries the themed layout (R22)", () => {
+  withChartStub((created, priceScales, charts) => {
+    const host = createHost();
+    host.build({ theme: "light", indicators: [] });
+    const opts = charts[0].opts;
+    assert.strictEqual(opts.layout.background.color, "#ffffff");
+    assert.strictEqual(opts.layout.textColor, "#1f2328");
+    assert.strictEqual(opts.layout.background.type, 99);
+    // The pre-existing host options survive the merge.
+    assert.strictEqual(opts.autoSize, true);
+    assert.strictEqual(opts.timeScale.timeVisible, true);
+  });
+});
+
+test("build defaults to the system-resolved theme when state.theme is absent", () => {
+  withChartStub((created, priceScales, charts) => {
+    const host = createHost();
+    host.build({ indicators: [] });
+    // No prefersDark in the Node env -> resolves to light.
+    assert.strictEqual(charts[0].opts.layout.background.color, "#ffffff");
+  });
+});
+
+test("build keeps the ColorType.Solid symbol, never a magic number (R22)", () => {
+  withChartStub((created, priceScales, charts) => {
+    const host = createHost();
+    host.build({ theme: "dark", indicators: [] });
+    assert.strictEqual(charts[0].opts.layout.background.type, 99);
+    assert.notStrictEqual(charts[0].opts.layout.background.type, 0);
+  });
+});
+
+test("setTheme is option-only: applyOptions, no setData/update (#68)", () => {
+  withChartStub((created, priceScales, charts) => {
+    const host = createHost();
+    host.build({ theme: "dark", indicators: [] });
+    const cs = candleSeriesOf(created);
+    const dataCallsBefore = cs.calls.length;
+    const appliedBefore = charts[0].chart.applied.length;
+
+    host.setTheme("light");
+
+    const applied = charts[0].chart.applied.slice(appliedBefore);
+    assert.strictEqual(applied.length, 1, "one applyOptions call");
+    assert.strictEqual(applied[0].layout.background.color, "#ffffff");
+    assert.strictEqual(applied[0].layout.textColor, "#1f2328");
+    assert.strictEqual(applied[0].layout.background.type, 99);
+    // No data write on a live theme flip (#68).
+    assert.strictEqual(cs.calls.length, dataCallsBefore);
+    assert.strictEqual(cs.calls.filter((c) => c.method === "setData").length, 0);
+    assert.strictEqual(cs.calls.filter((c) => c.method === "update").length, 0);
+  });
+});
+
+test("setTheme before a chart is a null-guarded no-op", () => {
+  withChartStub(() => {
+    const host = createHost();
+    assert.doesNotThrow(() => host.setTheme("dark"));
   });
 });
 
