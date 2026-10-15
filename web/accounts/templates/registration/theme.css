@@ -7,6 +7,24 @@
   --fs-1:20px; --fs-2:15px; --fs-3:13px;
   --sp-1:4px; --sp-2:8px; --sp-3:12px; --sp-4:16px;
   --r:8px; --mono:ui-monospace,SFMono-Regular,Menlo,monospace;
+  /* Canvas series tokens (D3): the two theme-aware series colors the chart
+     reads via getComputedStyle (v5 options hold literals; CSS is the shell
+     source). Dark is the default block. */
+  --chart-text:#e6edf3; --chart-connector:#8b949e;
+}
+
+/* Light palette (R1): selected by [data-theme="light"] on the root. Declares
+   the SAME custom-property names as :root — no token missing from either set.
+   [data-theme="dark"] is intentionally absent: the :root block is the dark set,
+   so an explicit dark preference falls through to it. */
+[data-theme="light"]{
+  --bg:#ffffff; --bg-2:#f6f8fa; --surface:#eaeef2; --border:#d0d7de;
+  --text:#1f2328; --muted:#57606a; --accent:#0969da;
+  --up:#1a7f37; --dn:#cf222e;
+  --fs-1:20px; --fs-2:15px; --fs-3:13px;
+  --sp-1:4px; --sp-2:8px; --sp-3:12px; --sp-4:16px;
+  --r:8px; --mono:ui-monospace,SFMono-Regular,Menlo,monospace;
+  --chart-text:#1f2328; --chart-connector:#616161;
 }
 
 *{box-sizing:border-box}

@@ -1,8 +1,8 @@
 // controllers/toolbar.js — pair buttons + interval select + interval chips +
-// sidebar collapse toggle + F8 scale/type selects.
+// sidebar collapse toggle + F8 scale/type selects + theme control.
 //
-// DI factory (R14): ``createToolbar({store, bus, config})``. LEAF module — never
-// imports main. A pair/interval change is a command on the bus
+// DI factory (R14): ``createToolbar({store, bus, config, onTheme})``. LEAF module
+// — never imports main. A pair/interval change is a command on the bus
 // (``config:changed``); main owns the switch. Owns only the toolbar DOM
 // listeners.
 //
@@ -14,9 +14,16 @@
 // (SCALE_MODES/CHART_TYPES — single source, no option copy in HTML). Scale
 // emits the light ``scale:changed``; type reuses ``indicator:changed`` so main
 // owns the rebuild (R26).
+//
+// theme (R27/CT2/CT3): the theme control is a native ``<select>`` in the SAME
+// controller (no new controller, no new bus event). On change it resolves the
+// preference against the OS media query, sets ``data-theme`` on the root to the
+// RESOLVED value, and calls the ``main``-injected ``onTheme({resolved, pref})``
+// callback (the option-only host flip + debounced save live in main).
 import { SCALE_MODES, CHART_TYPES } from "../chart-types-core.js";
+import { resolve as resolveTheme, prefersDark } from "../theme-core.js";
 
-export function createToolbar({ store, bus }) {
+export function createToolbar({ store, bus, config, onTheme }) {
   const select = document.getElementById("interval");
   const state = store.get();
 
@@ -108,6 +115,42 @@ export function createToolbar({ store, bus }) {
     });
   }
 
+  // --- theme control (R27) ----------------------------------------------------
+  // One resolve site (CT2/CT3): the toolbar turns a preference into the
+  // RESOLVED value, writes ``data-theme`` (never "system") and hands the value
+  // to main's ``onTheme`` callback. NO bus event (R20). ``matchMedia`` change
+  // re-applies only while the preference stays "system" (CT3).
+  const themeSelect = document.getElementById("theme");
+  const mql =
+    typeof window !== "undefined" && window.matchMedia
+      ? window.matchMedia("(prefers-color-scheme: dark)")
+      : null;
+
+  function applyTheme(pref) {
+    const resolved = resolveTheme(pref, prefersDark());
+    document.documentElement.dataset.theme = resolved;
+    return resolved;
+  }
+
+  function notifyTheme(pref) {
+    const resolved = applyTheme(pref);
+    if (typeof onTheme === "function") onTheme({ resolved: resolved, pref: pref });
+    return resolved;
+  }
+
+  if (themeSelect) {
+    themeSelect.value = store.get().theme || "system";
+    themeSelect.addEventListener("change", function (e) {
+      notifyTheme(e.target.value);
+    });
+  }
+  if (mql) {
+    // Re-resolve on an OS flip, but only while the user chose "system" (CT3).
+    mql.addEventListener("change", function () {
+      if (themeSelect && themeSelect.value === "system") notifyTheme("system");
+    });
+  }
+
   // --- sidebar collapse toggle (≤820px) ---------------------------------------
   const toggle = document.querySelector(".panel-toggle");
   const layout = document.querySelector(".market-layout");
@@ -132,5 +175,13 @@ export function createToolbar({ store, bus }) {
     if (typeSelect && type) typeSelect.value = type;
   }
 
-  return { setInterval, setScaleMode, setChartType };
+  // Reflect + apply a restored theme preference on boot (CT6). Called by main
+  // BEFORE the first build so the shell tokens start themed; it returns the
+  // RESOLVED value for main to seed ``state.theme`` (no onTheme/save on boot).
+  function setTheme(pref) {
+    if (themeSelect && pref) themeSelect.value = pref;
+    return applyTheme(pref || (themeSelect ? themeSelect.value : "system"));
+  }
+
+  return { setInterval, setScaleMode, setChartType, setTheme };
 }

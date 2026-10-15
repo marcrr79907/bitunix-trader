@@ -38,6 +38,7 @@ export function boot(config) {
     smc: readSmc(), // session-only SMC family toggles (R7)
     scaleMode: "linear", // F8 price-scale option (persistence is Slice 3)
     chartType: "candles", // F8 candle-series Ctor (persistence is Slice 3)
+    theme: "system", // resolved theme (light/dark) after boot; pref "system" default
     tool: null, // active drawing tool ("hline"|"trendline"|"fib"|"rect"|"text")
   });
   const state = store.get();
@@ -63,7 +64,19 @@ export function boot(config) {
   const stream = createStream({ store, bus, host, config });
   const drawings = createDrawings({ store, bus, host, config });
   const smc = createSmc({ store, bus, host, config });
-  const toolbar = createToolbar({ store, bus, config });
+  // Theme (R27/CT2/CT3): the toolbar resolves + writes ``data-theme``, then
+  // calls this callback (NO bus event — R20). Live flip is option-only (#68);
+  // only a user change persists (boot has its own restore path).
+  const toolbar = createToolbar({
+    store,
+    bus,
+    config,
+    onTheme: function (p) {
+      state.theme = p.resolved;
+      host.setTheme(p.resolved);
+      savePreference({ theme: p.pref });
+    },
+  });
   // Read-only legend overlay: re-subscribes on chart:built internally, so no
   // buildChart change is needed (design: keeps main wiring to +1 line).
   createLegend({ store, bus, host, config });
@@ -191,10 +204,11 @@ export function boot(config) {
           interval: (body && body.interval) || "1m",
           scaleMode: (body && body.scale_mode) || "linear",
           chartType: (body && body.chart_type) || "candles",
+          theme: (body && body.theme) || "system",
         };
       })
       .catch(function () {
-        return { interval: "1m", scaleMode: "linear", chartType: "candles" };
+        return { interval: "1m", scaleMode: "linear", chartType: "candles", theme: "system" };
       });
   }
 
@@ -214,6 +228,10 @@ export function boot(config) {
       state.chartType = pref.chartType;
       savedChartType = pref.chartType;
       state.interval = pref.interval;
+      // Apply the restored theme BEFORE the first build (CT6): setTheme writes
+      // ``data-theme`` (shell tokens) and returns the RESOLVED value that makes
+      // ``build()`` born themed.
+      state.theme = toolbar.setTheme(pref.theme);
       toolbar.setInterval(pref.interval);
       toolbar.setScaleMode(pref.scaleMode);
       toolbar.setChartType(pref.chartType);

@@ -6,7 +6,7 @@
 // (e.g. ``candles``) is silently dropped.
 //
 //   state = { symbol, interval, indicators, params, styles, smc, scaleMode,
-//             chartType, tool }
+//             chartType, theme, tool }
 //
 // API: get() -> state (same reference) | set(patch) -> merge + emit |
 //      subscribe(fn) -> unsubscribe.
@@ -19,6 +19,7 @@ export const STORE_KEYS = [
   "smc",
   "scaleMode",
   "chartType",
+  "theme",
   "tool",
 ];
 
