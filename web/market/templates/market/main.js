@@ -122,11 +122,14 @@ export function boot(config) {
 
   function switchTo(symbol, interval) {
     const mine = ++gen;
+    const symbolChanged = symbol !== state.symbol;
     state.symbol = symbol;
     state.interval = interval;
-    // Clear the previous key's drawings + SMC immediately: shapes/primitives/
-    // markers never cross keys (R7/R8). The bumps invalidate in-flight fetches.
-    drawings.clearForSwitch();
+    // Drawings are per SYMBOL (R1/R7): clear + reload ONLY when the symbol
+    // changed; an interval-only switch keeps the shapes attached with no
+    // refetch (buildChart re-attaches them). SMC is per (symbol, interval), so
+    // it always clears. The bumps invalidate in-flight fetches.
+    if (symbolChanged) drawings.clearForSwitch();
     smc.clearForSwitch();
     host.setLastBucket(0);
     stream.subscribe({ symbol: symbol, interval: interval });
@@ -136,6 +139,7 @@ export function boot(config) {
     indicators.loadLayout(symbol, interval).then(function () {
       if (mine !== gen) return; // a newer switch won the race
       buildChart();
+      if (!symbolChanged) return; // interval-only: drawings stay, no refetch
       return drawings.refreshDrawings();
     }).then(function () {
       if (mine !== gen) return;

@@ -231,11 +231,13 @@ class ChartLayout(UserOwnedModel):
 
 
 class Drawing(UserOwnedModel):
-    """Per-user chart annotation collection (R14, R1): one row per shape.
+    """Per-user, per-SYMBOL chart annotation collection (R14, R1): one row per shape.
 
     Unlike ``ChartLayout`` (one row per chart), a chart holds **many** drawings,
-    so there is **no unique constraint** on ``(user, symbol, interval)`` — only
-    an index for the filtered read. ``kind`` is one of ``Kind``; ``points`` is a
+    so there is **no unique constraint** on ``(user, symbol)`` — only an index
+    for the filtered read. The key is the SYMBOL (not the interval): a drawing is
+    visible across every interval of a pair (TradingView-style) and is cleared
+    only on a symbol change. ``kind`` is one of ``Kind``; ``points`` is a
     per-kind JSON object and ``style`` a JSON object (see design schemas).
     """
 
@@ -247,7 +249,6 @@ class Drawing(UserOwnedModel):
         TEXT = "text"
 
     symbol = models.CharField(max_length=32)
-    interval = models.CharField(max_length=8)
     kind = models.CharField(max_length=16, choices=Kind.choices)
     points = models.JSONField(default=dict)
     style = models.JSONField(default=dict)
@@ -256,8 +257,8 @@ class Drawing(UserOwnedModel):
     class Meta:
         indexes = [
             models.Index(
-                fields=["user", "symbol", "interval"],
-                name="ix_drawing_user_sym_interval",
+                fields=["user", "symbol"],
+                name="ix_drawing_user_symbol",
             )
         ]
 
