@@ -1887,6 +1887,7 @@ def test_preference_get_default_when_absent():
         "interval": "1m",
         "scale_mode": "linear",
         "chart_type": "candles",
+        "theme": "system",
         "exists": False,
     }
     assert ChartPreference.objects.count() == 0
@@ -1899,6 +1900,7 @@ def test_preference_put_then_get_round_trip():
         "interval": "1h",
         "scale_mode": "linear",
         "chart_type": "candles",
+        "theme": "system",
         "exists": True,
     }
 
@@ -1907,6 +1909,7 @@ def test_preference_put_then_get_round_trip():
         "interval": "1h",
         "scale_mode": "linear",
         "chart_type": "candles",
+        "theme": "system",
         "exists": True,
     }
 
@@ -1942,6 +1945,7 @@ def test_preference_put_empty_body_writes_nothing_and_returns_defaults():
         "interval": "1m",
         "scale_mode": "linear",
         "chart_type": "candles",
+        "theme": "system",
         "exists": False,
     }
     assert ChartPreference.objects.count() == 0
@@ -1958,6 +1962,7 @@ def test_preference_put_empty_body_returns_saved_when_present():
         "interval": "2h",
         "scale_mode": "log",
         "chart_type": "area",
+        "theme": "system",
         "exists": True,
     }
     assert ChartPreference.for_user(AUTH_USER).count() == 1
@@ -2002,6 +2007,7 @@ def test_preference_isolation_b_get_never_sees_a():
         "interval": "1m",
         "scale_mode": "linear",
         "chart_type": "candles",
+        "theme": "system",
         "exists": False,
     }
 
@@ -2035,6 +2041,7 @@ def test_preference_get_is_not_scoped_to_interval_query_param():
         "interval": "12h",
         "scale_mode": "linear",
         "chart_type": "candles",
+        "theme": "system",
         "exists": True,
     }
 
@@ -2049,6 +2056,7 @@ def test_preference_put_scale_then_get_round_trip():
         "interval": "1m",
         "scale_mode": "log",
         "chart_type": "candles",
+        "theme": "system",
         "exists": True,
     }
     assert USER.get(PREF_URL).json()["scale_mode"] == "log"
@@ -2061,6 +2069,7 @@ def test_preference_put_chart_type_then_get_round_trip():
         "interval": "1m",
         "scale_mode": "linear",
         "chart_type": "heikin-ashi",
+        "theme": "system",
         "exists": True,
     }
     assert USER.get(PREF_URL).json()["chart_type"] == "heikin-ashi"
@@ -2077,6 +2086,7 @@ def test_preference_partial_put_updates_only_present_key():
         "interval": "1h",
         "scale_mode": "log",
         "chart_type": "line",
+        "theme": "system",
         "exists": True,
     }
     row = ChartPreference.for_user(AUTH_USER).get()
@@ -2136,5 +2146,103 @@ def test_preference_isolation_b_never_sees_a_scale_or_type():
         "interval": "1m",
         "scale_mode": "linear",
         "chart_type": "candles",
+        "theme": "system",
         "exists": False,
     }
+
+
+# --- Slice 2 (chart-theme): theme preference endpoint (R8/R9/R13) ------------
+
+
+def test_preference_theme_vocabulary_is_frozen():
+    # R13: quotes.THEMES is the sole validator for the theme field.
+    from market import quotes
+
+    assert quotes.THEMES == ("light", "dark", "system")
+
+
+def test_preference_get_default_includes_system_theme():
+    from trading.models import ChartPreference
+
+    response = USER.get(PREF_URL)
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "interval": "1m",
+        "scale_mode": "linear",
+        "chart_type": "candles",
+        "theme": "system",
+        "exists": False,
+    }
+    assert ChartPreference.objects.count() == 0
+
+
+def test_preference_put_theme_then_get_round_trip():
+    put = _put_pref(USER, {"theme": "light"})
+    assert put.status_code == 200
+    assert put.json() == {
+        "interval": "1m",
+        "scale_mode": "linear",
+        "chart_type": "candles",
+        "theme": "light",
+        "exists": True,
+    }
+    assert USER.get(PREF_URL).json()["theme"] == "light"
+
+
+def test_preference_partial_put_theme_applies_only_theme():
+    from trading.models import ChartPreference
+
+    _put_pref(USER, {"interval": "1h", "scale_mode": "log", "chart_type": "area"})
+    response = _put_pref(USER, {"theme": "dark"})
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "interval": "1h",
+        "scale_mode": "log",
+        "chart_type": "area",
+        "theme": "dark",
+        "exists": True,
+    }
+    row = ChartPreference.for_user(AUTH_USER).get()
+    assert (row.last_interval, row.scale_mode, row.chart_type, row.theme) == (
+        "1h",
+        "log",
+        "area",
+        "dark",
+    )
+
+
+def test_preference_put_invalid_theme_is_400_and_writes_nothing():
+    from trading.models import ChartPreference
+
+    response = _put_pref(USER, {"theme": "bogus"})
+
+    assert response.status_code == 400
+    assert "error" in response.json()
+    assert ChartPreference.objects.count() == 0
+
+
+def test_preference_theme_round_trip_across_reload():
+    # CT6: a saved theme persists and is returned by a later GET (round-trip).
+    _put_pref(USER, {"theme": "dark"})
+    assert USER.get(PREF_URL).json()["theme"] == "dark"
+    _put_pref(USER, {"theme": "system"})
+    assert USER.get(PREF_URL).json()["theme"] == "system"
+
+
+def test_preference_isolation_b_never_sees_a_theme():
+    from django.contrib.auth import get_user_model
+    from trading.models import ChartPreference
+
+    ChartPreference.objects.create(user=AUTH_USER, last_interval="4h", theme="dark")
+
+    b_client = Client()
+    b = get_user_model().objects.create_user(
+        email="pref-theme-b@example.com", password="pw-123456"
+    )
+    b_client.force_login(b)
+
+    body = b_client.get(PREF_URL).json()
+    assert body["theme"] == "system"
+    assert body["exists"] is False

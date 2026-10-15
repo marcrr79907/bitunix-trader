@@ -22,6 +22,7 @@ from market.quotes import (
     DEFAULT_LAYOUT,
     INTERVALS,
     SCALE_MODES,
+    THEMES,
     get_kline_payload,
     get_smc_payload,
     parse_drawing,
@@ -307,6 +308,7 @@ def api_preference(request: HttpRequest) -> JsonResponse:
                 "interval": "1m",
                 "scale_mode": "linear",
                 "chart_type": "candles",
+                "theme": "system",
                 "exists": False,
             }
         )
@@ -318,6 +320,7 @@ def _preference_body(pref) -> dict:
         "interval": pref.last_interval,
         "scale_mode": pref.scale_mode,
         "chart_type": pref.chart_type,
+        "theme": pref.theme,
         "exists": True,
     }
 
@@ -345,6 +348,10 @@ def _put_preference(request: HttpRequest) -> JsonResponse:
         if body["chart_type"] not in CHART_TYPES:
             return JsonResponse({"error": "invalid chart_type"}, status=400)
         defaults["chart_type"] = body["chart_type"]
+    if "theme" in body:
+        if body["theme"] not in THEMES:
+            return JsonResponse({"error": "invalid theme"}, status=400)
+        defaults["theme"] = body["theme"]
 
     if not defaults:
         # Nothing to apply: return the current preference (or the defaults)
@@ -356,6 +363,7 @@ def _put_preference(request: HttpRequest) -> JsonResponse:
                     "interval": "1m",
                     "scale_mode": "linear",
                     "chart_type": "candles",
+                    "theme": "system",
                     "exists": False,
                 }
             )

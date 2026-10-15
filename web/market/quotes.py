@@ -57,6 +57,8 @@ INTERVALS = (
 # the two new ``ChartPreference`` fields. Membership checks only, no copies.
 SCALE_MODES = ("linear", "log", "percentage")
 CHART_TYPES = ("candles", "line", "area", "heikin-ashi")
+# R13: the theme preference vocabulary ("system" follows the OS media query).
+THEMES = ("light", "dark", "system")
 
 
 CHART_KEYS = ("time", "open", "high", "low", "close")
