@@ -766,7 +766,6 @@ def seeded_drawings(e2e_user):
     Drawing.objects.create(
         user=e2e_user,
         symbol="BTCUSDT",
-        interval="1m",
         kind="hline",
         points={"price": 50000.0},
         style={"color": "#2962ff", "lineWidth": 1},
@@ -774,7 +773,6 @@ def seeded_drawings(e2e_user):
     Drawing.objects.create(
         user=e2e_user,
         symbol="BTCUSDT",
-        interval="1m",
         kind="rect",
         points={"p1": {"time": 1, "price": 1.0}, "p2": {"time": 2, "price": 2.0}},
         style={"color": "#26a69a", "fill": True},
@@ -783,22 +781,20 @@ def seeded_drawings(e2e_user):
 
 
 @pytest.fixture
-def per_interval_drawings(e2e_user):
-    """Drawings on (BTCUSDT,1m) and (BTCUSDT,5m): a switch must clear + reload."""
+def per_symbol_drawings(e2e_user):
+    """A drawing on BTCUSDT and a different one on ETHUSDT (per SYMBOL, R1)."""
     from trading.models import Drawing
 
     Drawing.objects.create(
         user=e2e_user,
         symbol="BTCUSDT",
-        interval="1m",
         kind="hline",
         points={"price": 1.0},
         style={},
     )
     Drawing.objects.create(
         user=e2e_user,
-        symbol="BTCUSDT",
-        interval="5m",
+        symbol="ETHUSDT",
         kind="hline",
         points={"price": 2.0},
         style={},
@@ -856,7 +852,8 @@ def test_click_with_tool_fires_post(seeded_5m_candles, browser_page):
     body = json.loads(posts[0].post_data or "{}")
     assert body["kind"] == "hline"
     assert body["symbol"] == "BTCUSDT"
-    assert body["interval"] == "5m"
+    # R2: the drawing body is per SYMBOL now — ``interval`` is no longer sent.
+    assert "interval" not in body
     assert "price" in body["points"]
 
 
@@ -888,15 +885,39 @@ def test_delete_from_panel_fires_delete(seeded_drawings, browser_page):
 
 
 @p
-def test_switch_clears_then_loads_drawings(per_interval_drawings, browser_page):
-    # R7: switching interval clears the previous key's shapes and loads the new.
+def test_interval_switch_keeps_drawings(seeded_drawings, browser_page):
+    # R7: a drawing is per SYMBOL, so an interval-only switch keeps every shape
+    # attached and issues NO drawings refetch.
+    page, base_url = browser_page
+    page.goto(f"{base_url}/market/")
+    _wait_ready(page)
+    assert page.evaluate("() => window.marketChart.drawings.length") == 2
+
+    fetches = []
+    page.on(
+        "request",
+        lambda r: fetches.append(r.url) if "/market/api/drawings?" in r.url else None,
+    )
+    page.select_option("#interval", "5m")
+    page.wait_for_function(
+        "() => window.marketChart.smc && window.marketChart.smc.interval === '5m'",
+        timeout=10000,
+    )
+    # Shapes survived the interval switch unchanged (same symbol).
+    assert page.evaluate("() => window.marketChart.drawings.length") == 2
+    assert fetches == [], f"unexpected drawings refetch: {fetches}"
+
+
+@p
+def test_symbol_switch_clears_then_loads_drawings(per_symbol_drawings, browser_page):
+    # R7: switching SYMBOL clears the previous shapes and loads the new symbol's.
     page, base_url = browser_page
     page.goto(f"{base_url}/market/")
     _wait_ready(page)
     assert page.evaluate("() => window.marketChart.drawings.length") == 1
     assert page.evaluate("() => window.marketChart.drawings[0].points.price") == 1.0
 
-    page.select_option("#interval", "5m")
+    page.locator('.pair[data-symbol="ETHUSDT"]').click()
     page.wait_for_function(
         "() => window.marketChart.drawings.length === 1"
         " && window.marketChart.drawings[0].points.price === 2.0",

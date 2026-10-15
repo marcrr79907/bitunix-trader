@@ -202,7 +202,6 @@ def test_drawing_cross_user_get_denied(user_a, user_b):
     drawing = Drawing.objects.create(
         user=user_a,
         symbol="BTCUSDT",
-        interval="1m",
         kind="hline",
         points={"price": 1.0},
     )
@@ -216,30 +215,19 @@ def test_drawing_cross_user_get_denied(user_a, user_b):
 
 @pytest.mark.django_db
 def test_drawing_for_user_scopes_to_the_owner(user_a, user_b):
-    Drawing.objects.create(user=user_a, symbol="BTCUSDT", interval="1m", kind="hline")
+    Drawing.objects.create(user=user_a, symbol="BTCUSDT", kind="hline")
     assert Drawing.for_user(user_a).count() == 1
     assert Drawing.for_user(user_b).count() == 0
 
 
 @pytest.mark.django_db
-def test_drawing_many_per_key_coexist(user_a):
-    # R1: a drawing is a collection — many rows on the same key, no unique constraint.
-    first = Drawing.objects.create(
-        user=user_a, symbol="BTCUSDT", interval="1m", kind="hline"
-    )
-    second = Drawing.objects.create(
-        user=user_a, symbol="BTCUSDT", interval="1m", kind="trendline"
-    )
+def test_drawing_many_per_symbol_coexist(user_a):
+    # R1: a drawing is a collection — many rows on the same symbol,
+    # no unique constraint.
+    first = Drawing.objects.create(user=user_a, symbol="BTCUSDT", kind="hline")
+    second = Drawing.objects.create(user=user_a, symbol="BTCUSDT", kind="trendline")
 
     assert first.pk != second.pk
-    assert Drawing.for_user(user_a).count() == 2
-
-
-@pytest.mark.django_db
-def test_drawing_distinct_intervals_coexist(user_a):
-    Drawing.objects.create(user=user_a, symbol="BTCUSDT", interval="1m", kind="hline")
-    Drawing.objects.create(user=user_a, symbol="BTCUSDT", interval="1h", kind="hline")
-
     assert Drawing.for_user(user_a).count() == 2
 
 
@@ -248,7 +236,6 @@ def test_drawing_kind_stored(user_a):
     Drawing.objects.create(
         user=user_a,
         symbol="BTCUSDT",
-        interval="1m",
         kind="fib",
         points={"levels": [0.5]},
     )
@@ -266,29 +253,35 @@ def test_drawing_json_round_trip(user_a):
     Drawing.objects.create(
         user=user_a,
         symbol="BTCUSDT",
-        interval="1m",
         kind="trendline",
         points=points,
         style=style,
     )
 
-    saved = Drawing.for_user(user_a).get(symbol="BTCUSDT", interval="1m")
+    saved = Drawing.for_user(user_a).get(symbol="BTCUSDT")
     assert saved.points == points
     assert saved.style == style
 
 
 def test_drawing_index_and_no_unique_constraint():
-    # R1: index on (user, symbol, interval); a collection has NO unique constraint.
+    # R1: index on (user, symbol); a collection has NO unique constraint.
+    # The per-symbol key drops ``interval`` entirely.
     names = {idx.name for idx in Drawing._meta.indexes}
-    assert "ix_drawing_user_sym_interval" in names
+    assert names == {"ix_drawing_user_symbol"}
     assert Drawing._meta.constraints == []
+
+
+def test_drawing_has_no_interval_field():
+    # R1: the key is per SYMBOL — ``interval`` no longer exists on the model.
+    field_names = {f.name for f in Drawing._meta.get_fields()}
+    assert "interval" not in field_names
 
 
 @pytest.mark.django_db
 def test_drawing_owner_is_required():
     with pytest.raises(IntegrityError):
         with transaction.atomic():
-            Drawing.objects.create(symbol="BTCUSDT", interval="1m", kind="hline")
+            Drawing.objects.create(symbol="BTCUSDT", kind="hline")
 
 
 @pytest.mark.django_db

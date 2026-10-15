@@ -380,27 +380,25 @@ def _put_preference(request: HttpRequest) -> JsonResponse:
 @login_required
 @require_http_methods(["GET", "POST"])
 def api_drawings(request: HttpRequest) -> JsonResponse:
-    """Per-user drawing collection (R2): GET lists, POST creates.
+    """Per-user, per-SYMBOL drawing collection (R2): GET lists, POST creates.
 
     All access routes through ``Drawing.for_user`` — no unscoped query in this
-    request path (R14.3). GET never 404s (an empty key returns ``[]``). POST
+    request path (R14.3). GET keys on ``symbol`` ONLY (no ``interval``; a stray
+    query key is ignored) and never 404s (an empty symbol returns ``[]``). POST
     validates the payload BEFORE writing; a bad body → 400 with no row created.
+    An incoming ``interval`` key is accepted and ignored (stale clients).
     """
     if request.method == "POST":
         return _post_drawing(request)
 
     symbol = request.GET.get("symbol", "")
-    interval = request.GET.get("interval", "")
     if not symbol:
         return JsonResponse({"error": "symbol required"}, status=400)
-    if interval not in INTERVALS:
-        return JsonResponse({"error": "invalid interval"}, status=400)
 
-    rows = Drawing.for_user(request.user).filter(symbol=symbol, interval=interval)
+    rows = Drawing.for_user(request.user).filter(symbol=symbol)
     return JsonResponse(
         {
             "symbol": symbol,
-            "interval": interval,
             "drawings": [
                 {"id": d.id, "kind": d.kind, "points": d.points, "style": d.style}
                 for d in rows
@@ -418,11 +416,10 @@ def _post_drawing(request: HttpRequest) -> JsonResponse:
         return JsonResponse({"error": "invalid body"}, status=400)
 
     symbol = body.get("symbol", "")
-    interval = body.get("interval", "")
     if not symbol:
         return JsonResponse({"error": "symbol required"}, status=400)
-    if interval not in INTERVALS:
-        return JsonResponse({"error": "invalid interval"}, status=400)
+    # ``interval`` is deliberately NOT read: the key is per SYMBOL now. A stale
+    # client may still send one — accept-and-ignore, never 400 (R4).
     try:
         points, style = parse_drawing(
             body.get("kind"), body.get("points"), body.get("style")
@@ -434,7 +431,6 @@ def _post_drawing(request: HttpRequest) -> JsonResponse:
     drawing = Drawing.for_user(request.user).create(
         user=request.user,
         symbol=symbol,
-        interval=interval,
         kind=body["kind"],
         points=points,
         style=style,
