@@ -55,16 +55,19 @@ Frozen sets (alpha channel never used; v5 `applyOptions` gets full values, never
 |---|---|---|
 | background.color | `#0e1117` | `#ffffff` |
 | layout.textColor | `#e6edf3` | `#1f2328` |
-| grid color | `#2a3240` | `#d0d7de` |
+| grid color | `#5a6a80` | `#7d8794` |
 | crosshair color | `#8b949e` | `#57606a` |
 | crosshair labelBackgroundColor | `#1c2230` | `#eaeef2` |
-| rightPriceScale/timeScale.borderColor | `#2a3240` | `#d0d7de` |
+| rightPriceScale/timeScale.borderColor | `#5a6a80` | `#7d8794` |
 | `--chart-text` (series) | `#e6edf3` | `#1f2328` |
 | `--chart-connector` (series) | `#8b949e` | `#616161` (kept) |
 
 Contrast method: a pure `contrastRatio(hexA, hexB)` (WCAG 2.x relative-luminance) in
 `tests/js/theme-core.test.js` asserts axis text vs background ≥4.5:1 for BOTH sets
 (dark ≈16.0:1, light ≈16.4:1) and grid/border/connector ≥3:1 (non-text floor).
+Note: the initially-drafted grid/border colors (`#2a3240`/`#d0d7de`) measured
+1.47:1/1.45:1 and FAILED the ≥3:1 floor; the shipped values `#5a6a80` (3.43:1) /
+`#7d8794` (3.64:1) satisfy it. Spec wins over the draft literal.
 
 ## Data Flow
 
