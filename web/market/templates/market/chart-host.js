@@ -11,6 +11,7 @@
 // The candle channel (series, raw array, HA state) lives in chart-host-candles.
 import * as Types from "./chart-types-core.js";
 import { createCandles } from "./chart-host-candles.js";
+import { optionsFor, prefersDark, resolve as resolveTheme } from "./theme-core.js";
 
 export const REGISTRY = {
   sma: { place: "overlay", series: [{ key: "sma", type: "line", color: "#2962ff" }] },
@@ -155,9 +156,12 @@ export function createHost() {
   function build(state) {
     const el = document.getElementById("chart");
     if (chart) chart.remove();
+    // Born themed (theme-core owns the tables; R14 size). state.theme is RESOLVED.
+    const theme = optionsFor(state.theme ?? resolveTheme("system", prefersDark()));
     chart = LightweightCharts.createChart(el, {
+      ...theme,
       autoSize: true,
-      timeScale: { timeVisible: true },
+      timeScale: { ...theme.timeScale, timeVisible: true },
     });
     const type = Types.isValidType(state.chartType) ? state.chartType : "candles";
     scaleMode = Types.isValidScale(state.scaleMode) ? state.scaleMode : "linear";
@@ -222,6 +226,12 @@ export function createHost() {
 
   // --- scale mode (F8) --------------------------------------------------------
 
+  // Theme setter (CT5): option-only, no data write (#68). No-op before a chart.
+  function setTheme(resolved) {
+    if (!chart) return;
+    chart.applyOptions(optionsFor(resolved));
+  }
+
   // Map the UI vocab to the v5 PriceScaleMode SYMBOL and apply it to the right
   // price scale. Option-only: never setData/update (#68). Unknown -> Normal.
   function applyScale() {
@@ -275,6 +285,7 @@ export function createHost() {
     setCandles,
     updateCandle,
     setScaleMode,
+    setTheme,
     dataKey,
     seriesFromPayload,
     rsiValues,
