@@ -49,6 +49,13 @@ three schemas below are valid. Unknown `type`, unknown `op`, or a scalar-only
 violation MUST evaluate to `False` (never raise). The schema MUST NOT change
 without a new capability delta.
 
+**`direction` is REQUIRED (clarifying note; W1).** For `smc_setup`, `direction`
+MUST be present in the stored condition — there is no default. A missing or
+unknown `direction` is a **configuration breach** and MUST raise `ValueError` at
+parse time (`_parse_smc_setup`), NOT evaluate to `False`. This is the schema
+contract; the frozen design prose that reads as if `direction` were optional with
+a default is stale.
+
 | `type` | Required keys | Constraint |
 |--------|---------------|------------|
 | `price` | `op` (`above\|below`), `level` (number) | strict compare on latest close |
@@ -69,6 +76,18 @@ unsupported in v1 (deferred to an additive sub-selector key).
 - GIVEN `condition={"type":"indicator","name":"macd",...}`
 - WHEN the engine evaluates it
 - THEN the result is `False` (no exception)
+
+#### Scenario: Missing direction is a config breach
+
+- GIVEN `condition={"type":"smc_setup"}` (no `direction`)
+- WHEN the condition is parsed
+- THEN `ValueError` is raised (never silently defaulted)
+
+#### Scenario: Explicit direction is accepted
+
+- GIVEN `condition={"type":"smc_setup","direction":"any"}`
+- WHEN the condition is parsed
+- THEN it parses and `direction` is `"any"`
 
 ### Requirement: R3 — Condition `matches` semantics
 

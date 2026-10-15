@@ -44,7 +44,8 @@ extremes in v1. Mismatched-length input MUST return `None` without raising.
 
 `classify_price(price, range_)` MUST return `"premium"` when `price >
 range_.equilibrium`, `"discount"` when `price < range_.equilibrium`, and
-`"equilibrium"` when equal. The function MUST be pure and MUST NOT raise on any
+`"equilibrium"` when equal. When `range_` is `None` (no dealing range available),
+it MUST return `"equilibrium"`. The function MUST be pure and MUST NOT raise on any
 finite input.
 
 #### Scenario: Above equilibrium is premium
@@ -64,6 +65,12 @@ finite input.
 - GIVEN `range_` with `equilibrium=100.0`
 - WHEN `classify_price(100.0, range_)` runs
 - THEN it returns `"equilibrium"`
+
+#### Scenario: None range is equilibrium
+
+- GIVEN `range_ = None`
+- WHEN `classify_price(101.0, None)` runs
+- THEN it returns `"equilibrium"` without raising
 
 ### Requirement: R3 — Determinism, purity, never-raise
 
@@ -88,3 +95,4 @@ input MUST return `None` and MUST NOT raise.
 | `lookback` larger than series | range over the whole series |
 | flat market (`high == low`) | `equilibrium == high == low` |
 | price exactly at equilibrium | `"equilibrium"` |
+| `range_ is None` passed to `classify_price` | `"equilibrium"` |

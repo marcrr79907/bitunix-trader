@@ -120,6 +120,15 @@ swept when `lows[t] < swing.price` AND `closes[t] > swing.price` →
 `Sweep("high", t, swing.price, "bearish")`. At most the MOST RECENT qualifying
 swing per side per bar MUST emit. Output MUST be ordered by `index`.
 
+**Known simplification — confirmed-swings-only, ≤2-bar look-ahead (W4).** The
+finder consumes only swings already emitted by B1 (`find_swings` stops at
+`n - right`, so a swing at index `s` is confirmed `right` (=2) bars later). It
+iterates `t` and considers any `s` with `s.index <= t` and `t - s.index <=
+lookback`, with no explicit `s.index + right <= t` guard. Because only confirmed
+swings are handed back, a bar `t` can "see" a swing whose confirmation bar is
+after `t` only within a ≤2-bar edge window. This is an intentional simplification
+(no re-look-ahead guard), documented here, not a defect.
+
 #### Scenario: Bullish sweep of a low
 
 - GIVEN swing low at `100.0`, bar `t` with `lows[t]=99.5`, `closes[t]=100.5`
@@ -143,6 +152,12 @@ swing per side per bar MUST emit. Output MUST be ordered by `index`.
 - GIVEN a swing more than `lookback` bars before `t`
 - WHEN it runs
 - THEN it is not considered for a sweep
+
+#### Scenario: ≤2-bar confirmation edge is permitted
+
+- GIVEN a confirmed swing at index `s` whose confirmation bar (`s.index + 2`) is at or after `t`
+- WHEN `t - s.index <= lookback` and the wick/close conditions hold
+- THEN a `Sweep` MAY be emitted at `t` (≤2-bar look-ahead is by design)
 
 ### Requirement: R5 — Determinism, purity, never-raise
 
@@ -169,4 +184,5 @@ mismatched-length input MUST return `[]` and MUST NOT raise.
 | `tolerance=0.0`, unequal prices | no `EqualLevel` |
 | sweep wick without close-back-inside | no `Sweep` |
 | swing older than `lookback` | not sweepable |
+| swing within ≤2 bars of confirmation (confirmed-swings-only) | sweepable at the edge bar (by design) |
 | overlapping zones | separate records, never merged |
