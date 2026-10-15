@@ -77,6 +77,15 @@ def test_smc_overlay_core_served_as_javascript(client):
     assert b"setupMarkers" in response.content
 
 
+def test_theme_core_served_as_javascript(client):
+    # CT1/R14: the pure theme core is same-origin and NOT auth-gated (no state).
+    response = client.get("/market/theme-core.js")
+    assert response.status_code == 200
+    assert response["Content-Type"] == "text/javascript"
+    assert b"optionsFor" in response.content
+    assert b"resolve" in response.content
+
+
 def test_market_page_includes_smc_core_and_toggles(logged_in_client):
     # R7/R11: the page loads the core same-origin and exposes one toggle per
     # family via data-family (no inline handler).

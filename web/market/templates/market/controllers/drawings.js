@@ -9,6 +9,8 @@ function csrfToken() {
   const meta = document.querySelector('meta[name="csrf-token"]');
   return meta ? meta.content : "";
 }
+// D5: new text drawings adopt --chart-text (persisted rows keep their color).
+const textStyle = () => { const b = Draw.defaultStyle("text"); try { return { ...b, color: getComputedStyle(document.documentElement).getPropertyValue("--chart-text").trim() || b.color }; } catch { return b; } };
 
 export function createDrawings({ store, bus, host, config }) {
   const state = store.get();
@@ -240,7 +242,7 @@ export function createDrawings({ store, bus, host, config }) {
         textDialogInput.value = "";
         textDialog.showModal();
       } else {
-        createDrawing("text", { time: param.time, price: price, text: "note" }, Draw.defaultStyle("text"));
+        createDrawing("text", { time: param.time, price: price, text: "note" }, textStyle());
         pendingAnchor = null;
       }
       return;
@@ -276,7 +278,7 @@ export function createDrawings({ store, bus, host, config }) {
         createDrawing(
           "text",
           { time: pendingAnchor.time, price: pendingAnchor.price, text: text },
-          Draw.defaultStyle("text"),
+          textStyle(),
         );
       }
       pendingAnchor = null;

@@ -25,6 +25,7 @@ test("get returns the initial config state", () => {
     smc: { swings: true },
     scaleMode: undefined,
     chartType: undefined,
+    theme: undefined,
     tool: null,
   });
 });
@@ -70,7 +71,7 @@ test("set never admits candle data — the key set is frozen (#68)", () => {
   assert.strictEqual(seeded.get().candles, undefined);
 });
 
-test("STORE_KEYS is exactly the UI/config vocabulary (9 incl. styles/scaleMode/chartType)", () => {
+test("STORE_KEYS is exactly the UI/config vocabulary (10 incl. styles/scaleMode/chartType/theme)", () => {
   assert.deepStrictEqual(STORE_KEYS.slice().sort(), [
     "chartType",
     "indicators",
@@ -80,8 +81,19 @@ test("STORE_KEYS is exactly the UI/config vocabulary (9 incl. styles/scaleMode/c
     "smc",
     "styles",
     "symbol",
+    "theme",
     "tool",
   ]);
+});
+
+test("theme is a top-level UI slot, never nested and never candle data (#68)", () => {
+  const store = createStore({ symbol: "BTCUSDT", interval: "1m", theme: "dark" });
+  assert.strictEqual(store.get().theme, "dark");
+  store.set({ theme: "light" });
+  assert.strictEqual(store.get().theme, "light");
+  // Candle data still never enters the frozen vocabulary.
+  store.set({ candles: [{ time: 1 }] });
+  assert.strictEqual(store.get().candles, undefined);
 });
 
 test("styles is a top-level slot, never nested under params", () => {
