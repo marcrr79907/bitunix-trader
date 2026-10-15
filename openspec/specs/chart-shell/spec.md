@@ -145,16 +145,17 @@ At a 375px viewport the page MUST NOT scroll horizontally
 
 ### Requirement: R25 — Accessibility, CSP, no new dependency
 
-Interactive chips, the toggle, and the F8 scale/type `<select>`s MUST have a
-visible focus state and accessible names; state MUST NOT rely on color alone
-(`aria-pressed` on chips, native select value for the new controls). No inline
-`<script>`/handler MAY be added; the market `Content-Security-Policy` MUST be
-unchanged and `requirements.txt` MUST be unchanged.
-(Previously: the rule covered the chips and the collapse toggle only.)
+Interactive chips, the toggle, the F8 scale/type `<select>`s, and the theme
+control MUST have a visible focus state and accessible names; state MUST NOT rely
+on color alone (`aria-pressed` on chips, native select value for the selects and
+the theme control). No inline `<script>`/handler MAY be added; the market
+`Content-Security-Policy` MUST be unchanged and `requirements.txt` MUST be
+unchanged.
+(Previously: the rule covered the chips, the toggle, and the scale/type selects.)
 
 #### Scenario: Focus and names
 
-- GIVEN a keyboard user on the chips, the toggle, or the two selects
+- GIVEN a keyboard user on the chips, the toggle, or the selects
 - WHEN focus moves onto them
 - THEN a visible focus indicator appears and each has an accessible name
 
@@ -203,6 +204,41 @@ The controls MUST live in the existing `toolbar` controller — no new controlle
 - GIVEN the change
 - WHEN the controller inventory is inspected
 - THEN the two selects live in `controllers/toolbar.js` and no controller was added
+
+### Requirement: R27 — Theme control
+
+The toolbar MUST render one native theme control with options from the frozen
+vocabulary `light`/`dark`/`system` and an accessible name, placed in the panel
+near the interval/scale/type controls. Changing it MUST set
+`document.documentElement.dataset.theme` to the RESOLVED value, call the host's
+option-only `setTheme` (no rebuild), and debounce-PUT `{theme}` to
+`/market/api/preference`. It MUST NOT be `display:none`/`hidden` (native and
+Playwright-actionable), MUST live in the existing `toolbar` controller (no new
+controller), and MUST NOT add a bus event or a `window.marketChart` key.
+
+#### Scenario: Theme control exists and is labelled
+
+- GIVEN the rendered `/market/` page
+- WHEN the toolbar is inspected
+- THEN the theme control exists with an accessible name and options `light`/`dark`/`system`
+
+#### Scenario: Change flips both layers live
+
+- GIVEN the theme control
+- WHEN `light` is chosen
+- THEN `document.documentElement.dataset.theme === "light"`, the host `setTheme` runs option-only, and exactly one debounced `PUT {theme:"light"}` is observed
+
+#### Scenario: Control restores the preference
+
+- GIVEN a saved `theme="dark"`
+- WHEN the page boots
+- THEN the theme control reflects `dark` and the root `data-theme` is `"dark"`
+
+#### Scenario: No new controller or bus event
+
+- GIVEN the change
+- WHEN the controller inventory and bus events are inspected
+- THEN the control lives in `controllers/toolbar.js`, no controller was added, and no new bus event exists
 
 ## Non-Applicable Domains
 

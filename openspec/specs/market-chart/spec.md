@@ -559,10 +559,11 @@ fragment.
 Modules MUST follow a frozen inventory: entry `chart.js` (thin: Django-injected
 `CONFIG` + imports + `boot()`), pure cores `chart-core.js`/`drawing-core.js`/
 `smc-overlay-core.js`/`legend-core.js`/`indicator-settings-core.js`/
-`chart-types-core.js`, `chart-store.js` (UI/config state ONLY — MUST NOT hold
-candle data; its vocabulary is
-`symbol, interval, indicators, params, styles, smc, scaleMode, chartType, tool`),
-`chart-bus.js`, `chart-host.js` (chart/series/panes/scales/crosshair), the
+`chart-types-core.js`/`theme-core.js`, `chart-store.js` (UI/config state ONLY —
+MUST NOT hold candle data; its vocabulary is
+`symbol, interval, indicators, params, styles, smc, scaleMode, chartType, theme,
+tool`), `chart-bus.js`, `chart-host.js` (chart/series/panes/scales/crosshair +
+candle data), the
 host-layer sub-module `chart-host-candles.js` (candle channel: `CANDLE_CTORS`,
 the candle series, the raw `candles` array, and the incremental HA state;
 factory `createCandles(chart, chartType) -> {getCandleSeries, getCandles,
@@ -579,22 +580,25 @@ enforced by the committed guard `tests/web/test_module_size_guard.py`
 `chart-host.js` MUST be ≤ ~300 lines (back under the ceiling after the
 extraction). Any module above `CEILING` MUST fail the guard.
 
-(Previously: the inventory did not list `chart-host-candles.js`; `chart-host.js`
-was 326 lines and carried the candle channel inline, surviving via an annotated
-`ALLOWLIST = {"chart-host.js"}` exemption — DEBT-5 / #146.)
+(Previously: the store vocabulary had no `theme` and the pure-core list had no
+`theme-core.js`.)
 
 #### Scenario: Inventory and no-cycle
 
-- GIVEN the delivered modules, WHEN imports resolve, THEN the inventory (including `chart-types-core.js` and `chart-host-candles.js`) exists, `chart-types-core.js` imports nothing, no controller imports `main`, and `main.js` has no cycles
+- GIVEN the delivered modules, WHEN imports resolve, THEN the inventory (including `chart-types-core.js`, `chart-host-candles.js`, and `theme-core.js`) exists, `theme-core.js` imports nothing, no controller imports `main`, and `main.js` has no cycles
 
 #### Scenario: Store never holds candles
 
-- GIVEN `chart-store.js`, WHEN its keys are inspected, THEN it holds only UI/config (`symbol, interval, indicators, params, styles, smc, scaleMode, chartType, tool`) — no candle data
+- GIVEN `chart-store.js`, WHEN its keys are inspected, THEN it holds only UI/config (`symbol, interval, indicators, params, styles, smc, scaleMode, chartType, theme, tool`) — no candle data
 
 #### Scenario: Size ceiling with empty allowlist
 
 - GIVEN every module, WHEN `tests/web/test_module_size_guard.py` reads line counts
-- THEN it passes at `CEILING = 300` with an EMPTY `ALLOWLIST` (no exemption), `chart-host.js` is ≤ ~300 lines, and any module above the ceiling fails
+- THEN it passes at `CEILING = 300` with an EMPTY `ALLOWLIST` (no exemption), `chart-host.js` stays ≤ ~300 lines, and any module above the ceiling fails
+
+#### Scenario: New theme core is served
+
+- GIVEN `theme-core`, WHEN requested under `/market/` with a JS MIME type, THEN it is served 200 (missing from the allowlist → 404 → blank chart)
 
 #### Scenario: New candle sub-module is served
 
@@ -602,7 +606,7 @@ was 326 lines and carried the candle channel inline, surviving via an annotated
 
 #### Scenario: No behavior change
 
-- GIVEN the extraction, WHEN the 138 node tests and the E2E suite run
+- GIVEN the change, WHEN the node tests and the E2E suite run
 - THEN they pass with NO behavior-assertion edits, the 8-key seam
   (`window.marketChart`) is unchanged, the C1 same-bucket HA fix is preserved
   verbatim, and the HA contract (`chart-types-core`) is untouched
@@ -712,29 +716,30 @@ on a prior chart MUST be considered dead; consumers MUST re-subscribe after each
 
 ### Requirement: R20 — Shell change stays inside the frozen host/seam envelope
 
-The `autoSize: true` host option, the `#chart` markup change, and the F8 chart-type
-and scale controls MUST stay within R14 (host owns construction) and MUST NOT add a
-`window.marketChart` key. `window.marketChart` MUST keep exactly its 8 frozen keys
-`{chart, candleSeries, panes, ready, drawings, smc, smcCounts, smcToggles}` and
-`window.SmcOverlayCore` MUST be untouched. The E2E seam shape and timing (R18) and
-the single-write-path invariants (R17) MUST be preserved; the existing E2E
-assertions MUST stay green with NO edits. F8 MAY add exactly one bus event,
-`scale:changed` (`{mode}`), which MUST drive a host price-scale option only — no
-rebuild, no `fetchHistory`; a chart-type change MUST reuse the existing
-`indicator:changed` → `rebuild()` path.
-(Previously: the envelope allowed no new bus event; F8 adds only `scale:changed`.)
+The `autoSize: true` host option, the `#chart` markup change, the F8 chart-type
+and scale controls, and the theme control MUST stay within R14 (host owns
+construction) and MUST NOT add a `window.marketChart` key. `window.marketChart`
+MUST keep exactly its 8 frozen keys `{chart, candleSeries, panes, ready,
+drawings, smc, smcCounts, smcToggles}` and `window.SmcOverlayCore` MUST be
+untouched. The E2E seam shape and timing (R18) and the single-write-path
+invariants (R17) MUST be preserved; the existing E2E assertions MUST stay green
+with NO edits. F8 added exactly one bus event, `scale:changed` (`{mode}`); this
+change MUST NOT add another bus event — the live theme flip MUST go through the
+host's option-only `setTheme` method, not a new event. The theme value MUST live
+in the store (`state.theme`) and/or `data-theme`, never in the seam.
+(Previously: the envelope covered type/scale; theme was not present.)
 
 #### Scenario: Seam stays 8 keys
 
-- GIVEN a booted chart after the F8 controls
+- GIVEN a booted chart after the theme control
 - WHEN `window.marketChart` is read
-- THEN exactly the 8 frozen keys exist and `SmcOverlayCore` is reachable
+- THEN exactly the 8 frozen keys exist and no theme key was added
 
-#### Scenario: Only one new bus event
+#### Scenario: No new bus event
 
-- GIVEN the F8 change
-- WHEN the module inventory and bus events are inspected
-- THEN the only new event is `scale:changed`, and chart-type reuses `indicator:changed`
+- GIVEN the change
+- WHEN the bus events are inspected
+- THEN the only events are the pre-existing set plus `scale:changed`; no `theme:*` event was added
 
 #### Scenario: Existing E2E stays green unedited
 
@@ -783,3 +788,31 @@ MUST go through `build()`/`rebuild()`; scale MUST NOT.
 - GIVEN an HA chart with fresh `setCandles` history
 - WHEN a live push lands on a new bar
 - THEN the bar is transformed with chained HA state and applied via `update()` only
+
+### Requirement: R22 — Theme host contract
+
+`chart-host.js` `build()` MUST read `state.theme` and pass the theme option set
+built by `theme-core.optionsFor` into `createChart` at its single construction
+site, so every rebuild is born themed (no separate re-apply). It MUST expose
+`setTheme(resolved)` (chart option only; no data write) applying
+`chart.applyOptions({layout, grid, crosshair, rightPriceScale, timeScale})`
+mirroring `setScaleMode`; it MUST pass full values, never `undefined` keys. A
+theme change MUST NOT introduce a second full-series `setData` writer.
+
+#### Scenario: Build is born themed
+
+- GIVEN `state.theme="light"`
+- WHEN `build(state)` runs
+- THEN the created chart's `layout.background.color` and `layout.textColor` are the light values
+
+#### Scenario: setTheme is option-only
+
+- GIVEN a built chart
+- WHEN `setTheme("dark")` runs
+- THEN the chart options swap to the dark set and neither `setData` nor `update` is called
+
+#### Scenario: Rebuild preserves theme
+
+- GIVEN `state.theme="dark"`
+- WHEN a chart-type change rebuilds the chart
+- THEN the new chart's options are the dark set and drawings/SMC re-attach
