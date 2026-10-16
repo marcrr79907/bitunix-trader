@@ -47,6 +47,8 @@ MODULE_ALLOWLIST = frozenset(
         "chart-types-core",
         "theme-core",
         "drawing-core",
+        "drawing-interaction-core",
+        "drawing-primitive",
         "smc-overlay-core",
         "legend-core",
         "indicator-settings-core",

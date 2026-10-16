@@ -4,6 +4,7 @@
 // via setData/update — so #68 single-write-path stays intact. Geometry comes
 // from the pure drawing-core.js; ``drawGen`` guards a stale drawings fetch.
 import * as Draw from "../drawing-core.js";
+import { makeDrawingPrimitive } from "../drawing-primitive.js";
 
 function csrfToken() {
   const meta = document.querySelector('meta[name="csrf-token"]');
@@ -25,95 +26,6 @@ export function createDrawings({ store, bus, host, config }) {
   let drawGen = 0; // monotonic guard against a stale drawings fetch
   let pendingAnchor = null; // first click of a two-point drawing
   const enc = encodeURIComponent;
-
-  // Price range so a full-width ray / rect is not clipped on pan/zoom (R6).
-  function priceRangeFor(row) {
-    const prices = [];
-    if (typeof row.points.price === "number") prices.push(row.points.price);
-    ["p1", "p2"].forEach(function (k) {
-      const p = row.points[k];
-      if (p && typeof p.price === "number") prices.push(p.price);
-    });
-    if (!prices.length) return null;
-    return {
-      priceRange: {
-        minValue: Math.min.apply(null, prices),
-        maxValue: Math.max.apply(null, prices),
-      },
-    };
-  }
-
-  // Pure canvas draws for one shape. ``map`` = {x(time), y(price)}; null means
-  // off-bar / off-scale and the leg is skipped rather than thrown (R6).
-  function renderShape(ctx, size, row, map) {
-    const kind = row.kind;
-    ctx.save();
-    ctx.strokeStyle = ctx.fillStyle = row.style.color || "#2962ff";
-    ctx.lineWidth = row.style.lineWidth || 1;
-    if (kind === "hline") {
-      const y = map.y(row.points.price);
-      if (y !== null && y !== undefined) {
-        ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(size.width, y); ctx.stroke();
-      }
-    } else if (kind === "trendline") {
-      const t = Draw.trendlinePath(row, map);
-      if (t.a && t.b) {
-        ctx.beginPath(); ctx.moveTo(t.a.x, t.a.y); ctx.lineTo(t.b.x, t.b.y); ctx.stroke();
-      }
-    } else if (kind === "fib") {
-      const f = Draw.fibPath(row, map, row.style.levels);
-      ctx.font = "11px sans-serif";
-      f.levels.forEach(function (l) {
-        if (l.y === null || l.y === undefined) return;
-        ctx.beginPath(); ctx.moveTo(f.x1, l.y); ctx.lineTo(f.x2, l.y); ctx.stroke();
-        ctx.fillText(l.ratio + "  " + l.price, f.x1, l.y - 2);
-      });
-    } else if (kind === "rect") {
-      const r = Draw.rectPath(row, map);
-      if (r) {
-        if (row.style.fill) {
-          ctx.globalAlpha = 0.15;
-          ctx.fillRect(r.left, r.top, r.width, r.height);
-          ctx.globalAlpha = 1;
-        }
-        ctx.strokeRect(r.left, r.top, r.width, r.height);
-      }
-    } else if (kind === "text") {
-      const tx = Draw.textPath(row, map);
-      if (tx.x !== null && tx.x !== undefined && tx.y !== null && tx.y !== undefined) {
-        ctx.font = (row.style.fontSize || 14) + "px sans-serif";
-        ctx.fillText(tx.text, tx.x, tx.y);
-      }
-    }
-    ctx.restore();
-  }
-
-  // One v5 ISeriesPrimitive per drawing (paneViews + autoscaleInfo + lifecycle).
-  function makeDrawingPrimitive(row) {
-    const c = { chart: null, series: null, requestUpdate: null };
-    const map = {
-      x: function (time) { return c.chart ? c.chart.timeScale().timeToCoordinate(time) : null; },
-      y: function (price) { return c.series ? c.series.priceToCoordinate(price) : null; },
-    };
-    return {
-      attached: function (p) { c.chart = p.chart; c.series = p.series; c.requestUpdate = p.requestUpdate; },
-      detached: function () { c.chart = null; c.series = null; },
-      paneViews: function () {
-        return [{
-          renderer: function () {
-            return {
-              draw: function (target) {
-                target.useMediaCoordinateSpace(function (scope) {
-                  renderShape(scope.context, scope.mediaSize, row, map);
-                });
-              },
-            };
-          },
-        }];
-      },
-      autoscaleInfo: function () { return priceRangeFor(row); },
-    };
-  }
 
   function renderDrawingList() {
     if (!drawingListEl) return;
