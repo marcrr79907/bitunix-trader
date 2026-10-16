@@ -55,6 +55,8 @@ MODULE_ALLOWLIST = frozenset(
         "legend-core",
         "indicator-settings-core",
         "add-indicator-core",
+        "measure-core",
+        "position-core",
         "chart-store",
         "chart-bus",
         "chart-host",
@@ -75,6 +77,7 @@ CONTROLLER_ALLOWLIST: frozenset[str] = frozenset(
         "draw-toolbar",
         "object-tree",
         "preference",
+        "measure",
     }
 )
 
