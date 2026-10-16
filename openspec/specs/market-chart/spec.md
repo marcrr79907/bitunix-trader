@@ -411,25 +411,28 @@ no new dependency).
 `GET ?symbol=&interval=` MUST be GET-only and login-required (anonymous → 302)
 and MUST return the caller's drawings for that `(symbol, interval)` as
 `{"drawings":[...]}`, or an empty list when none exist (never 404). `POST` MUST be
-login-required and CSRF-protected, validate `kind`/`interval`/`symbol`/`points`/
-`style` before any write (unknown `kind`, bad shape, or invalid `interval` → 400),
-create through `Drawing.for_user(request.user)`, and return the created row with
-its `id`. `PUT /market/api/drawings/<id>` MUST be login-required and
-CSRF-protected, resolve through `Drawing.for_user(request.user)` (miss → 404 and
-another user's `id` → 404 with no leak), accept a PARTIAL `{points?, style?}`
-body, keep `kind` immutable, validate via `parse_drawing` (→ 400 before write),
-and return the updated row `{id,kind,points,style}` (200). `DELETE
-/market/api/drawings/<id>` MUST be login-required and CSRF-protected, delete
-through `Drawing.for_user(request.user)` (miss → 404), and never touch another
-user's row. The market page MUST render saved drawings via the already-loaded
-Lightweight Charts v5.2.0 series primitive (no new dependency, no DOM access —
-CSP unchanged), restore them after `buildChart` and on `switchTo(symbol,
-interval)` (clearing the previous key's primitives), and MUST support selecting,
-dragging, keyboard deleting/deselecting, and restyling a drawing, persisting a
-drag via ONE `PUT` on `pointerup` through `requestUpdate` only (never
-`setData`/`update`; #68). It MUST NOT introduce inline script/handlers or relax
-the read-only boundary.
-(Previously: only GET/POST/DELETE, no `PUT`; no interaction/render seam.)
+login-required and CSRF-protected, validate `kind`/`symbol`/`points`/`style` and
+any `visible`/`locked` flags before any write (unknown `kind`, bad shape, or a
+non-boolean flag → 400), create through `Drawing.for_user(request.user)`, and
+return the created row with its `id`. `PUT /market/api/drawings/<id>` MUST be
+login-required and CSRF-protected, resolve through `Drawing.for_user(request.user)`
+(miss → 404 and another user's `id` → 404 with no leak), accept a PARTIAL
+`{points?,style?,visible?,locked?}` body, keep `kind` immutable, validate via
+`parse_drawing` (→ 400 before write), and return the updated row
+`{id,kind,points,style,visible,locked}` (200). `DELETE /market/api/drawings/<id>`
+MUST be login-required and CSRF-protected, delete through
+`Drawing.for_user(request.user)` (miss → 404), and never touch another user's row.
+The market page MUST render saved drawings via the already-loaded Lightweight
+Charts v5.2.0 series primitive (no new dependency, no DOM access — CSP unchanged),
+restore them after `buildChart` and on `switchTo(symbol, interval)` (clearing the
+previous key's primitives), render a drawing with `visible:false` blank (primitive
+kept attached, `autoscaleInfo` null), exclude a `locked:true` OR `visible:false`
+drawing from pointer hit-testing while keeping it tree-selectable, and MUST
+support selecting, dragging, keyboard deleting/deselecting, and restyling a
+drawing, persisting a drag via ONE `PUT` on `pointerup` through `requestUpdate`
+only (never `setData`/`update`; #68). It MUST NOT introduce inline script/handlers
+or relax the read-only boundary.
+(Previously: no `visible`/`locked`; partial PUT was `{points?,style?}`.)
 
 #### Scenario: GET empty when no drawings
 
@@ -437,23 +440,23 @@ the read-only boundary.
 - WHEN GET `?symbol=BTCUSDT&interval=1m`
 - THEN 200 `{"drawings":[]}` (no 404)
 
-#### Scenario: POST then GET returns the drawing
+#### Scenario: POST then GET returns the drawing with flags
 
-- GIVEN a valid drawing payload
+- GIVEN a valid drawing payload with `visible:false`
 - WHEN POST then GET the same key
-- THEN 201 with an `id`, and GET lists that drawing
+- THEN 201 with an `id`, and GET lists that drawing with `visible:false`
 
-#### Scenario: Invalid kind → 400 before write
+#### Scenario: Invalid kind or non-bool flag → 400 before write
 
-- GIVEN POST `kind="notreal"`
+- GIVEN POST `kind="notreal"`, or `visible="yes"`
 - WHEN handled
 - THEN 400 `{"error":"..."}` before any write
 
 #### Scenario: PUT updates a drawing in place
 
 - GIVEN the caller's drawing `d`
-- WHEN PUT `/market/api/drawings/<d.id>` with a partial `{points, style}`
-- THEN 200 with the updated row; a following GET lists the new coordinates
+- WHEN PUT `/market/api/drawings/<d.id>` with a partial `{points, style, locked}`
+- THEN 200 with the updated row; a following GET lists the new coordinates and `locked`
 
 #### Scenario: PUT miss or cross-user is 404
 
@@ -490,6 +493,12 @@ the read-only boundary.
 - GIVEN saved drawings for the active key
 - WHEN the page loads or `switchTo` changes symbol/interval
 - THEN primitives attach for the new key, previous primitives are cleared, and `window.marketChart.drawings` lists the loaded shapes
+
+#### Scenario: Hidden and locked render and restore
+
+- GIVEN a saved drawing with `visible:false, locked:true`
+- WHEN the page loads or `switchTo` restores it
+- THEN its primitive is attached but draws nothing, it is not pointer-selectable, and its tree row reflects the flags
 
 #### Scenario: Market page stays CSP-clean
 
@@ -592,16 +601,17 @@ fragment.
 Modules MUST follow a frozen inventory: entry `chart.js` (thin: Django-injected
 `CONFIG` + imports + `boot()`), pure cores `chart-core.js`/`drawing-core.js`/
 `smc-overlay-core.js`/`legend-core.js`/`indicator-settings-core.js`/
-`chart-types-core.js`/`theme-core.js`, `chart-store.js` (UI/config state ONLY —
-MUST NOT hold candle data; its vocabulary is
-`symbol, interval, indicators, params, styles, smc, scaleMode, chartType, theme,
-tool`), `chart-bus.js`, `chart-host.js` (chart/series/panes/scales/crosshair +
-candle data), the
+`chart-types-core.js`/`theme-core.js`/`tool-icons-core.js`/`chart-registry-core.js`,
+`chart-store.js` (UI/config state ONLY — MUST NOT hold candle data; its vocabulary
+is `symbol, interval, indicators, params, styles, smc, scaleMode, chartType, theme,
+tool, indicatorVisible`), `chart-bus.js`, `chart-host.js` (chart/series/panes/
+scales/crosshair + candle data), the
 host-layer sub-module `chart-host-candles.js` (candle channel: `CANDLE_CTORS`,
 the candle series, the raw `candles` array, and the incremental HA state;
 factory `createCandles(chart, chartType) -> {getCandleSeries, getCandles,
 setCandles, updateCandle, remove}`),
-`controllers/{indicators,history,stream,drawings,smc,toolbar,legend}.js`,
+`controllers/{indicators,history,stream,drawings,drawing-interaction,smc,toolbar,
+legend,draw-toolbar,object-tree,preference}.js`,
 and `main.js` (ALL orchestration + boot/switch). No module MUST exceed ~300 lines.
 Controllers MUST import host/store/bus directly but MUST NOT import `main`;
 commands MUST travel the bus, so `main.js` has no circular imports. Every imported
@@ -610,24 +620,41 @@ module MUST be served same-origin under `/market/` via its Django route (core �
 enforced by the committed guard `tests/web/test_module_size_guard.py`
 (`CEILING = 300`; scans `web/market/templates/market/**/*.js` via `rglob` +
 `splitlines()`). The guard's `ALLOWLIST` MUST be empty — no module is exempt.
-`chart-host.js` MUST be ≤ ~300 lines (back under the ceiling after the
-extraction). Any module above `CEILING` MUST fail the guard.
+`chart-host.js` MUST be ≤ ~300 lines (the `REGISTRY`/`PANE_ORDER`/`SCALE_MODES`
+extraction to `chart-registry-core.js` MUST land before `setSeriesVisible` is
+added). Any module above `CEILING` MUST fail the guard.
 
-(Previously: the store vocabulary had no `theme` and the pure-core list had no
-`theme-core.js`.)
+(Previously: the store vocabulary had 10 keys, the pure-core list had no
+`tool-icons-core`/`chart-registry-core`, and the controller inventory had 8
+entries; `preference.js` was not yet extracted.)
 
 #### Scenario: Inventory and no-cycle
 
-- GIVEN the delivered modules, WHEN imports resolve, THEN the inventory (including `chart-types-core.js`, `chart-host-candles.js`, and `theme-core.js`) exists, `theme-core.js` imports nothing, no controller imports `main`, and `main.js` has no cycles
+- GIVEN the delivered modules, WHEN imports resolve, THEN the inventory (including `tool-icons-core.js`, `chart-registry-core.js`, `chart-host-candles.js`, and `theme-core.js`) exists, `theme-core.js` imports nothing, no controller imports `main`, and `main.js` has no cycles
 
 #### Scenario: Store never holds candles
 
-- GIVEN `chart-store.js`, WHEN its keys are inspected, THEN it holds only UI/config (`symbol, interval, indicators, params, styles, smc, scaleMode, chartType, theme, tool`) — no candle data
+- GIVEN `chart-store.js`, WHEN its keys are inspected, THEN it holds only UI/config (`symbol, interval, indicators, params, styles, smc, scaleMode, chartType, theme, tool, indicatorVisible`) — no candle data
 
 #### Scenario: Size ceiling with empty allowlist
 
 - GIVEN every module, WHEN `tests/web/test_module_size_guard.py` reads line counts
 - THEN it passes at `CEILING = 300` with an EMPTY `ALLOWLIST` (no exemption), `chart-host.js` stays ≤ ~300 lines, and any module above the ceiling fails
+
+#### Scenario: New cores and controllers are served
+
+- GIVEN `tool-icons-core`, `chart-registry-core`, `draw-toolbar`, `object-tree`
+- WHEN requested under `/market/` with a JS MIME type
+- THEN each is served 200 (present in the matching allowlist; missing → 404 → blank chart)
+
+#### Scenario: Controller allowlist count grows
+
+- GIVEN `CONTROLLER_ALLOWLIST`
+- WHEN inspected
+- THEN it holds **11** entries and `tests/web/test_market_ux.py` asserts the count
+  `== 11` and passes unedited elsewhere — the 8 prior entries plus `draw-toolbar`,
+  `object-tree`, and `preference` (the D11 contingency extraction, PR #181,
+  `0a996f4`, moved `csrfToken`/`savePreference`/`loadPreference` out of `main.js`).
 
 #### Scenario: New theme core is served
 
@@ -643,6 +670,13 @@ extraction). Any module above `CEILING` MUST fail the guard.
 - THEN they pass with NO behavior-assertion edits, the 8-key seam
   (`window.marketChart`) is unchanged, the C1 same-bucket HA fix is preserved
   verbatim, and the HA contract (`chart-types-core`) is untouched
+
+> **Reconciliation note (verify W1, archive 2026-10-16).** The `market-chart` R14
+> delta originally stated the controller count grew `8→10`; the delivered change
+> landed at **11** because of the `preference` extraction. The canonical clause
+> above matches reality (`views.py:65-79`, `test_market_ux.py:146`). Functional
+> invariant holds: every entry is served 200 and the import graph resolves
+> (`test_import_graph_routes_resolve`).
 
 ### Requirement: R15 — ESM loading and module serving
 
@@ -721,15 +755,34 @@ mutate `DECIMALS`.
 The refactor MUST expose `window.marketChart` with frozen keys `{chart,
 candleSeries, panes, ready, drawings, smc, smcCounts, smcToggles}` and equivalent
 update-timing, and MUST re-expose `window.SmcOverlayCore` as the sanctioned test
-seam. `tests/web/test_market_e2e.py` MUST stay green with NO assertion edits.
+seam. The toolbar, the object tree, and indicator visibility MUST NOT add a 9th
+key. `tests/web/test_market_e2e.py` MUST stay green except for the assertions that
+covered the DOM this change removes (`#drawing-list`, the indicators `fieldset`);
+each such assertion MUST be replaced by equivalent coverage, and the removal +
+replacement MUST be documented in the E2E itself
+(`test_market_e2e.py:582-620`). Every removed scenario has an equivalent
+replacement EXCEPT adding-an-indicator, which became the new `chart-indicator-add`
+capability (issue #176, slice S5) — so there is no unreplaced coverage gap.
+(Previously: the clause read "green with NO assertion edits"; that was unmeetable
+by the slice that deletes the DOM — reconciled here per verify W2 / issue #177.)
 
 #### Scenario: Seam shape frozen
 
-- GIVEN a booted chart, WHEN `window.marketChart` is read, THEN all eight keys exist and update as before
+- GIVEN a booted chart after the toolbar and tree exist
+- WHEN `window.marketChart` is read
+- THEN all eight keys exist and update as before, with no toolbar/tree/visibility key added
 
 #### Scenario: SMC core reachable
 
-- GIVEN the ESM entry loaded, WHEN `window.SmcOverlayCore.setupMarkers(...)` is called, THEN it returns the marker array as before
+- GIVEN the ESM entry loaded
+- WHEN `window.SmcOverlayCore.setupMarkers(...)` is called
+- THEN it returns the marker array as before
+
+#### Scenario: Existing E2E green except replaced assertions
+
+- GIVEN the existing E2E assertions
+- WHEN the suite runs after the change
+- THEN it passes except for the assertions covering the removed `#drawing-list`/`fieldset` DOM, each replaced by equivalent coverage and documented in `test_market_e2e.py:582-620`
 
 ### Requirement: R19 — Host crosshair subscription seam
 
@@ -750,35 +803,45 @@ on a prior chart MUST be considered dead; consumers MUST re-subscribe after each
 ### Requirement: R20 — Shell change stays inside the frozen host/seam envelope
 
 The `autoSize: true` host option, the `#chart` markup change, the F8 chart-type
-and scale controls, and the theme control MUST stay within R14 (host owns
-construction) and MUST NOT add a `window.marketChart` key. `window.marketChart`
-MUST keep exactly its 8 frozen keys `{chart, candleSeries, panes, ready,
-drawings, smc, smcCounts, smcToggles}` and `window.SmcOverlayCore` MUST be
-untouched. The E2E seam shape and timing (R18) and the single-write-path
-invariants (R17) MUST be preserved; the existing E2E assertions MUST stay green
-with NO edits. F8 added exactly one bus event, `scale:changed` (`{mode}`); this
-change MUST NOT add another bus event — the live theme flip MUST go through the
+and scale controls, the theme control, the F5 vertical toolbar, the object tree,
+and the indicator-visibility toggle MUST stay within R14 (host owns construction)
+and MUST NOT add a `window.marketChart` key. `window.marketChart` MUST keep
+exactly its 8 frozen keys `{chart, candleSeries, panes, ready, drawings, smc,
+smcCounts, smcToggles}` and `window.SmcOverlayCore` MUST be untouched. The E2E
+seam shape and timing (R18) and the single-write-path invariants (R17) MUST be
+preserved. F8 added exactly one bus event, `scale:changed` (`{mode}`); F5 MUST add
+exactly ONE more, `indicator:visibility` (`{token, visible}`), routed by `main` to
+the host's option-only `setSeriesVisible` (mirroring `scale:changed`,
+`main.js:179-182`). Drawing hide/lock MUST reuse the existing `drawing:changed`
+event and MUST NOT add a drawing event; the live theme flip MUST go through the
 host's option-only `setTheme` method, not a new event. The theme value MUST live
 in the store (`state.theme`) and/or `data-theme`, never in the seam.
-(Previously: the envelope covered type/scale; theme was not present.)
+(Previously: the envelope covered type/scale/theme and forbade a second event; F5
+adds exactly one, `indicator:visibility`.)
 
 #### Scenario: Seam stays 8 keys
 
-- GIVEN a booted chart after the theme control
+- GIVEN a booted chart after the toolbar and tree
 - WHEN `window.marketChart` is read
-- THEN exactly the 8 frozen keys exist and no theme key was added
+- THEN exactly the 8 frozen keys exist and no toolbar/tree/visibility key was added
 
-#### Scenario: No new bus event
+#### Scenario: Exactly one new bus event
 
 - GIVEN the change
 - WHEN the bus events are inspected
-- THEN the only events are the pre-existing set plus `scale:changed`; no `theme:*` event was added
+- THEN the only events are the pre-existing set plus `scale:changed` plus `indicator:visibility`; no `drawing:visibility`/`drawing:lock` event was added
 
-#### Scenario: Existing E2E stays green unedited
+#### Scenario: Visibility toggle is option-only
+
+- GIVEN a built chart with the `setData`/`update` spies installed
+- WHEN `indicator:visibility` fires for a token
+- THEN the host calls `setSeriesVisible` (option-only) and neither `setData` nor `update` is called
+
+#### Scenario: Existing E2E stays green except replaced assertions
 
 - GIVEN the existing E2E assertions
 - WHEN the suite runs after the change
-- THEN they pass with no assertion edits and the default type stays candles
+- THEN they pass except for the assertions covering the removed DOM (replaced and documented per R18) and the default type stays candles
 
 ### Requirement: R21 — Chart type and scale host contract
 
