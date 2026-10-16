@@ -311,4 +311,7 @@ class ChartPreference(UserOwnedModel):
     scale_mode = models.CharField(max_length=16, default="linear")
     chart_type = models.CharField(max_length=16, default="candles")
     theme = models.CharField(max_length=16, default="system")
+    # SMC family toggles ({family: bool}); an empty object means "all families
+    # ON". User-global (not per-chart) so a toggle survives an interval switch.
+    smc = models.JSONField(default=dict)
     updated_at = models.DateTimeField(auto_now=True)
