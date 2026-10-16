@@ -18,6 +18,7 @@ export function createMeasure({ store, bus, host, config }) {
   let b = null; // current point {time, price}
   let drawing = false; // a press-drag is in progress
   let prim = null; // the ONE attached primitive (while a measurement exists)
+  let primSeries = null; // the series ``prim`` is currently attached to
   let bound = false;
   const c = { chart: null, series: null, requestUpdate: null };
 
@@ -83,14 +84,25 @@ export function createMeasure({ store, bus, host, config }) {
     ctx.restore();
   }
 
+  // Ensure ``prim`` sits on the CURRENT candle series. A chart rebuild (e.g. an
+  // interval-only switch) recreates the series, so re-attach there (#188): the
+  // primitive would otherwise stay glued to the destroyed series (readout alive,
+  // canvas dead). Idempotent while the series is unchanged.
+  function bindPrim() {
+    const series = host.getCandleSeries();
+    if (!series || !prim) return;
+    if (primSeries === series) return;
+    if (primSeries) primSeries.detachPrimitive(prim);
+    series.attachPrimitive(prim);
+    primSeries = series;
+  }
+
   // Attach the primitive once (idempotent) and push the readout to the DOM.
   function ensurePrimitive() {
     const series = host.getCandleSeries();
     if (!series) return;
-    if (!prim) {
-      prim = makePrimitive();
-      series.attachPrimitive(prim);
-    }
+    if (!prim) prim = makePrimitive();
+    bindPrim();
     writeReadout();
     if (prim.requestUpdate) prim.requestUpdate();
   }
@@ -106,9 +118,10 @@ export function createMeasure({ store, bus, host, config }) {
     a = null;
     b = null;
     if (prim) {
-      const series = host.getCandleSeries();
+      const series = primSeries || host.getCandleSeries();
       if (series) series.detachPrimitive(prim);
       prim = null;
+      primSeries = null;
     }
     if (readout) readout.textContent = "";
   }
@@ -170,8 +183,10 @@ export function createMeasure({ store, bus, host, config }) {
   });
 
   // The ``#chart`` container survives a rebuild, so listeners bind ONCE. main
-  // calls attach() after every build.
+  // calls attach() after every build — which also RE-BINDS an existing
+  // measurement's primitive to the new series (#188).
   function attach() {
+    bindPrim();
     if (!el || bound) return;
     el.addEventListener("pointerdown", onPointerDown, true);
     el.addEventListener("pointermove", onPointerMove, true);
