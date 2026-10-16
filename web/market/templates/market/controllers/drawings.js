@@ -17,7 +17,6 @@ export function createDrawings({ store, bus, host, config }) {
   const state = store.get();
   const textDialog = document.getElementById("text-dialog");
   const textDialogInput = document.getElementById("text-dialog-input");
-  const drawingListEl = document.getElementById("drawing-list");
   let currentDrawings = []; // rows loaded for the active SYMBOL
   let attached = []; // [{id, prim}] — the primitives currently on the series
   let drawGen = 0; // monotonic guard against a stale drawings fetch
@@ -26,22 +25,6 @@ export function createDrawings({ store, bus, host, config }) {
   let selectedId = null; // interaction selection (closure only; never a store key)
   const selection = { isSelected: function (row) { return row.id === selectedId; } };
   const enc = encodeURIComponent;
-
-  function renderDrawingList() {
-    if (!drawingListEl) return;
-    drawingListEl.textContent = "";
-    currentDrawings.forEach(function (row) {
-      const li = document.createElement("li");
-      const btn = document.createElement("button");
-      btn.type = "button";
-      btn.className = "drawing-del";
-      btn.dataset.id = row.id;
-      btn.textContent = "× " + row.kind + " #" + row.id;
-      btn.addEventListener("click", function () { deleteDrawing(row.id); });
-      li.appendChild(btn);
-      drawingListEl.appendChild(li);
-    });
-  }
 
   // Re-attach every loaded drawing to the CURRENT candleSeries (after a rebuild
   // and after a load). Always rebuilds the primitive list (R7). Before the first
@@ -60,7 +43,6 @@ export function createDrawings({ store, bus, host, config }) {
       });
     }
     window.marketChart.drawings = currentDrawings.slice();
-    renderDrawingList();
     bus.emit("drawings:changed", { rows: currentDrawings.slice() });
   }
 
@@ -114,14 +96,26 @@ export function createDrawings({ store, bus, host, config }) {
     if (!row) return;
     if (p.points) row.points = p.points;
     if (p.style) row.style = p.style;
+    // F5 S3 (R2/R9): the tree toggles visible/locked; the primitive re-renders
+    // live each frame (visible===false -> blank), so a requestUpdate reveals or
+    // parks without a re-attach (#68).
+    if (p.visible !== undefined) row.visible = p.visible;
+    if (p.locked !== undefined) row.locked = p.locked;
     const prim = primFor(p.id);
     if (prim && prim.requestUpdate) prim.requestUpdate();
     window.marketChart.drawings = currentDrawings.slice();
+    // The tree re-renders from this event (rows carry the flags).
     if (!p.persist) return;
     const body = {};
     if (p.points) body.points = row.points;
     if (p.style) body.style = row.style;
+    if (p.visible !== undefined) body.visible = row.visible;
+    if (p.locked !== undefined) body.locked = row.locked;
     persistDrawing(row.id, body);
+    // Persisted flag changes re-publish rows so the tree reflects saved state.
+    if (p.visible !== undefined || p.locked !== undefined) {
+      bus.emit("drawings:changed", { rows: currentDrawings.slice() });
+    }
   });
 
   // Keyboard delete (R11): same path as the panel list button.
@@ -151,7 +145,10 @@ export function createDrawings({ store, bus, host, config }) {
         return r.json();
       })
       .then(function (saved) {
-        const row = Draw.fromApi({ id: saved.id, kind: saved.kind, points: saved.points, style: saved.style });
+        const row = Draw.fromApi({
+          id: saved.id, kind: saved.kind, points: saved.points, style: saved.style,
+          visible: saved.visible, locked: saved.locked,
+        });
         if (!row) return;
         currentDrawings.push(row);
         attachAllDrawings();
