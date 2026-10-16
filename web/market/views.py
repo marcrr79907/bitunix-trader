@@ -45,6 +45,7 @@ MODULE_ALLOWLIST = frozenset(
     {
         "chart-core",
         "chart-types-core",
+        "chart-registry-core",
         "theme-core",
         "drawing-core",
         "drawing-interaction-core",
@@ -409,7 +410,14 @@ def api_drawings(request: HttpRequest) -> JsonResponse:
         {
             "symbol": symbol,
             "drawings": [
-                {"id": d.id, "kind": d.kind, "points": d.points, "style": d.style}
+                {
+                    "id": d.id,
+                    "kind": d.kind,
+                    "points": d.points,
+                    "style": d.style,
+                    "visible": d.visible,
+                    "locked": d.locked,
+                }
                 for d in rows
             ],
         }
@@ -430,8 +438,12 @@ def _post_drawing(request: HttpRequest) -> JsonResponse:
     # ``interval`` is deliberately NOT read: the key is per SYMBOL now. A stale
     # client may still send one — accept-and-ignore, never 400 (R4).
     try:
-        points, style = parse_drawing(
-            body.get("kind"), body.get("points"), body.get("style")
+        points, style, visible, locked = parse_drawing(
+            body.get("kind"),
+            body.get("points"),
+            body.get("style"),
+            body.get("visible", True),
+            body.get("locked", False),
         )
     except ValueError as exc:
         return JsonResponse({"error": str(exc)}, status=400)
@@ -443,6 +455,8 @@ def _post_drawing(request: HttpRequest) -> JsonResponse:
         kind=body["kind"],
         points=points,
         style=style,
+        visible=visible,
+        locked=locked,
     )
     return JsonResponse(
         {
@@ -450,6 +464,8 @@ def _post_drawing(request: HttpRequest) -> JsonResponse:
             "kind": drawing.kind,
             "points": drawing.points,
             "style": drawing.style,
+            "visible": drawing.visible,
+            "locked": drawing.locked,
         },
         status=201,
     )
@@ -492,22 +508,27 @@ def _put_drawing(request: HttpRequest, drawing: Drawing) -> JsonResponse:
     # Partial body: each absent field keeps the stored value. Validation runs
     # BEFORE any write, so a bad payload leaves the row untouched.
     try:
-        points, style = parse_drawing(
+        points, style, visible, locked = parse_drawing(
             drawing.kind,
             body.get("points", drawing.points),
             body.get("style", drawing.style),
+            body.get("visible", drawing.visible),
+            body.get("locked", drawing.locked),
         )
     except ValueError as exc:
         return JsonResponse({"error": str(exc)}, status=400)
 
     drawing.points, drawing.style = points, style
-    drawing.save(update_fields=["points", "style"])
+    drawing.visible, drawing.locked = visible, locked
+    drawing.save(update_fields=["points", "style", "visible", "locked"])
     return JsonResponse(
         {
             "id": drawing.id,
             "kind": drawing.kind,
             "points": drawing.points,
             "style": drawing.style,
+            "visible": drawing.visible,
+            "locked": drawing.locked,
         }
     )
 
