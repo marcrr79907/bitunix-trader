@@ -50,8 +50,9 @@ impossible (unknown name → 404).
 
 Allowlisted modules: `chart-core`, `chart-types-core`, `chart-registry-core`,
 `theme-core`, `drawing-core`, `drawing-interaction-core`, `drawing-primitive`,
-`tool-icons-core`, `smc-overlay-core`, `legend-core`, `indicator-settings-core`,
-`chart-store`, `chart-bus`, `chart-host`, `chart-host-candles`, `main`.
+`tool-icons-core`, `add-indicator-core`, `smc-overlay-core`, `legend-core`,
+`indicator-settings-core`, `chart-store`, `chart-bus`, `chart-host`,
+`chart-host-candles`, `main`.
 Controllers: `indicators`, `history`, `stream`, `drawings`,
 `drawing-interaction`, `smc`, `toolbar`, `legend`, `draw-toolbar`,
 `object-tree`, `preference`.

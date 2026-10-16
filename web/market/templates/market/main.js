@@ -64,8 +64,7 @@ export function boot(config) {
   };
   window.marketChart.smcToggles = state.smc;
 
-  const preference = createPreference({ config });
-  const { savePreference, loadPreference } = preference;
+  const { savePreference, loadPreference } = createPreference({ config });
   const indicators = createIndicators({ store, bus, config });
   const history = createHistory({ store, bus, host, config });
   const stream = createStream({ store, bus, host, config });
