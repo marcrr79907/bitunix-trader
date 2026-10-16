@@ -15,35 +15,16 @@ const textStyle = () => { const b = Draw.defaultStyle("text"); try { return { ..
 
 export function createDrawings({ store, bus, host, config }) {
   const state = store.get();
-  const el = document.getElementById("chart");
-  const drawToolButtons = Array.prototype.slice.call(document.querySelectorAll(".draw-tool"));
-  const cancelToolButton = document.querySelector(".draw-cancel");
   const textDialog = document.getElementById("text-dialog");
   const textDialogInput = document.getElementById("text-dialog-input");
-  const drawingListEl = document.getElementById("drawing-list");
   let currentDrawings = []; // rows loaded for the active SYMBOL
   let attached = []; // [{id, prim}] — the primitives currently on the series
   let drawGen = 0; // monotonic guard against a stale drawings fetch
   let pendingAnchor = null; // first click of a two-point drawing
+  let pendingAnchorKind = state.tool; // tool the anchor was collected under
   let selectedId = null; // interaction selection (closure only; never a store key)
   const selection = { isSelected: function (row) { return row.id === selectedId; } };
   const enc = encodeURIComponent;
-
-  function renderDrawingList() {
-    if (!drawingListEl) return;
-    drawingListEl.textContent = "";
-    currentDrawings.forEach(function (row) {
-      const li = document.createElement("li");
-      const btn = document.createElement("button");
-      btn.type = "button";
-      btn.className = "drawing-del";
-      btn.dataset.id = row.id;
-      btn.textContent = "× " + row.kind + " #" + row.id;
-      btn.addEventListener("click", function () { deleteDrawing(row.id); });
-      li.appendChild(btn);
-      drawingListEl.appendChild(li);
-    });
-  }
 
   // Re-attach every loaded drawing to the CURRENT candleSeries (after a rebuild
   // and after a load). Always rebuilds the primitive list (R7). Before the first
@@ -62,7 +43,6 @@ export function createDrawings({ store, bus, host, config }) {
       });
     }
     window.marketChart.drawings = currentDrawings.slice();
-    renderDrawingList();
     bus.emit("drawings:changed", { rows: currentDrawings.slice() });
   }
 
@@ -116,14 +96,24 @@ export function createDrawings({ store, bus, host, config }) {
     if (!row) return;
     if (p.points) row.points = p.points;
     if (p.style) row.style = p.style;
+    // F5 S3 (R2/R9): the tree toggles visible/locked; the primitive re-renders
+    // live each frame (visible===false -> blank), so a requestUpdate reveals or
+    // parks without a re-attach (#68).
+    if (p.visible !== undefined) row.visible = p.visible;
+    if (p.locked !== undefined) row.locked = p.locked;
     const prim = primFor(p.id);
     if (prim && prim.requestUpdate) prim.requestUpdate();
     window.marketChart.drawings = currentDrawings.slice();
+    // The tree re-renders from this event (rows carry the flags).
     if (!p.persist) return;
     const body = {};
     if (p.points) body.points = row.points;
     if (p.style) body.style = row.style;
+    if (p.visible !== undefined) body.visible = row.visible;
+    if (p.locked !== undefined) body.locked = row.locked;
     persistDrawing(row.id, body);
+    // NO re-publish on a flag change: the tree row that emitted it already synced
+    // its own icon, and a rebuild would drop keyboard focus mid-interaction (R6).
   });
 
   // Keyboard delete (R11): same path as the panel list button.
@@ -153,7 +143,10 @@ export function createDrawings({ store, bus, host, config }) {
         return r.json();
       })
       .then(function (saved) {
-        const row = Draw.fromApi({ id: saved.id, kind: saved.kind, points: saved.points, style: saved.style });
+        const row = Draw.fromApi({
+          id: saved.id, kind: saved.kind, points: saved.points, style: saved.style,
+          visible: saved.visible, locked: saved.locked,
+        });
         if (!row) return;
         currentDrawings.push(row);
         attachAllDrawings();
@@ -171,15 +164,6 @@ export function createDrawings({ store, bus, host, config }) {
         attachAllDrawings();
       })
       .catch(function () { /* keep the row on a failed delete */ });
-  }
-
-  function syncToolButtons() {
-    drawToolButtons.forEach(function (btn) {
-      const on = btn.dataset.kind === state.tool;
-      btn.setAttribute("aria-pressed", on ? "true" : "false");
-      btn.classList.toggle("active", on);
-    });
-    if (el) el.classList.toggle("drawing", !!state.tool);
   }
 
   // A chart click in tool mode -> create a shape. hline needs only a price;
@@ -215,21 +199,16 @@ export function createDrawings({ store, bus, host, config }) {
     pendingAnchor = null;
   }
 
-  drawToolButtons.forEach(function (btn) {
-    btn.addEventListener("click", function () {
-      const kind = btn.dataset.kind;
-      state.tool = state.tool === kind ? null : kind;
+  // Tool selection now lives in controllers/draw-toolbar.js (F5 S2): it writes
+  // ``store.tool`` (the SAME command the legacy buttons emitted). A tool change
+  // only needs to drop a half-collected two-point anchor.
+  store.subscribe(function () {
+    if (state.tool !== pendingAnchorKind) {
+      pendingAnchorKind = state.tool;
       pendingAnchor = null;
-      syncToolButtons();
-    });
+    }
   });
-  if (cancelToolButton) {
-    cancelToolButton.addEventListener("click", function () {
-      state.tool = null;
-      pendingAnchor = null;
-      syncToolButtons();
-    });
-  }
+
   if (textDialog) {
     textDialog.addEventListener("close", function () {
       const text = (textDialogInput.value || "").trim();
@@ -249,13 +228,13 @@ export function createDrawings({ store, bus, host, config }) {
   // immediately (they never cross symbols, R7) and invalidate any in-flight
   // fetch for the old symbol.
   function clearForSwitch() {
-    state.tool = null;
+    // store.set (not a raw write) so the toolbar's subscriber clears aria-pressed.
+    store.set({ tool: null });
     pendingAnchor = null;
     selectedId = null; // R14: a symbol switch clears selection with the drawings
-    syncToolButtons();
     currentDrawings = [];
     drawGen++;
   }
 
-  return { onChartClick, attachAllDrawings, refreshDrawings, clearForSwitch, syncToolButtons };
+  return { onChartClick, attachAllDrawings, refreshDrawings, clearForSwitch };
 }

@@ -1,20 +1,18 @@
 // main.js — ALL chart orchestration + boot()/switchTo().
 //
-// Owns the store/bus/host + the controller instances and the async sequencing:
-// layout -> build (reattach drawings/SMC) -> drawings fetch -> SMC fetch ->
-// history, with ``ready`` after history. The ``gen`` race guard invalidates a
-// slow boot/switch for a previous key. Controllers never import main; commands
-// travel the bus (config:changed / indicator:changed).
-//
-// R18 seam: ``window.marketChart`` (8 keys) + ``window.SmcOverlayCore``.
+// Owns the store/bus/host + the controller instances and the async sequencing
+// (layout -> build -> drawings -> SMC -> history); ``ready`` after history. The
+// ``gen`` race guard invalidates a slow boot/switch. Controllers never import
+// main; commands travel the bus. R18 seam: ``window.marketChart`` (8 keys) +
+// ``window.SmcOverlayCore``.
 import * as Smc from "./smc-overlay-core.js";
 import { createStore } from "./chart-store.js";
 import { createBus } from "./chart-bus.js";
 import { createHost } from "./chart-host.js";
 import {
   createIndicators,
-  readIndicators,
-  readParams,
+  DEFAULT_INDICATORS,
+  DEFAULT_PARAMS,
 } from "./controllers/indicators.js";
 import { createHistory } from "./controllers/history.js";
 import { createStream } from "./controllers/stream.js";
@@ -22,7 +20,10 @@ import { createDrawings } from "./controllers/drawings.js";
 import { createDrawingInteraction } from "./controllers/drawing-interaction.js";
 import { createSmc, readSmc } from "./controllers/smc.js";
 import { createToolbar } from "./controllers/toolbar.js";
+import { createDrawToolbar } from "./controllers/draw-toolbar.js";
+import { createObjectTree } from "./controllers/object-tree.js";
 import { createLegend } from "./controllers/legend.js";
+import { createPreference } from "./controllers/preference.js";
 
 export function boot(config) {
   // Sanctioned test seam (R18): the E2E reads window.SmcOverlayCore.setupMarkers.
@@ -33,21 +34,24 @@ export function boot(config) {
   const store = createStore({
     symbol: config.symbols[0],
     interval: "1m",
-    indicators: readIndicators(),
-    params: readParams(),
+    // F5 S3: membership is store-sourced (the checkbox DOM is gone); the layout
+    // loader writes the saved set straight into the store before the first build.
+    indicators: DEFAULT_INDICATORS.slice(),
+    params: DEFAULT_PARAMS,
     styles: {}, // per-token presentation style (F2.4; loaded from layout, never in params)
     smc: readSmc(), // SMC family toggles (persisted user-global, R7)
     scaleMode: "linear", // F8 price-scale option (persistence is Slice 3)
     chartType: "candles", // F8 candle-series Ctor (persistence is Slice 3)
     theme: "system", // resolved theme (light/dark) after boot; pref "system" default
     tool: null, // active drawing tool ("hline"|"trendline"|"fib"|"rect"|"text")
+    indicatorVisible: {}, // F5 S3: {token: false} hides a series (option-only)
   });
   const state = store.get();
   const bus = createBus();
   const host = createHost();
 
-  // Read-only test seam (DOM assertions, no image diffs). ``ready`` flips true
-  // once the async boot has applied the layout and built the chart.
+  // Read-only test seam (DOM assertions, no image diffs); ``ready`` flips true
+  // once boot applied the layout and built the chart.
   window.marketChart = {
     chart: null,
     candleSeries: null,
@@ -60,6 +64,7 @@ export function boot(config) {
   };
   window.marketChart.smcToggles = state.smc;
 
+  const { savePreference, loadPreference } = createPreference({ config });
   const indicators = createIndicators({ store, bus, config });
   const history = createHistory({ store, bus, host, config });
   const stream = createStream({ store, bus, host, config });
@@ -67,8 +72,7 @@ export function boot(config) {
   const drawingInteraction = createDrawingInteraction({ store, bus, host, config });
   const smc = createSmc({ store, bus, host, config });
   // Theme (R27/CT2/CT3): the toolbar resolves + writes ``data-theme``, then
-  // calls this callback (NO bus event — R20). Live flip is option-only (#68);
-  // only a user change persists (boot has its own restore path).
+  // calls this callback (NO bus event — R20). Live flip is option-only (#68).
   const toolbar = createToolbar({
     store,
     bus,
@@ -78,6 +82,17 @@ export function boot(config) {
       host.setTheme(p.resolved);
       savePreference({ theme: p.pref });
     },
+  });
+  // F5 S2: the vertical drawing toolbar writes ``store.tool`` (the legacy
+  // ``.draw-tool`` command); drawings reacts via store.subscribe.
+  createDrawToolbar({ store, bus, config });
+  // F5 S3 (R12): the object tree's gear opens the indicator dialog. The callback
+  // is passed BEFORE the tree's first render (indicators is created above).
+  createObjectTree({
+    store,
+    bus,
+    config,
+    onIndicatorSettings: indicators.openSettings,
   });
   // Read-only legend overlay: re-subscribes on chart:built internally, so no
   // buildChart change is needed (design: keeps main wiring to +1 line).
@@ -158,12 +173,11 @@ export function boot(config) {
     });
   }
 
-  // Commands travel the bus (chart-bus.js) so main owns orchestration: the
-  // config:changed command switches, indicator:changed rebuilds (config change
-  // -> setData path; the live WS stream keeps update() only).
+  // Commands travel the bus so main owns orchestration: config:changed
+  // switches; indicator:changed rebuilds (config-change/setData path; the live
+  // WS stream keeps update() only).
   bus.on("config:changed", function (p) {
-    // Persist a genuine interval change only (mirrors saveLayout); a pair
-    // switch keeps the same interval and must not PUT.
+    // Persist a genuine interval change only (a pair switch keeps it).
     if (p.interval !== state.interval) savePreference({ interval: p.interval });
     switchTo(p.symbol, p.interval);
   });
@@ -180,61 +194,13 @@ export function boot(config) {
     host.setScaleMode(state.scaleMode);
     savePreference({ scale_mode: state.scaleMode });
   });
-
-  function csrfToken() {
-    const meta = document.querySelector('meta[name="csrf-token"]');
-    return meta ? meta.content : "";
-  }
-
-  // Debounced preference PUT (R10/CS6), mirroring saveLayout. Each call merges
-  // only its patch into the pending body, so two quick changes coalesce into one
-  // PUT that still carries just the changed fields. A failed save is silent —
-  // the in-session chart is unaffected.
-  let savePrefTimer = null;
-  let savePrefPending = null;
-  function savePreference(patch) {
-    savePrefPending = Object.assign(savePrefPending || {}, patch);
-    if (savePrefTimer) clearTimeout(savePrefTimer);
-    savePrefTimer = setTimeout(function () {
-      savePrefTimer = null;
-      const body = savePrefPending;
-      savePrefPending = null;
-      fetch(config.urls.preference, {
-        method: "PUT",
-        headers: { "Content-Type": "application/json", "X-CSRFToken": csrfToken() },
-        body: JSON.stringify(body),
-      }).catch(function () { /* non-fatal */ });
-    }, config.saveDelay);
-  }
-
-  // Fetch the saved preference before boot; any failure (or a miss) falls back
-  // to the defaults so the chart is never blank and boot is never blocked
-  // (R10/CS6).
-  function loadPreference() {
-    return fetch(config.urls.preference)
-      .then(function (r) {
-        if (!r.ok) throw new Error("preference " + r.status);
-        return r.json();
-      })
-      .then(function (body) {
-        return {
-          interval: (body && body.interval) || "1m",
-          scaleMode: (body && body.scale_mode) || "linear",
-          chartType: (body && body.chart_type) || "candles",
-          theme: (body && body.theme) || "system",
-          smc: (body && body.smc) || {}, // R7: persisted family toggles
-        };
-      })
-      .catch(function () {
-        return {
-          interval: "1m",
-          scaleMode: "linear",
-          chartType: "candles",
-          theme: "system",
-          smc: {},
-        };
-      });
-  }
+  // F5 S3 (R20): visibility is an option-only host apply (mirrors
+  // scale:changed) — NO rebuild, NO refetch (#68) — then persist the layout.
+  bus.on("indicator:visibility", function (p) {
+    if (!p) return;
+    host.setSeriesVisible(p.token, p.visible);
+    indicators.saveLayout();
+  });
 
   // Async boot (R4/R7/R10): preference -> layout -> build -> connect ->
   // drawings -> history, all sequential so no two API fetches race the session

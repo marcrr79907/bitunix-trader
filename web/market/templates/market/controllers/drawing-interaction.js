@@ -18,6 +18,16 @@ export function localPoint(rect, clientX, clientY) {
   return { x: clientX - left, y: clientY - top };
 }
 
+// F5 (R9): rows the pointer may grab/open. A locked OR hidden drawing is NOT
+// pointer-selectable/draggable, but stays selectable from the tree (a bus emit,
+// not a pointer hit). Absent flags mean visible/unlocked. Pure (no closure) so
+// both branches are unit-testable.
+export function pointerRows(rows) {
+  return (rows || []).filter(function (r) {
+    return r.locked !== true && r.visible !== false;
+  });
+}
+
 // Merge the dialog's edited color/lineWidth over a drawing's base style. Only
 // valid edits apply (color non-empty, lineWidth integer >= 1); the base is
 // never mutated. A null base yields only the valid edited keys.
@@ -84,7 +94,7 @@ export function createDrawingInteraction({ store, bus, host, config }) {
     if (!el || state.tool) return; // a drawing tool owns the click in tool mode
     if (e.button !== undefined && e.button !== 0) return;
     const p = pointFromEvent(e);
-    const hit = grabHandle(rows, p.x, p.y, map());
+    const hit = grabHandle(pointerRows(rows), p.x, p.y, map());
     if (!hit) {
       setSelection(null); // R9: a miss clears any current selection
       return;
@@ -161,7 +171,7 @@ export function createDrawingInteraction({ store, bus, host, config }) {
   function onDblClick(e) {
     if (!el || state.tool) return;
     const p = pointFromEvent(e);
-    const hit = grabHandle(rows, p.x, p.y, map());
+    const hit = grabHandle(pointerRows(rows), p.x, p.y, map());
     if (!hit) return; // R13: double-click with nothing under it is a no-op
     const row = rowById(hit.id);
     if (!row || !dialog) return;

@@ -50,6 +50,20 @@ test("buildIndicators: no styles arg keeps entries style-free", () => {
   assert.deepStrictEqual(buildIndicators(["sma"], {}), [{ token: "sma" }]);
 });
 
+test("buildIndicators: 4th visible arg emits visible:false only (F2.7 / R4)", () => {
+  // Absent = true -> minimal payload (no ``visible`` key), mirroring style.
+  assert.deepStrictEqual(
+    buildIndicators(["sma", "rsi"], {}, {}, { sma: false }),
+    [{ token: "sma", visible: false }, { token: "rsi" }],
+  );
+  // An explicit true is also dropped (absent means visible).
+  assert.deepStrictEqual(buildIndicators(["sma"], {}, {}, { sma: true }), [
+    { token: "sma" },
+  ]);
+  // No visible arg at all keeps entries unchanged (backward compatible).
+  assert.deepStrictEqual(buildIndicators(["sma"], {}), [{ token: "sma" }]);
+});
+
 test("PERIOD_PARAMS: only param tokens with an editable period", () => {
   assert.deepStrictEqual(PERIOD_PARAMS, { sma: "sma_len", ema: "ema_len" });
 });

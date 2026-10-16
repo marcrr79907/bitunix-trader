@@ -9,62 +9,14 @@
 // Static presentation registry (token -> placement + series factory). Values
 // come from the server payload; the host only maps them onto chart series.
 // The candle channel (series, raw array, HA state) lives in chart-host-candles.
+// The registry itself lives in chart-registry-core.js (F5 S1 extraction, D1);
+// the host re-exports REGISTRY for its existing importers.
 import * as Types from "./chart-types-core.js";
 import { createCandles } from "./chart-host-candles.js";
 import { optionsFor, prefersDark, resolve as resolveTheme } from "./theme-core.js";
+import { PANE_ORDER, PRICE_SCALE_MODES, REGISTRY } from "./chart-registry-core.js";
 
-export const REGISTRY = {
-  sma: { place: "overlay", series: [{ key: "sma", type: "line", color: "#2962ff" }] },
-  ema: { place: "overlay", series: [{ key: "ema", type: "line", color: "#ff6d00" }] },
-  bollinger: {
-    place: "overlay",
-    series: [
-      { key: "bollinger_upper", type: "line", color: "#7e57c2" },
-      { key: "bollinger_middle", type: "line", color: "#7e57c2" },
-      { key: "bollinger_lower", type: "line", color: "#7e57c2" },
-    ],
-  },
-  vwap: { place: "overlay", series: [{ key: "vwap", type: "line", color: "#26a69a" }] },
-  rsi: {
-    place: "pane",
-    pane: "rsi",
-    series: [{ key: "rsi", type: "line", color: "#ab47bc" }],
-  },
-  macd: {
-    place: "pane",
-    pane: "macd",
-    series: [
-      { key: "macd", type: "line", color: "#2962ff" },
-      { key: "signal", type: "line", color: "#ff6d00" },
-      { key: "histogram", type: "histogram", color: "#26a69a" },
-    ],
-  },
-  stochastic: {
-    place: "pane",
-    pane: "stochastic",
-    series: [
-      { key: "k", type: "line", color: "#2962ff" },
-      { key: "d", type: "line", color: "#ff6d00" },
-    ],
-  },
-  atr: { place: "pane", pane: "atr", series: [{ key: "atr", type: "line", color: "#ff6d00" }] },
-  volume: {
-    place: "pane",
-    pane: "volume",
-    series: [{ key: "volume", type: "histogram", color: "#26a69a" }],
-  },
-};
-
-// Fixed pane order -> contiguous indices 1..n (index 0 = price scale).
-export const PANE_ORDER = ["rsi", "macd", "stochastic", "atr", "volume"];
-
-// scaleMode -> LightweightCharts.PriceScaleMode member. The SYMBOL is read at
-// call time (never a magic number); unknown -> Normal (CS2 fallback).
-const SCALE_MODES = {
-  linear: "Normal",
-  log: "Logarithmic",
-  percentage: "Percentage",
-};
+export { PANE_ORDER, REGISTRY };
 
 export function createHost() {
   let chart = null;
@@ -185,6 +137,12 @@ export function createHost() {
       addSeries(token, i + 1, styles[token]);
     });
 
+    // Apply initial indicator visibility (F5 S3 supplies state.indicatorVisible;
+    // absent in S2 → no-op). Option-only (#68): applyOptions, never setData.
+    Object.keys(state.indicatorVisible || {}).forEach(function (token) {
+      setSeriesVisible(token, state.indicatorVisible[token]);
+    });
+
     // Pane test seam: {paneName: {seriesKey: series}}.
     panes = {};
     activeSeries.forEach(function (a) {
@@ -226,6 +184,17 @@ export function createHost() {
 
   // --- scale mode (F8) --------------------------------------------------------
 
+  // Indicator visibility (F5 S2, #68): option-only — a hidden series stays
+  // attached and its data untouched. NEVER setData/update. No-op before a chart
+  // or for an unknown token (CS2-style degrade).
+  function setSeriesVisible(token, visible) {
+    activeSeries.forEach(function (a) {
+      if (a.token === token && a.series.applyOptions) {
+        a.series.applyOptions({ visible: !!visible });
+      }
+    });
+  }
+
   // Theme setter (CT5): option-only, no data write (#68). No-op before a chart.
   function setTheme(resolved) {
     if (!chart) return;
@@ -236,7 +205,7 @@ export function createHost() {
   // price scale. Option-only: never setData/update (#68). Unknown -> Normal.
   function applyScale() {
     if (!chart) return;
-    const member = SCALE_MODES[scaleMode] || "Normal";
+    const member = PRICE_SCALE_MODES[scaleMode] || "Normal";
     chart.priceScale("right").applyOptions({
       mode: LightweightCharts.PriceScaleMode[member],
     });
@@ -285,6 +254,7 @@ export function createHost() {
     setCandles,
     updateCandle,
     setScaleMode,
+    setSeriesVisible,
     setTheme,
     dataKey,
     seriesFromPayload,

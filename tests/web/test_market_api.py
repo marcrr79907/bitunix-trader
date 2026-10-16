@@ -1147,6 +1147,67 @@ def test_parse_layout_indicators_rejects_bad_style(bad_style):
         parse_layout_indicators([{"token": "sma", "style": bad_style}])
 
 
+# --- parse_layout_indicators: visible preservation (F5 S3 / F2.7 delta) ------
+
+
+def test_parse_layout_indicators_preserves_visible_verbatim():
+    from market.quotes import parse_layout_indicators
+
+    out = parse_layout_indicators([{"token": "sma", "visible": False}])
+    # Preserved verbatim (no default injected); key order preserved.
+    assert out == [{"token": "sma", "visible": False}]
+
+    out_true = parse_layout_indicators([{"token": "ema", "visible": True}])
+    assert out_true == [{"token": "ema", "visible": True}]
+
+
+def test_parse_layout_indicators_absent_visible_is_not_injected():
+    from market.quotes import parse_layout_indicators
+
+    # Absent = true at read time; the parser MUST NOT inject a default key.
+    out = parse_layout_indicators([{"token": "rsi"}])
+    assert out == [{"token": "rsi"}]
+    assert "visible" not in out[0]
+
+
+@pytest.mark.parametrize("bad", ["yes", 1, 0, None, []])
+def test_parse_layout_indicators_non_bool_visible_is_400(bad):
+    from market.quotes import parse_layout_indicators
+
+    with pytest.raises(ValueError):
+        parse_layout_indicators([{"token": "sma", "visible": bad}])
+
+
+def test_layout_put_then_get_round_trips_visible_verbatim():
+    indicators = [
+        {"token": "sma", "params": {"sma_len": 50}, "visible": False},
+        {"token": "macd"},
+    ]
+    put = _put_layout(
+        USER, {"symbol": "BTCUSDT", "interval": "1m", "indicators": indicators}
+    )
+    assert put.status_code == 200
+
+    body = USER.get(f"{LAYOUT_URL}?symbol=BTCUSDT&interval=1m").json()
+    assert body["indicators"] == indicators
+
+
+def test_layout_put_non_bool_visible_is_400_and_writes_nothing():
+    from trading.models import ChartLayout
+
+    response = _put_layout(
+        USER,
+        {
+            "symbol": "BTCUSDT",
+            "interval": "1m",
+            "indicators": [{"token": "sma", "visible": "yes"}],
+        },
+    )
+    assert response.status_code == 400
+    assert "error" in response.json()
+    assert ChartLayout.objects.count() == 0
+
+
 # --- WU2: drawings CRUD endpoint (R2/R3/R4/R5) ------------------------------
 
 DRAWINGS_URL = "/market/api/drawings"
@@ -1234,6 +1295,8 @@ def test_drawings_post_then_get_lists_the_row_with_id():
             "kind": "hline",
             "points": {"price": 50000.0},
             "style": {"color": "#f00", "lineWidth": 1},
+            "visible": True,
+            "locked": False,
         }
     ]
 
@@ -1604,6 +1667,93 @@ def test_drawings_isolation_b_put_of_a_id_is_404_and_a_unchanged():
     assert a_row.style == created["style"]
 
 
+# --- F5 S1: drawing visible/locked flags (R2 delta) --------------------------
+
+
+def test_drawings_post_defaults_absent_flags():
+    response = _post_drawing(USER, _drawing_body())
+
+    assert response.status_code == 201
+    body = response.json()
+    assert body["visible"] is True
+    assert body["locked"] is False
+
+
+def test_drawings_post_carries_explicit_flags_and_get_lists_them():
+    response = _post_drawing(USER, _drawing_body(visible=False, locked=True))
+
+    assert response.status_code == 201
+    created = response.json()
+    assert created["visible"] is False
+    assert created["locked"] is True
+
+    listed = USER.get(f"{DRAWINGS_URL}?symbol=BTCUSDT").json()["drawings"]
+    assert listed[0]["visible"] is False
+    assert listed[0]["locked"] is True
+
+
+@pytest.mark.parametrize("key", ["visible", "locked"])
+@pytest.mark.parametrize("bad", ["yes", 1, 0, None])
+def test_drawings_post_non_bool_flag_is_400_and_writes_nothing(key, bad):
+    from trading.models import Drawing
+
+    response = _post_drawing(USER, _drawing_body(**{key: bad}))
+
+    assert response.status_code == 400
+    assert "error" in response.json()
+    assert Drawing.objects.count() == 0
+
+
+def test_drawings_put_updates_both_flags_round_trip():
+    created = _post_drawing(USER, _drawing_body()).json()
+
+    response = _put_drawing(USER, created["id"], {"visible": False, "locked": True})
+
+    assert response.status_code == 200
+    assert response.json()["visible"] is False
+    assert response.json()["locked"] is True
+    listed = USER.get(f"{DRAWINGS_URL}?symbol=BTCUSDT").json()["drawings"]
+    assert listed[0]["visible"] is False
+    assert listed[0]["locked"] is True
+
+
+def test_drawings_put_partial_visible_only_keeps_locked_and_points():
+    created = _post_drawing(USER, _drawing_body(locked=True)).json()
+    original_points = created["points"]
+
+    response = _put_drawing(USER, created["id"], {"visible": False})
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["visible"] is False
+    assert body["locked"] is True  # kept from the stored row
+    assert body["points"] == original_points
+
+
+@pytest.mark.parametrize("key", ["visible", "locked"])
+@pytest.mark.parametrize("bad", ["yes", 1, 0, None])
+def test_drawings_put_non_bool_flag_is_400_and_writes_nothing(key, bad):
+    from trading.models import Drawing
+
+    created = _post_drawing(USER, _drawing_body()).json()
+    a_row = Drawing.objects.get(pk=created["id"])
+
+    response = _put_drawing(USER, created["id"], {key: bad})
+
+    assert response.status_code == 400
+    assert "error" in response.json()
+    a_row.refresh_from_db()
+    assert a_row.visible is True and a_row.locked is False  # unchanged
+
+
+def test_drawings_put_stale_interval_key_still_ignored():
+    # R2: an ``interval`` key in a PUT body MUST NOT 400 (accepted and ignored).
+    created = _post_drawing(USER, _drawing_body()).json()
+    response = _put_drawing(USER, created["id"], {"interval": "1m", "visible": False})
+    assert response.status_code == 200
+    assert response.json()["visible"] is False
+
+
 # --- parse_drawing: pure validation seam (R4/R5) ----------------------------
 
 
@@ -1632,9 +1782,42 @@ def test_drawings_isolation_b_put_of_a_id_is_404_and_a_unchanged():
 def test_parse_drawing_accepts_each_kind(kind, points, style):
     from market.quotes import parse_drawing
 
-    out_points, out_style = parse_drawing(kind, points, style)
+    out_points, out_style, out_visible, out_locked = parse_drawing(kind, points, style)
     assert out_points == points
     assert out_style == style
+    # Absent flags default to True/False (R2).
+    assert out_visible is True
+    assert out_locked is False
+
+
+def test_parse_drawing_carries_real_bool_flags():
+    from market.quotes import parse_drawing
+
+    out_points, out_style, out_visible, out_locked = parse_drawing(
+        "hline", {"price": 1.0}, {}, visible=False, locked=True
+    )
+    assert out_points == {"price": 1.0}
+    assert out_style == {}
+    assert out_visible is False
+    assert out_locked is True
+
+
+@pytest.mark.parametrize(
+    "flags",
+    [
+        {"visible": "yes"},  # str
+        {"visible": 1},  # int (int is not bool)
+        {"visible": None},  # None where a bool is expected
+        {"locked": "no"},  # str
+        {"locked": 0},  # int
+        {"locked": None},  # None
+    ],
+)
+def test_parse_drawing_rejects_non_bool_flags(flags):
+    from market.quotes import parse_drawing
+
+    with pytest.raises(ValueError):
+        parse_drawing("hline", {"price": 1.0}, {}, **flags)
 
 
 @pytest.mark.parametrize(

@@ -32,6 +32,12 @@ function priceRangeFor(row) {
 function renderShape(ctx, size, row, map, selected) {
   const kind = row.kind;
   ctx.save();
+  // F5 S3 (R6): a hidden drawing stays attached but draws NOTHING. Reveal is a
+  // requestUpdate only (the primitive reads ``row.visible`` live each render).
+  if (row.visible === false) {
+    ctx.restore();
+    return;
+  }
   ctx.strokeStyle = ctx.fillStyle = row.style.color || "#2962ff";
   ctx.lineWidth = (row.style.lineWidth || 1) + (selected ? 2 : 0);
   if (kind === "hline") {
@@ -119,7 +125,10 @@ function makeDrawingPrimitive(row, selection) {
         },
       }];
     },
-    autoscaleInfo: function () { return priceRangeFor(row); },
+    // F5 S3 (R6): a hidden full-width ray MUST NOT influence autoscale.
+    autoscaleInfo: function () {
+      return row.visible === false ? null : priceRangeFor(row);
+    },
   };
 }
 

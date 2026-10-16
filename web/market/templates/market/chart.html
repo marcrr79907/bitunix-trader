@@ -43,29 +43,6 @@
       <option value="dark">dark</option>
       <option value="system">system</option>
     </select>
-    <h2 id="indicators-heading">Indicators</h2>
-    <fieldset class="indicators" aria-labelledby="indicators-heading">
-      <div class="indicator-row"><label><input type="checkbox" class="indicator-toggle" value="sma" checked> SMA
-        <input type="number" class="indicator-param" data-token="sma" data-param="sma_len" min="1" value="20" aria-label="SMA length"></label>
-        <button type="button" class="indicator-settings" data-token="sma" aria-haspopup="dialog" aria-label="SMA settings">⚙</button></div>
-      <div class="indicator-row"><label><input type="checkbox" class="indicator-toggle" value="ema" checked> EMA
-        <input type="number" class="indicator-param" data-token="ema" data-param="ema_len" min="1" value="20" aria-label="EMA length"></label>
-        <button type="button" class="indicator-settings" data-token="ema" aria-haspopup="dialog" aria-label="EMA settings">⚙</button></div>
-      <div class="indicator-row"><label><input type="checkbox" class="indicator-toggle" value="bollinger"> Bollinger</label>
-        <button type="button" class="indicator-settings" data-token="bollinger" aria-haspopup="dialog" aria-label="Bollinger settings">⚙</button></div>
-      <div class="indicator-row"><label><input type="checkbox" class="indicator-toggle" value="vwap"> VWAP</label>
-        <button type="button" class="indicator-settings" data-token="vwap" aria-haspopup="dialog" aria-label="VWAP settings">⚙</button></div>
-      <div class="indicator-row"><label><input type="checkbox" class="indicator-toggle" value="rsi" checked> RSI</label>
-        <button type="button" class="indicator-settings" data-token="rsi" aria-haspopup="dialog" aria-label="RSI settings">⚙</button></div>
-      <div class="indicator-row"><label><input type="checkbox" class="indicator-toggle" value="macd"> MACD</label>
-        <button type="button" class="indicator-settings" data-token="macd" aria-haspopup="dialog" aria-label="MACD settings">⚙</button></div>
-      <div class="indicator-row"><label><input type="checkbox" class="indicator-toggle" value="stochastic"> Stochastic</label>
-        <button type="button" class="indicator-settings" data-token="stochastic" aria-haspopup="dialog" aria-label="Stochastic settings">⚙</button></div>
-      <div class="indicator-row"><label><input type="checkbox" class="indicator-toggle" value="atr"> ATR</label>
-        <button type="button" class="indicator-settings" data-token="atr" aria-haspopup="dialog" aria-label="ATR settings">⚙</button></div>
-      <div class="indicator-row"><label><input type="checkbox" class="indicator-toggle" value="volume"> Volume</label>
-        <button type="button" class="indicator-settings" data-token="volume" aria-haspopup="dialog" aria-label="Volume settings">⚙</button></div>
-    </fieldset>
     <h2>RSI (14)</h2>
     <p id="rsi" aria-live="polite">–</p>
     <h2 id="smc-heading">SMC overlay</h2>
@@ -78,15 +55,9 @@
       <label><input type="checkbox" class="smc-toggle" data-family="setups" checked> Setups</label>
     </fieldset>
     <h2 id="drawings-heading">Drawings</h2>
-    <fieldset class="drawings" aria-labelledby="drawings-heading">
-      <button type="button" class="draw-tool" data-kind="hline">H-line</button>
-      <button type="button" class="draw-tool" data-kind="trendline">Trend</button>
-      <button type="button" class="draw-tool" data-kind="fib">Fib</button>
-      <button type="button" class="draw-tool" data-kind="rect">Box</button>
-      <button type="button" class="draw-tool" data-kind="text">Text</button>
-    </fieldset>
-    <button type="button" class="draw-cancel">Pan / cancel</button>
-    <ul id="drawing-list" class="drawing-list"></ul>
+    <div id="draw-tools" aria-labelledby="drawings-heading"></div>
+    <h2 id="objects-heading">Objects</h2>
+    <div id="object-tree" aria-labelledby="objects-heading"></div>
   </aside>
 </div>
 
@@ -132,10 +103,13 @@
 <link rel="modulepreload" href="{% url 'market_chart_module_js' name='drawing-core' %}">
 <link rel="modulepreload" href="{% url 'market_chart_module_js' name='drawing-interaction-core' %}">
 <link rel="modulepreload" href="{% url 'market_chart_module_js' name='drawing-primitive' %}">
+<link rel="modulepreload" href="{% url 'market_chart_module_js' name='tool-icons-core' %}">
 <link rel="modulepreload" href="{% url 'market_chart_module_js' name='smc-overlay-core' %}">
 <link rel="modulepreload" href="{% url 'market_chart_module_js' name='legend-core' %}">
 <link rel="modulepreload" href="{% url 'market_chart_module_js' name='indicator-settings-core' %}">
+<link rel="modulepreload" href="{% url 'market_chart_module_js' name='add-indicator-core' %}">
 <link rel="modulepreload" href="{% url 'market_chart_module_js' name='chart-types-core' %}">
+<link rel="modulepreload" href="{% url 'market_chart_module_js' name='chart-registry-core' %}">
 <link rel="modulepreload" href="{% url 'market_chart_module_js' name='theme-core' %}">
 <link rel="modulepreload" href="{% url 'market_chart_module_js' name='chart-store' %}">
 <link rel="modulepreload" href="{% url 'market_chart_module_js' name='chart-bus' %}">
@@ -149,6 +123,9 @@
 <link rel="modulepreload" href="{% url 'market_controller_js' name='drawing-interaction' %}">
 <link rel="modulepreload" href="{% url 'market_controller_js' name='smc' %}">
 <link rel="modulepreload" href="{% url 'market_controller_js' name='toolbar' %}">
+<link rel="modulepreload" href="{% url 'market_controller_js' name='draw-toolbar' %}">
+<link rel="modulepreload" href="{% url 'market_controller_js' name='object-tree' %}">
 <link rel="modulepreload" href="{% url 'market_controller_js' name='legend' %}">
+<link rel="modulepreload" href="{% url 'market_controller_js' name='preference' %}">
 <script type="module" src="{% url 'market_chart_js' %}"></script>
 {% endblock %}

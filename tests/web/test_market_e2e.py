@@ -568,6 +568,49 @@ def _wait_ready(page):
     )
 
 
+def _tree_tokens(page):
+    """The active indicator tokens listed in the object tree (R1 active-only)."""
+    return page.evaluate(
+        "() => Array.from(document.querySelectorAll("
+        "'.object-tree .tree-row[data-token]')).map((r) => r.dataset.token)"
+    )
+
+
+# --- F5 S3 E2E coverage delta (F5 FIX-5, issue #177) -------------------------
+#
+# S3 legitimately deleted the DOM these assertions checked: the indicators
+# `fieldset` (add-any-token via checkbox) and `#drawing-list`. R18's "green with
+# NO assertion edits" clause was unmeetable by the change that removes that DOM,
+# so the archive reconciles R18/R20 to "green except the assertions removed AND
+# REPLACED by equivalent coverage". This is that reconciliation. Format:
+# "removed scenario -> what it verified -> replacement".
+#
+# * checkbox `.indicator-toggle[sma/ema/rsi]` checked -> saved layout restored
+#   -> test_boot_restores_saved_layout (tree tokens)
+# * checkbox is_checked -> active membership render
+#   -> test_fetch_failure_falls_back_to_defaults (tree tokens)
+# * checkbox `rsi` on -> one debounced PUT body -> persist a change
+#   -> test_toggle_fires_one_debounced_put (tree eye -> visible:false)
+# * checkbox `sma`/`rsi` across interval switch -> per-interval layout load
+#   -> test_switch_loads_target_layout (tree tokens)
+# * test_toggle_adds_and_removes_panes: uncheck rsi -> pane gone + check macd ->
+#   pane + `indicators=macd` -> config change -> rebuild + REFETCH with the new
+#   set, and ADD an indicator
+#   -> test_indicator_eye_hides_option_only_and_delete_removes_pane: delete rsi
+#      -> pane gone AND history REFETCHES with the set minus rsi. ADDING has NO
+#      replacement -> issue #176 (new capability, slice S5)
+# * `#drawing-list .drawing-del` delete -> drawing delete by id
+#   -> test_tree_row_delete_fires_delete (row-delete)
+# * settings gear `.indicator-settings[sma]` -> open the settings dialog
+#   -> _SETTINGS_GEAR = `.tree-row[data-token=sma] .row-settings`
+# * legend: check `bollinger` -> 2nd build -> legend survives a rebuild
+#   -> test_legend_resubscribes_across_rebuild (seeded bollinger + style edit)
+#
+# Net: every removed scenario has an equivalent replacement EXCEPT adding an
+# indicator, which S3 removed (active-only membership) and is tracked as the new
+# capability issue #176 (add-indicator affordance, slice S5).
+
+
 @p
 def test_boot_restores_saved_layout(saved_layout, browser_page):
     # R4 (issue #71): a persisted layout wins over the DOM defaults on boot —
@@ -575,13 +618,18 @@ def test_boot_restores_saved_layout(saved_layout, browser_page):
     page, base_url = browser_page
     page.goto(f"{base_url}/market/")
     _wait_ready(page)
-    # Saved: SMA on (len 50), MACD on; EMA/RSI off (defaults are on).
-    assert page.locator('.indicator-toggle[value="sma"]').is_checked()
-    assert page.locator('.indicator-toggle[value="macd"]').is_checked()
-    assert not page.locator('.indicator-toggle[value="ema"]').is_checked()
-    assert not page.locator('.indicator-toggle[value="rsi"]').is_checked()
-    # The saved param restores into its editable input.
-    assert page.locator('.indicator-param[data-token="sma"]').input_value() == "50"
+    # Saved: SMA on (len 50), MACD on; EMA/RSI off. The tree lists ACTIVE-ONLY
+    # membership (R1), so the saved set is exactly what renders.
+    tokens = _tree_tokens(page)
+    assert "sma" in tokens
+    assert "macd" in tokens
+    assert "ema" not in tokens
+    assert "rsi" not in tokens
+    # The saved param restores into the store -> the sma request carries len 50
+    # (the settings dialog reads it back from params).
+    page.locator('.tree-row[data-token="sma"] .row-settings').click()
+    assert page.locator("#is-period").input_value() == "50"
+    page.keyboard.press("Escape")
     # The MACD pane only exists if the saved layout drove the rebuild.
     assert page.evaluate(
         "() => !!(window.marketChart.panes && window.marketChart.panes.macd)"
@@ -626,22 +674,24 @@ def test_saved_sma_ema_length_uses_server_token(saved_token_layout, browser_page
 
 
 @p
-def test_fetch_failure_falls_back_to_dom_defaults(browser_page):
-    # R4: a failing layout fetch MUST fall back to the DOM defaults — never a
-    # blank chart. The preset checkboxes stay the source of truth.
+def test_fetch_failure_falls_back_to_defaults(browser_page):
+    # R4: a failing layout fetch MUST fall back to the default set — never a
+    # blank chart. The store's DEFAULT_INDICATORS is the source of truth.
     page, base_url = browser_page
     page.route("**/market/api/layout?*", lambda route: route.abort())
     page.goto(f"{base_url}/market/")
     _wait_ready(page)
-    assert page.locator('.indicator-toggle[value="sma"]').is_checked()
-    assert page.locator('.indicator-toggle[value="ema"]').is_checked()
-    assert page.locator('.indicator-toggle[value="rsi"]').is_checked()
+    tokens = _tree_tokens(page)
+    assert "sma" in tokens
+    assert "ema" in tokens
+    assert "rsi" in tokens
 
 
 @p
 def test_toggle_fires_one_debounced_put(saved_layout, browser_page):
-    # R5: a toggle change debounce-saves exactly one PUT carrying the active
-    # symbol+interval, and the saved payload reflects the new selection.
+    # R5: a tree action debounce-saves exactly one PUT carrying the active
+    # symbol+interval. The tree is ACTIVE-ONLY (R1), so the persisted action is
+    # a row eye (visibility) toggle — the saved payload reflects it.
     page, base_url = browser_page
     puts = []
     page.on(
@@ -655,15 +705,15 @@ def test_toggle_fires_one_debounced_put(saved_layout, browser_page):
     page.goto(f"{base_url}/market/")
     _wait_ready(page)
     puts.clear()  # ignore any boot-time traffic
-    page.locator('.indicator-toggle[value="rsi"]').check()
-    # Debounce (~500 ms) then one PUT; a second quick toggle must not add one.
+    page.locator('.tree-row[data-token="sma"] .row-eye').click()
+    # Debounce (~500 ms) then one PUT; a second quick action must not add one.
     page.wait_for_timeout(1200)
     assert len(puts) == 1, [p.url for p in puts]
     body = json.loads(puts[0].post_data or "{}")
     assert body["symbol"] == "BTCUSDT"
     assert body["interval"] == "1m"
-    tokens = [i["token"] for i in body["indicators"]]
-    assert "rsi" in tokens
+    sma = next(i for i in body["indicators"] if i["token"] == "sma")
+    assert sma.get("visible") is False
 
 
 @p
@@ -677,8 +727,11 @@ def test_switch_loads_target_layout(per_interval_layouts, browser_page):
         " && window.marketChart.candleSeries.data().length > 0",
         timeout=10000,
     )
-    assert page.locator('.indicator-toggle[value="sma"]').is_checked()
-    assert not page.locator('.indicator-toggle[value="rsi"]').is_checked()
+    page.wait_for_function(
+        "() => !!document.querySelector('.tree-row[data-token=\"sma\"]')"
+        " && !document.querySelector('.tree-row[data-token=\"rsi\"]')",
+        timeout=10000,
+    )
 
     page.select_option("#interval", "5m")
     page.wait_for_function(
@@ -687,8 +740,12 @@ def test_switch_loads_target_layout(per_interval_layouts, browser_page):
         " && window.marketChart.panes.rsi.rsi.data().length > 0",
         timeout=10000,
     )
-    assert page.locator('.indicator-toggle[value="rsi"]').is_checked()
-    assert not page.locator('.indicator-toggle[value="sma"]').is_checked()
+    # The tree re-sources membership from the store after the target layout load.
+    page.wait_for_function(
+        "() => !!document.querySelector('.tree-row[data-token=\"rsi\"]')"
+        " && !document.querySelector('.tree-row[data-token=\"sma\"]')",
+        timeout=10000,
+    )
 
 
 @p
@@ -713,9 +770,12 @@ def test_selected_indicator_renders_a_pane(seeded_5m_candles, browser_page):
 
 
 @p
-def test_toggle_adds_and_removes_panes(seeded_5m_candles, browser_page):
-    # R6: a toggle is a config change -> rebuild + refetch (setData path allowed).
-    # Unchecking the RSI pane removes it; checking MACD adds it back as a new pane.
+def test_indicator_eye_hides_option_only_and_delete_removes_pane(
+    seeded_5m_candles, browser_page
+):
+    # F5 S3: the object tree has two indicator actions.
+    #  (a) eye  -> option-only hide (#68): the series stays, the pane remains.
+    #  (b) delete -> membership change -> rebuild/refetch: the pane disappears.
     page, base_url = browser_page
     kline_requests = []
     page.on(
@@ -734,23 +794,118 @@ def test_toggle_adds_and_removes_panes(seeded_5m_candles, browser_page):
     )
     with_pane = page.locator("#chart canvas").count()
 
-    # Toggle the default RSI pane OFF: its series disappears (clean rebuild).
-    page.locator('.indicator-toggle[value="rsi"]').uncheck()
+    # (a) Eye-hide RSI: option-only. The pane/series stay attached (#68); only
+    # the series' visible option flips. No kline refetch.
+    kline_requests.clear()
+    page.locator('.tree-row[data-token="rsi"] .row-eye').click()
+    page.wait_for_function(
+        "() => window.marketChart.chart.panes().some((p) => p.getSeries().some("
+        " (s) => s.options().visible === false))",
+        timeout=10000,
+    )
+    assert page.evaluate(
+        "() => !!(window.marketChart.panes && window.marketChart.panes.rsi)"
+    ), "pane stays attached on an option-only hide"
+    assert kline_requests == [], kline_requests
+
+    # (b) Delete RSI from the tree: membership change -> rebuild removes the pane.
+    page.locator('.tree-row[data-token="rsi"] .row-delete').click()
     page.wait_for_function(
         "() => !(window.marketChart.panes && window.marketChart.panes.rsi)",
         timeout=10000,
     )
     assert page.locator("#chart canvas").count() < with_pane
-
-    # Toggle MACD ON: a new pane renders and history refetches with it in the set.
-    page.locator('.indicator-toggle[value="macd"]').check()
+    # The rebuild REFETCHES history with the indicator set minus the deleted token
+    # — the positive replacement for `test_toggle_adds_and_removes_panes`'s
+    # "history refetches with the indicator set" (F5 FIX-5, issue #177). A new
+    # kline request MUST appear carrying `indicators=` WITHOUT rsi.
     page.wait_for_function(
-        "() => window.marketChart.panes && window.marketChart.panes.macd "
-        "&& window.marketChart.panes.macd.macd.data().length > 0",
+        "() => true", timeout=1000
+    )  # let the rebuild's fetchHistory land
+    assert kline_requests, "the delete rebuild MUST refetch history"
+    refetched = [u for u in kline_requests if "indicators=" in u]
+    assert refetched, kline_requests
+    assert not any("rsi" in u.split("indicators=", 1)[1] for u in refetched), refetched
+
+
+@p
+def test_add_indicator_renders_pane_and_refetches(seeded_5m_candles, browser_page):
+    # F5 S5 (issue #176): the counterpart to the S3 delete — the tree is
+    # ACTIVE-ONLY, so the ADD affordance lists the registry tokens NOT active.
+    # Picking MACD (absent from the default set) rebuilds: a MACD pane appears
+    # AND history refetches carrying `indicators=` WITH macd (the positive
+    # refetch assertion #177 flagged as lost).
+    page, base_url = browser_page
+    kline_requests = []
+    page.on(
+        "request",
+        lambda r: (
+            kline_requests.append(r.url) if "/market/api/kline" in r.url else None
+        ),
+    )
+    page.goto(f"{base_url}/market/")
+    page.select_option("#interval", "5m")
+    page.wait_for_function(
+        "() => window.marketChart && window.marketChart.candleSeries"
+        " && window.marketChart.candleSeries.data().length > 0",
         timeout=10000,
     )
-    assert any("indicators=" in u and "macd" in u for u in kline_requests), (
-        kline_requests
+    assert not page.evaluate(
+        "() => !!(window.marketChart.panes && window.marketChart.panes.macd)"
+    ), "MACD absent from the default set"
+
+    kline_requests.clear()
+    page.locator(".add-indicator .add-toggle").click()
+    macd = page.locator('.add-indicator .add-item[data-token="macd"]')
+    assert macd.count() == 1, "macd offered as an inactive candidate"
+    macd.click()
+    # A MACD pane series renders after the rebuild.
+    page.wait_for_function(
+        "() => !!(window.marketChart.panes && window.marketChart.panes.macd)",
+        timeout=10000,
+    )
+    # The rebuild refetches history WITH macd in the indicator set.
+    page.wait_for_function("() => true", timeout=1000)  # let fetchHistory land
+    assert kline_requests, "the add rebuild MUST refetch history"
+    refetched = [u for u in kline_requests if "indicators=" in u]
+    assert refetched, kline_requests
+    assert any("macd" in u.split("indicators=", 1)[1] for u in refetched), refetched
+    # The tree lists macd as active now.
+    assert "macd" in _tree_tokens(page)
+
+
+@p
+def test_add_indicator_persists_across_reload(seeded_5m_candles, browser_page):
+    # R7: an added token round-trips — the debounced PUT persists membership,
+    # and a reload for the same (symbol, interval) shows it active + rendered.
+    page, base_url = browser_page
+    page.goto(f"{base_url}/market/")
+    page.select_option("#interval", "5m")
+    page.wait_for_function(
+        "() => window.marketChart && window.marketChart.candleSeries"
+        " && window.marketChart.candleSeries.data().length > 0",
+        timeout=10000,
+    )
+    page.locator(".add-indicator .add-toggle").click()
+    page.locator('.add-indicator .add-item[data-token="macd"]').click()
+    page.wait_for_function(
+        "() => !!(window.marketChart.panes && window.marketChart.panes.macd)",
+        timeout=10000,
+    )
+    page.wait_for_timeout(1200)  # debounced PUT lands before reload
+
+    page.reload()
+    page.wait_for_function(
+        "() => window.marketChart && window.marketChart.ready === true",
+        timeout=10000,
+    )
+    page.wait_for_function(
+        "() => !!document.querySelector('.tree-row[data-token=\"macd\"]')",
+        timeout=10000,
+    )
+    page.wait_for_function(
+        "() => !!(window.marketChart.panes && window.marketChart.panes.macd)",
+        timeout=10000,
     )
 
 
@@ -858,8 +1013,60 @@ def test_click_with_tool_fires_post(seeded_5m_candles, browser_page):
 
 
 @p
-def test_delete_from_panel_fires_delete(seeded_drawings, browser_page):
-    # R7: the panel list deletes by id -> DELETE /market/api/drawings/<id>.
+def test_draw_toolbar_renders_groups_and_sets_store(browser_page):
+    # F5 S2 (R1/R2/R3): the vertical grouped icon toolbar replaces the flat text
+    # buttons; activating a tool writes store.tool and moves aria-pressed, and
+    # the roving tabindex mirrors the interval-chip pattern.
+    page, base_url = browser_page
+    page.goto(f"{base_url}/market/")
+    _wait_ready(page)
+
+    toolbar = page.locator('.draw-tools[role="toolbar"]')
+    assert toolbar.count() == 1
+    assert toolbar.get_attribute("aria-orientation") == "vertical"
+    assert page.locator('.draw-tools [role="group"]').count() == 4
+    assert page.locator(".draw-tool").count() == 5
+    # The legacy flat text buttons are gone (labels H-line/Trend/Box no longer exist).
+    assert page.locator(".drawings .draw-tool").count() == 0
+    # Icons injected by JS (no inline handler); each button names itself.
+    assert page.locator(".draw-tools .draw-tool svg").count() == 5
+    assert (
+        page.locator('.draw-tool[data-kind="fib"]').get_attribute("aria-label")
+        == "Fibonacci retracement"
+    )
+
+    # No tool active at boot: nothing pressed.
+    assert page.locator('.draw-tools .draw-tool[aria-pressed="true"]').count() == 0
+
+    page.locator('.draw-tool[data-kind="fib"]').click()
+    page.wait_for_function(
+        "() => document.querySelector('.draw-tool[data-kind=\"fib\"]')"
+        ".getAttribute('aria-pressed') === 'true'",
+        timeout=10000,
+    )
+    assert page.locator('.draw-tools .draw-tool[aria-pressed="true"]').count() == 1
+    # Roving tabindex: the active tool owns the single tab stop.
+    fib_tabindex = page.locator('.draw-tool[data-kind="fib"]').get_attribute("tabindex")
+    assert fib_tabindex == "0"
+
+    # Keyboard: ArrowDown from the first tool moves focus to the next.
+    page.locator('.draw-tool[data-kind="hline"]').focus()
+    page.keyboard.press("ArrowDown")
+    focused = page.evaluate("() => document.activeElement.dataset.kind")
+    assert focused == "trendline"
+
+    # Reactivating the active tool cancels it (legacy toggle semantics).
+    page.locator('.draw-tool[data-kind="fib"]').click()
+    page.wait_for_function(
+        "() => document.querySelectorAll("
+        "'.draw-tools .draw-tool[aria-pressed=\"true\"]').length === 0",
+        timeout=10000,
+    )
+
+
+@p
+def test_tree_row_delete_fires_delete(seeded_drawings, browser_page):
+    # R7: the object-tree row delete -> DELETE /market/api/drawings/<id>.
     page, base_url = browser_page
     deletes = []
     page.on(
@@ -876,12 +1083,138 @@ def test_delete_from_panel_fires_delete(seeded_drawings, browser_page):
         "() => window.marketChart.drawings && window.marketChart.drawings.length === 2",
         timeout=10000,
     )
-    page.locator("#drawing-list .drawing-del").first.click()
+    page.locator("#object-tree .tree-row[data-id] .row-delete").first.click()
     page.wait_for_function(
         "() => window.marketChart.drawings && window.marketChart.drawings.length === 1",
         timeout=10000,
     )
     assert len(deletes) == 1, [r.url for r in deletes]
+
+
+@p
+def test_tree_drawing_eye_persists_visible_false(seeded_drawings, browser_page):
+    # F5 S3 (R2): the drawing eye toggles visibility and persists via one PUT
+    # carrying only ``{visible:false}`` (partial body).
+    page, base_url = browser_page
+    puts = []
+    page.on(
+        "request",
+        lambda r: (
+            puts.append(r)
+            if r.method == "PUT" and "/market/api/drawings/" in r.url
+            else None
+        ),
+    )
+    page.goto(f"{base_url}/market/")
+    _wait_ready(page)
+    page.wait_for_function(
+        "() => window.marketChart.drawings && window.marketChart.drawings.length === 2",
+        timeout=10000,
+    )
+    eye = page.locator("#object-tree .tree-row[data-id] .row-eye").first
+    eye.click()
+    page.wait_for_function(
+        "() => document.querySelector('#object-tree .tree-row[data-id] .row-eye')"
+        ".getAttribute('aria-pressed') === 'false'",
+        timeout=10000,
+    )
+    page.wait_for_timeout(300)  # let the PUT land
+    assert len(puts) >= 1, [r.url for r in puts]
+    body = json.loads(puts[-1].post_data or "{}")
+    assert body == {"visible": False}, body
+    # The seam carries the hidden flag (R4).
+    assert page.evaluate(
+        "() => window.marketChart.drawings.some((d) => d.visible === false)"
+    )
+
+
+@p
+def test_tree_keyboard_navigation_and_indicator_visibility(
+    seeded_5m_candles, browser_page
+):
+    # F5 S3 (R3): roving tabindex + Up/Down move focus between treeitems; an
+    # indicator eye emits option-only visibility (no rebuild, no refetch).
+    page, base_url = browser_page
+    page.goto(f"{base_url}/market/")
+    page.select_option("#interval", "5m")
+    page.wait_for_function(
+        "() => window.marketChart && window.marketChart.candleSeries"
+        " && window.marketChart.candleSeries.data().length > 0",
+        timeout=10000,
+    )
+    page.wait_for_function(
+        "() => !!document.querySelector('.tree-row[data-token=\"sma\"]')",
+        timeout=10000,
+    )
+    # Exactly one tab stop; ArrowDown moves focus to the next treeitem.
+    assert page.locator('#object-tree [role="treeitem"][tabindex="0"]').count() == 1
+    page.locator('.tree-row[data-token="sma"]').focus()
+    page.keyboard.press("ArrowDown")
+    assert page.evaluate(
+        "() => document.activeElement !== document.querySelector("
+        "'.tree-row[data-token=\"sma\"]')"
+    )
+
+    # Indicator eye -> option-only hide. The pane stays, no kline refetch.
+    klines = []
+    page.on(
+        "request",
+        lambda r: klines.append(r.url) if "/market/api/kline" in r.url else None,
+    )
+    page.locator('.tree-row[data-token="sma"] .row-eye').click()
+    page.wait_for_function(
+        "() => window.marketChart.chart.panes().some((p) => p.getSeries().some("
+        " (s) => s.options().visible === false))",
+        timeout=10000,
+    )
+    assert klines == [], klines
+
+
+@p
+def test_tree_row_actions_reachable_and_activatable_by_keyboard(
+    seeded_drawings, browser_page
+):
+    # R6/R9 (F5 FIX-3): the drawing row's eye/lock were mouse-only. A focused row
+    # MUST activate them by the documented keys (v = visibility, l = lock) and
+    # advertise the binding; the action persists via its own bus path.
+    page, base_url = browser_page
+    puts = []
+    page.on(
+        "request",
+        lambda r: (
+            puts.append(r)
+            if r.method == "PUT" and "/market/api/drawings/" in r.url
+            else None
+        ),
+    )
+    page.goto(f"{base_url}/market/")
+    _wait_ready(page)
+    page.wait_for_function(
+        "() => window.marketChart.drawings && window.marketChart.drawings.length === 2",
+        timeout=10000,
+    )
+    row = page.locator("#object-tree .tree-row[data-id]").first
+    assert row.locator(".row-eye").get_attribute("aria-keyshortcuts") == "v"
+    assert row.locator(".row-lock").get_attribute("aria-keyshortcuts") == "l"
+
+    row.focus()
+    page.keyboard.press("v")  # eye -> hide
+    page.wait_for_function(
+        "() => document.querySelector('#object-tree .tree-row[data-id] .row-eye')"
+        ".getAttribute('aria-pressed') === 'false'",
+        timeout=10000,
+    )
+    page.keyboard.press("l")  # lock -> locked
+    page.wait_for_function(
+        "() => document.querySelector('#object-tree .tree-row[data-id] .row-lock')"
+        ".getAttribute('aria-pressed') === 'true'",
+        timeout=10000,
+    )
+    page.wait_for_timeout(300)  # let the debounced PUT land
+    assert page.evaluate(
+        "() => window.marketChart.drawings.some((d) => d.locked === true)"
+    )
+    assert len(puts) >= 1, [r.url for r in puts]
 
 
 # --- Drawing interaction (R9-R14): select / drag / delete / deselect ---------
@@ -1061,6 +1394,154 @@ def test_drag_put_returns_200_and_persists_across_reload(
     restored = page.evaluate("() => window.marketChart.drawings[0].points.price")
     assert restored != 100.0
     assert abs(restored - moved) < 1e-6
+
+
+@pytest.fixture
+def hidden_hline(e2e_user):
+    """One hline at 100.0 with ``visible:false`` (R9: not pointer-grabbable)."""
+    from trading.models import Drawing
+
+    return Drawing.objects.create(
+        user=e2e_user,
+        symbol="BTCUSDT",
+        kind="hline",
+        points={"price": 100.0},
+        style={"color": "#2962ff", "lineWidth": 1},
+        visible=False,
+    )
+
+
+@pytest.fixture
+def locked_hline(e2e_user):
+    """One hline at 100.0 with ``locked:true`` (R9: not pointer-grabbable)."""
+    from trading.models import Drawing
+
+    return Drawing.objects.create(
+        user=e2e_user,
+        symbol="BTCUSDT",
+        kind="hline",
+        points={"price": 100.0},
+        style={"color": "#2962ff", "lineWidth": 1},
+        locked=True,
+    )
+
+
+@p
+def test_locked_drawing_is_not_pointer_grabbable_but_tree_selectable(
+    seeded_5m_candles, locked_hline, browser_page
+):
+    # R9 (F5 FIX-1): a locked drawing is NOT pointer-selectable/draggable — a
+    # pointerdown on it neither moves it (no PUT) nor opens it (no dialog) — but
+    # the tree still selects it via a bus emit (drawing:selected).
+    page, base_url = browser_page
+    puts = []
+    page.on(
+        "request",
+        lambda r: (
+            puts.append(r)
+            if r.method == "PUT" and "/market/api/drawings/" in r.url
+            else None
+        ),
+    )
+    page.goto(f"{base_url}/market/")
+    _wait_ready(page)
+    page.wait_for_function(
+        "() => window.marketChart.drawings && window.marketChart.drawings.length === 1",
+        timeout=10000,
+    )
+    assert page.evaluate("() => window.marketChart.drawings[0].locked === true")
+
+    page.select_option("#interval", "5m")
+    page.wait_for_function(
+        "() => window.marketChart.candleSeries &&"
+        " window.marketChart.candleSeries.data().length > 0",
+        timeout=10000,
+    )
+    y = _hline_y(page, 100.0)
+    assert y is not None, "no price coordinate for the seeded locked hline"
+    box = page.locator("#chart").bounding_box()
+    start_x = box["x"] + box["width"] / 2
+    start_y = box["y"] + y
+    page.mouse.move(start_x, start_y)
+    page.mouse.down()
+    page.mouse.move(start_x, start_y - 40, steps=8)
+    page.mouse.up()
+    page.wait_for_timeout(300)
+    # The pointer drag was ignored: no PUT, price unchanged.
+    assert puts == [], [r.url for r in puts]
+    assert page.evaluate("() => window.marketChart.drawings[0].points.price") == 100.0
+
+    # Double-click on the locked line opens NO properties dialog (R13 no-op).
+    page.mouse.dblclick(start_x, start_y)
+    page.wait_for_timeout(200)
+    assert not page.locator("#drawing-settings-dialog[open]").count()
+
+    # Tree selection still works (bus emit, not a pointer hit).
+    page.locator(".tree-row[data-id]").first.click()
+    page.wait_for_function(
+        "() => document.querySelector('.tree-row[data-id]')"
+        ".getAttribute('aria-selected') === 'true'",
+        timeout=5000,
+    )
+
+
+@p
+def test_hidden_drawing_is_not_pointer_grabbable(
+    seeded_5m_candles, hidden_hline, browser_page
+):
+    # R9 (F5 FIX-2): a hidden drawing renders blank AND is not pointer-grabbable —
+    # a drag at its price moves nothing and issues no PUT. The tree still selects
+    # it (a bus emit, not a pointer hit).
+    page, base_url = browser_page
+    puts = []
+    page.on(
+        "request",
+        lambda r: (
+            puts.append(r)
+            if r.method == "PUT" and "/market/api/drawings/" in r.url
+            else None
+        ),
+    )
+    page.goto(f"{base_url}/market/")
+    _wait_ready(page)
+    page.wait_for_function(
+        "() => window.marketChart.drawings && window.marketChart.drawings.length === 1",
+        timeout=10000,
+    )
+    # The row is present (parked, R4) and reflects the hidden flag.
+    assert page.evaluate("() => window.marketChart.drawings[0].visible === false")
+    assert (
+        page.locator(".tree-row[data-id] .row-eye").first.get_attribute("aria-pressed")
+        == "false"
+    )
+
+    page.select_option("#interval", "5m")
+    page.wait_for_function(
+        "() => window.marketChart.candleSeries &&"
+        " window.marketChart.candleSeries.data().length > 0",
+        timeout=10000,
+    )
+    y = _hline_y(page, 100.0)
+    assert y is not None, "no price coordinate for the seeded hidden hline"
+    box = page.locator("#chart").bounding_box()
+    start_x = box["x"] + box["width"] / 2
+    start_y = box["y"] + y
+    page.mouse.move(start_x, start_y)
+    page.mouse.down()
+    page.mouse.move(start_x, start_y - 40, steps=8)
+    page.mouse.up()
+    page.wait_for_timeout(300)
+    # The pointer drag was ignored: no PUT, price unchanged.
+    assert puts == [], [r.url for r in puts]
+    assert page.evaluate("() => window.marketChart.drawings[0].points.price") == 100.0
+
+    # Tree selection still works (bus emit, not a pointer hit).
+    page.locator(".tree-row[data-id]").first.click()
+    page.wait_for_function(
+        "() => document.querySelector('.tree-row[data-id]')"
+        ".getAttribute('aria-selected') === 'true'",
+        timeout=5000,
+    )
 
 
 @p
@@ -1900,7 +2381,8 @@ def test_interval_change_debounce_saves_preference(seeded_5m_candles, browser_pa
 # (``chart.panes()[i].getSeries().options()``), never an image diff. Existing
 # assertions above are untouched (add-only).
 
-_SETTINGS_GEAR = '.indicator-settings[data-token="sma"]'
+# F5 S3: the settings gear lives on the object tree's indicator rows.
+_SETTINGS_GEAR = '.object-tree .tree-row[data-token="sma"] .row-settings'
 
 
 def _dialog_open(page):
@@ -2095,7 +2577,7 @@ def test_escape_closes_and_returns_focus(seeded_5m_candles, browser_page):
     )
     assert page.evaluate(
         "() => document.activeElement === document.querySelector("
-        "'.indicator-settings[data-token=\"sma\"]')"
+        "'.object-tree .tree-row[data-token=\"sma\"] .row-settings')"
     )
 
 
@@ -2409,12 +2891,37 @@ def test_scale_and_type_round_trip_persists_across_reload(
 # in the docstring).
 
 
+@pytest.fixture
+def bollinger_5m_layout(e2e_user):
+    """Seed a 5m layout with bollinger active (3 overlay series) BEFORE the browser.
+
+    F5 S3: the tree is active-only, so bollinger cannot be *added* from the UI;
+    it is seeded active. A style change then forces the 2nd `chart:built`.
+    """
+    from trading.models import ChartLayout
+
+    ChartLayout.objects.create(
+        user=e2e_user,
+        symbol="BTCUSDT",
+        interval="5m",
+        indicators=[
+            {"token": "sma"},
+            {"token": "ema"},
+            {"token": "rsi"},
+            {"token": "bollinger"},
+        ],
+    )
+    return e2e_user
+
+
 @p
-def test_legend_resubscribes_across_rebuild(seeded_5m_candles, browser_page):
+def test_legend_resubscribes_across_rebuild(
+    seeded_5m_candles, bollinger_5m_layout, browser_page
+):
     # LC4 (RED: unwire the `chart:built` re-subscribe -> the rebuilt chart's
     # crosshair handler never fires -> the hover readout never changes). Forces
-    # a 2nd `chart:built` via the bollinger toggle, then proves the legend is
-    # still a single overlay AND still tracks the crosshair.
+    # a 2nd `chart:built` via a style change (indicator:changed), then proves the
+    # legend is still a single overlay AND still tracks the crosshair.
     page, base_url = browser_page
     page.goto(f"{base_url}/market/")
     page.select_option("#interval", "5m")
@@ -2423,18 +2930,21 @@ def test_legend_resubscribes_across_rebuild(seeded_5m_candles, browser_page):
         " window.marketChart.candleSeries.data().length > 0",
         timeout=10000,
     )
-    # Default actives: sma + ema (overlays) + rsi (pane) -> exactly 3 rows.
+    # Active set: sma + ema + rsi + bollinger(3 series) -> exactly 6 rows.
     # (The legend idle render is the readiness gate after an interval switch.)
     page.wait_for_function(
-        "() => document.querySelectorAll('#chart .chart-legend .lg-row').length === 3",
+        "() => document.querySelectorAll('#chart .chart-legend .lg-row').length === 6",
         timeout=10000,
     )
 
-    # Config change -> 2nd `chart:built`. bollinger adds 3 overlay series, so a
-    # completed rebuild + legend re-render yields exactly 6 rows.
-    page.locator('.indicator-toggle[value="bollinger"]').check()
+    # Config change -> 2nd `chart:built` (indicator:changed). A style change on a
+    # seeded token rebuilds once; the legend must re-attach to the new chart.
+    page.locator('.tree-row[data-token="sma"] .row-settings').click()
+    page.evaluate("() => { document.getElementById('is-color').value = '#ff0000'; }")
+    page.locator('#indicator-settings-dialog button[value="ok"]').click()
     page.wait_for_function(
-        "() => document.querySelectorAll('#chart .chart-legend .lg-row').length === 6",
+        "() => window.marketChart.chart.panes()[0].getSeries().some("
+        " (s) => s.options().color === '#ff0000')",
         timeout=10000,
     )
 

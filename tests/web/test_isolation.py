@@ -278,6 +278,27 @@ def test_drawing_has_no_interval_field():
 
 
 @pytest.mark.django_db
+def test_drawing_visible_locked_defaults(user_a):
+    # R1 (F5): new rows default to visible/unlocked.
+    Drawing.objects.create(user=user_a, symbol="BTCUSDT", kind="hline")
+    saved = Drawing.for_user(user_a).get(symbol="BTCUSDT")
+    assert saved.visible is True
+    assert saved.locked is False
+
+
+@pytest.mark.django_db
+def test_drawing_visible_locked_persist_and_stay_scoped(user_a, user_b):
+    # R1/R3: the flags persist and remain behind for_user (no cross-user leak).
+    drawing = Drawing.objects.create(
+        user=user_a, symbol="BTCUSDT", kind="hline", visible=False, locked=True
+    )
+    saved = Drawing.for_user(user_a).get(pk=drawing.pk)
+    assert saved.visible is False
+    assert saved.locked is True
+    assert Drawing.for_user(user_b).count() == 0
+
+
+@pytest.mark.django_db
 def test_drawing_owner_is_required():
     with pytest.raises(IntegrityError):
         with transaction.atomic():

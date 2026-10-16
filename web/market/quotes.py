@@ -301,10 +301,11 @@ def parse_layout_indicators(indicators) -> list[dict]:
     """Validate a layout's JSON indicator list; raise ``ValueError`` on bad input.
 
     Tokens MUST be in ``REGISTRY``; an optional ``params`` object MAY set known
-    param keys (type/range checked). The user-supplied shape is preserved (no
-    defaults injected) — the kline builders complete partial params at read
-    time, so a saved ``{"token":"sma","params":{"sma_len":50}}`` round-trips
-    verbatim.
+    param keys (type/range checked) and an optional ``visible`` MUST be a REAL
+    bool. The user-supplied shape is preserved (no defaults injected) — the
+    kline builders complete partial params at read time, so a saved
+    ``{"token":"sma","params":{"sma_len":50}}`` round-trips verbatim; an absent
+    ``visible`` stays absent (treated as visible at read time).
     """
     if not isinstance(indicators, list):
         raise ValueError("indicators must be a list")
@@ -324,6 +325,12 @@ def parse_layout_indicators(indicators) -> list[dict]:
             entry["params"] = _validate_layout_params(token, item["params"])
         if "style" in item:
             entry["style"] = _validate_layout_style(token, item["style"])
+        # F5 S3 (F2.7 delta): visible is preserved VERBATIM (absent = visible);
+        # a non-bool is rejected before any write (→ 400). No default injected.
+        if "visible" in item:
+            if not isinstance(item["visible"], bool):
+                raise ValueError(f"invalid visible for {token}")
+            entry["visible"] = item["visible"]
         out.append(entry)
     return out
 
@@ -412,13 +419,16 @@ def _parse_point(point, *, require_time: bool, where: str) -> None:
         raise ValueError(f"invalid {where} price")
 
 
-def parse_drawing(kind, points, style) -> tuple[dict, dict]:
+def parse_drawing(
+    kind, points, style, visible=True, locked=False
+) -> tuple[dict, dict, bool, bool]:
     """Validate a drawing payload; raise ``ValueError`` on any breach (R4/R5).
 
     ``kind`` MUST be one of ``DRAWING_KINDS``; ``points`` MUST match the kind's
-    object schema and ``style`` MUST be an object. The validated ``(points,
-    style)`` are returned verbatim (no defaults injected) so a stored row
-    round-trips unchanged.
+    object schema and ``style`` MUST be an object. ``visible``/``locked`` MUST be
+    REAL bools (an ``int``/``str``/``None`` is rejected → 400 before any write).
+    The validated ``(points, style, visible, locked)`` are returned verbatim (no
+    defaults injected) so a stored row round-trips unchanged.
     """
     if kind not in DRAWING_KINDS:
         raise ValueError(f"unknown kind: {kind}")
@@ -426,6 +436,11 @@ def parse_drawing(kind, points, style) -> tuple[dict, dict]:
         raise ValueError("points must be an object")
     if not isinstance(style, dict):
         raise ValueError("style must be an object")
+    # ``isinstance(True, int)`` is True, so the bool check is exact: bool only.
+    if not isinstance(visible, bool):
+        raise ValueError("visible must be a boolean")
+    if not isinstance(locked, bool):
+        raise ValueError("locked must be a boolean")
 
     if kind == "hline":
         if not _is_number(points.get("price")):
@@ -442,7 +457,7 @@ def parse_drawing(kind, points, style) -> tuple[dict, dict]:
             raise ValueError("invalid text price")
         if not isinstance(points.get("text"), str) or not points["text"].strip():
             raise ValueError("text requires a label")
-    return points, style
+    return points, style, visible, locked
 
 
 def parse_smc(raw) -> dict:
