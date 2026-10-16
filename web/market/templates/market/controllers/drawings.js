@@ -112,10 +112,8 @@ export function createDrawings({ store, bus, host, config }) {
     if (p.visible !== undefined) body.visible = row.visible;
     if (p.locked !== undefined) body.locked = row.locked;
     persistDrawing(row.id, body);
-    // Persisted flag changes re-publish rows so the tree reflects saved state.
-    if (p.visible !== undefined || p.locked !== undefined) {
-      bus.emit("drawings:changed", { rows: currentDrawings.slice() });
-    }
+    // NO re-publish on a flag change: the tree row that emitted it already synced
+    // its own icon, and a rebuild would drop keyboard focus mid-interaction (R6).
   });
 
   // Keyboard delete (R11): same path as the panel list button.

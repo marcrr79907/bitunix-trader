@@ -1048,6 +1048,53 @@ def test_tree_keyboard_navigation_and_indicator_visibility(
     assert klines == [], klines
 
 
+@p
+def test_tree_row_actions_reachable_and_activatable_by_keyboard(
+    seeded_drawings, browser_page
+):
+    # R6/R9 (F5 FIX-3): the drawing row's eye/lock were mouse-only. A focused row
+    # MUST activate them by the documented keys (v = visibility, l = lock) and
+    # advertise the binding; the action persists via its own bus path.
+    page, base_url = browser_page
+    puts = []
+    page.on(
+        "request",
+        lambda r: (
+            puts.append(r)
+            if r.method == "PUT" and "/market/api/drawings/" in r.url
+            else None
+        ),
+    )
+    page.goto(f"{base_url}/market/")
+    _wait_ready(page)
+    page.wait_for_function(
+        "() => window.marketChart.drawings && window.marketChart.drawings.length === 2",
+        timeout=10000,
+    )
+    row = page.locator("#object-tree .tree-row[data-id]").first
+    assert row.locator(".row-eye").get_attribute("aria-keyshortcuts") == "v"
+    assert row.locator(".row-lock").get_attribute("aria-keyshortcuts") == "l"
+
+    row.focus()
+    page.keyboard.press("v")  # eye -> hide
+    page.wait_for_function(
+        "() => document.querySelector('#object-tree .tree-row[data-id] .row-eye')"
+        ".getAttribute('aria-pressed') === 'false'",
+        timeout=10000,
+    )
+    page.keyboard.press("l")  # lock -> locked
+    page.wait_for_function(
+        "() => document.querySelector('#object-tree .tree-row[data-id] .row-lock')"
+        ".getAttribute('aria-pressed') === 'true'",
+        timeout=10000,
+    )
+    page.wait_for_timeout(300)  # let the debounced PUT land
+    assert page.evaluate(
+        "() => window.marketChart.drawings.some((d) => d.locked === true)"
+    )
+    assert len(puts) >= 1, [r.url for r in puts]
+
+
 # --- Drawing interaction (R9-R14): select / drag / delete / deselect ---------
 #
 # The canvas is not introspectable, so every assertion rides the seam
