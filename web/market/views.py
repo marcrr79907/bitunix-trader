@@ -50,6 +50,7 @@ MODULE_ALLOWLIST = frozenset(
         "drawing-core",
         "drawing-interaction-core",
         "drawing-primitive",
+        "tool-icons-core",
         "smc-overlay-core",
         "legend-core",
         "indicator-settings-core",
@@ -70,6 +71,7 @@ CONTROLLER_ALLOWLIST: frozenset[str] = frozenset(
         "smc",
         "toolbar",
         "legend",
+        "draw-toolbar",
     }
 )
 

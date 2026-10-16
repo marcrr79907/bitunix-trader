@@ -68,6 +68,24 @@ def test_drawing_core_served_as_javascript(client):
     assert b"fibLevels" in response.content
 
 
+def test_tool_icons_core_served_as_javascript(client):
+    # F5 S2 (R14): the pure icon core is same-origin and NOT auth-gated (no state).
+    response = client.get("/market/tool-icons-core.js")
+    assert response.status_code == 200
+    assert response["Content-Type"] == "text/javascript"
+    assert b"iconFor" in response.content
+    assert b"TOOL_GROUPS" in response.content
+
+
+def test_draw_toolbar_controller_served_as_javascript(logged_in_client):
+    # F5 S2 (R5): the toolbar controller is served same-origin as JS from
+    # ``market/controllers/`` (a missing route = import 404 = blank chart).
+    response = logged_in_client.get("/market/controllers/draw-toolbar.js")
+    assert response.status_code == 200
+    assert response["Content-Type"] == "text/javascript"
+    assert b"createDrawToolbar" in response.content
+
+
 def test_smc_overlay_core_served_as_javascript(client):
     # Pure SMC overlay mapping is same-origin and NOT auth-gated (no state).
     response = client.get("/market/smc-overlay-core.js")
@@ -125,7 +143,7 @@ def test_controller_allowlist_routes_serve_javascript(logged_in_client):
     # ``market/controllers/`` as JS (a missing route = import 404 = blank chart).
     from market import views
 
-    assert len(views.CONTROLLER_ALLOWLIST) == 8
+    assert len(views.CONTROLLER_ALLOWLIST) == 9
     for name in views.CONTROLLER_ALLOWLIST:
         response = logged_in_client.get(f"/market/controllers/{name}.js")
         assert response.status_code == 200, name

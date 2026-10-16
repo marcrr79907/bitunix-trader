@@ -15,9 +15,6 @@ const textStyle = () => { const b = Draw.defaultStyle("text"); try { return { ..
 
 export function createDrawings({ store, bus, host, config }) {
   const state = store.get();
-  const el = document.getElementById("chart");
-  const drawToolButtons = Array.prototype.slice.call(document.querySelectorAll(".draw-tool"));
-  const cancelToolButton = document.querySelector(".draw-cancel");
   const textDialog = document.getElementById("text-dialog");
   const textDialogInput = document.getElementById("text-dialog-input");
   const drawingListEl = document.getElementById("drawing-list");
@@ -25,6 +22,7 @@ export function createDrawings({ store, bus, host, config }) {
   let attached = []; // [{id, prim}] — the primitives currently on the series
   let drawGen = 0; // monotonic guard against a stale drawings fetch
   let pendingAnchor = null; // first click of a two-point drawing
+  let pendingAnchorKind = state.tool; // tool the anchor was collected under
   let selectedId = null; // interaction selection (closure only; never a store key)
   const selection = { isSelected: function (row) { return row.id === selectedId; } };
   const enc = encodeURIComponent;
@@ -173,15 +171,6 @@ export function createDrawings({ store, bus, host, config }) {
       .catch(function () { /* keep the row on a failed delete */ });
   }
 
-  function syncToolButtons() {
-    drawToolButtons.forEach(function (btn) {
-      const on = btn.dataset.kind === state.tool;
-      btn.setAttribute("aria-pressed", on ? "true" : "false");
-      btn.classList.toggle("active", on);
-    });
-    if (el) el.classList.toggle("drawing", !!state.tool);
-  }
-
   // A chart click in tool mode -> create a shape. hline needs only a price;
   // two-point kinds collect an anchor then a second click; text opens a dialog.
   function onChartClick(param) {
@@ -215,21 +204,16 @@ export function createDrawings({ store, bus, host, config }) {
     pendingAnchor = null;
   }
 
-  drawToolButtons.forEach(function (btn) {
-    btn.addEventListener("click", function () {
-      const kind = btn.dataset.kind;
-      state.tool = state.tool === kind ? null : kind;
+  // Tool selection now lives in controllers/draw-toolbar.js (F5 S2): it writes
+  // ``store.tool`` (the SAME command the legacy buttons emitted). A tool change
+  // only needs to drop a half-collected two-point anchor.
+  store.subscribe(function () {
+    if (state.tool !== pendingAnchorKind) {
+      pendingAnchorKind = state.tool;
       pendingAnchor = null;
-      syncToolButtons();
-    });
+    }
   });
-  if (cancelToolButton) {
-    cancelToolButton.addEventListener("click", function () {
-      state.tool = null;
-      pendingAnchor = null;
-      syncToolButtons();
-    });
-  }
+
   if (textDialog) {
     textDialog.addEventListener("close", function () {
       const text = (textDialogInput.value || "").trim();
@@ -249,13 +233,13 @@ export function createDrawings({ store, bus, host, config }) {
   // immediately (they never cross symbols, R7) and invalidate any in-flight
   // fetch for the old symbol.
   function clearForSwitch() {
-    state.tool = null;
+    // store.set (not a raw write) so the toolbar's subscriber clears aria-pressed.
+    store.set({ tool: null });
     pendingAnchor = null;
     selectedId = null; // R14: a symbol switch clears selection with the drawings
-    syncToolButtons();
     currentDrawings = [];
     drawGen++;
   }
 
-  return { onChartClick, attachAllDrawings, refreshDrawings, clearForSwitch, syncToolButtons };
+  return { onChartClick, attachAllDrawings, refreshDrawings, clearForSwitch };
 }

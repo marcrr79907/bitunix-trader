@@ -858,6 +858,58 @@ def test_click_with_tool_fires_post(seeded_5m_candles, browser_page):
 
 
 @p
+def test_draw_toolbar_renders_groups_and_sets_store(browser_page):
+    # F5 S2 (R1/R2/R3): the vertical grouped icon toolbar replaces the flat text
+    # buttons; activating a tool writes store.tool and moves aria-pressed, and
+    # the roving tabindex mirrors the interval-chip pattern.
+    page, base_url = browser_page
+    page.goto(f"{base_url}/market/")
+    _wait_ready(page)
+
+    toolbar = page.locator('.draw-tools[role="toolbar"]')
+    assert toolbar.count() == 1
+    assert toolbar.get_attribute("aria-orientation") == "vertical"
+    assert page.locator('.draw-tools [role="group"]').count() == 4
+    assert page.locator(".draw-tool").count() == 5
+    # The legacy flat text buttons are gone (labels H-line/Trend/Box no longer exist).
+    assert page.locator(".drawings .draw-tool").count() == 0
+    # Icons injected by JS (no inline handler); each button names itself.
+    assert page.locator(".draw-tools .draw-tool svg").count() == 5
+    assert (
+        page.locator('.draw-tool[data-kind="fib"]').get_attribute("aria-label")
+        == "Fibonacci retracement"
+    )
+
+    # No tool active at boot: nothing pressed.
+    assert page.locator('.draw-tools .draw-tool[aria-pressed="true"]').count() == 0
+
+    page.locator('.draw-tool[data-kind="fib"]').click()
+    page.wait_for_function(
+        "() => document.querySelector('.draw-tool[data-kind=\"fib\"]')"
+        ".getAttribute('aria-pressed') === 'true'",
+        timeout=10000,
+    )
+    assert page.locator('.draw-tools .draw-tool[aria-pressed="true"]').count() == 1
+    # Roving tabindex: the active tool owns the single tab stop.
+    fib_tabindex = page.locator('.draw-tool[data-kind="fib"]').get_attribute("tabindex")
+    assert fib_tabindex == "0"
+
+    # Keyboard: ArrowDown from the first tool moves focus to the next.
+    page.locator('.draw-tool[data-kind="hline"]').focus()
+    page.keyboard.press("ArrowDown")
+    focused = page.evaluate("() => document.activeElement.dataset.kind")
+    assert focused == "trendline"
+
+    # Reactivating the active tool cancels it (legacy toggle semantics).
+    page.locator('.draw-tool[data-kind="fib"]').click()
+    page.wait_for_function(
+        "() => document.querySelectorAll("
+        "'.draw-tools .draw-tool[aria-pressed=\"true\"]').length === 0",
+        timeout=10000,
+    )
+
+
+@p
 def test_delete_from_panel_fires_delete(seeded_drawings, browser_page):
     # R7: the panel list deletes by id -> DELETE /market/api/drawings/<id>.
     page, base_url = browser_page

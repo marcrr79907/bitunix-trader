@@ -22,6 +22,7 @@ import { createDrawings } from "./controllers/drawings.js";
 import { createDrawingInteraction } from "./controllers/drawing-interaction.js";
 import { createSmc, readSmc } from "./controllers/smc.js";
 import { createToolbar } from "./controllers/toolbar.js";
+import { createDrawToolbar } from "./controllers/draw-toolbar.js";
 import { createLegend } from "./controllers/legend.js";
 
 export function boot(config) {
@@ -79,6 +80,9 @@ export function boot(config) {
       savePreference({ theme: p.pref });
     },
   });
+  // F5 S2: the vertical drawing toolbar writes ``store.tool`` (the legacy
+  // ``.draw-tool`` command); drawings reacts via store.subscribe.
+  createDrawToolbar({ store, bus, config });
   // Read-only legend overlay: re-subscribes on chart:built internally, so no
   // buildChart change is needed (design: keeps main wiring to +1 line).
   createLegend({ store, bus, host, config });

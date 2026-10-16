@@ -137,6 +137,12 @@ export function createHost() {
       addSeries(token, i + 1, styles[token]);
     });
 
+    // Apply initial indicator visibility (F5 S3 supplies state.indicatorVisible;
+    // absent in S2 → no-op). Option-only (#68): applyOptions, never setData.
+    Object.keys(state.indicatorVisible || {}).forEach(function (token) {
+      setSeriesVisible(token, state.indicatorVisible[token]);
+    });
+
     // Pane test seam: {paneName: {seriesKey: series}}.
     panes = {};
     activeSeries.forEach(function (a) {
@@ -177,6 +183,17 @@ export function createHost() {
   function setLastBucket(t) { lastBucket = t; }
 
   // --- scale mode (F8) --------------------------------------------------------
+
+  // Indicator visibility (F5 S2, #68): option-only — a hidden series stays
+  // attached and its data untouched. NEVER setData/update. No-op before a chart
+  // or for an unknown token (CS2-style degrade).
+  function setSeriesVisible(token, visible) {
+    activeSeries.forEach(function (a) {
+      if (a.token === token && a.series.applyOptions) {
+        a.series.applyOptions({ visible: !!visible });
+      }
+    });
+  }
 
   // Theme setter (CT5): option-only, no data write (#68). No-op before a chart.
   function setTheme(resolved) {
@@ -237,6 +254,7 @@ export function createHost() {
     setCandles,
     updateCandle,
     setScaleMode,
+    setSeriesVisible,
     setTheme,
     dataKey,
     seriesFromPayload,

@@ -152,12 +152,17 @@ code{font-family:var(--mono); background:var(--surface); padding:1px 5px; border
 .smc label{display:flex; align-items:center; gap:var(--sp-2); cursor:pointer}
 .smc input[type=checkbox]{accent-color:var(--accent)}
 
-/* drawings toolbar + panel list */
-.drawings{display:flex; flex-wrap:wrap; gap:var(--sp-2);
-  margin:0; border:1px solid var(--border); border-radius:var(--r); padding:var(--sp-2) var(--sp-3)}
-.drawings .draw-tool{background:var(--surface); border:1px solid var(--border); color:var(--text)}
-.drawings .draw-tool.active{border-color:var(--accent); color:var(--accent)}
-.draw-cancel{background:var(--surface); border:1px solid var(--border); color:var(--muted)}
+/* drawings vertical icon toolbar (F5 S2) + panel list */
+.draw-tools{display:flex; flex-direction:column; gap:var(--sp-2);
+  margin:0; border:1px solid var(--border); border-radius:var(--r); padding:var(--sp-2)}
+.draw-tools [role=group]{display:flex; gap:var(--sp-1)}
+.draw-tool{display:inline-flex; align-items:center; justify-content:center;
+  min-width:36px; min-height:36px; padding:var(--sp-1);
+  background:var(--surface); border:1px solid var(--border); color:var(--text); border-radius:var(--r)}
+.draw-tool svg{display:block}
+/* Not color-only (design-system R6): the active tool gains a 2px border + a
+   surface lift alongside aria-pressed. */
+.draw-tool[aria-pressed="true"]{border:2px solid var(--accent); color:var(--accent); background:var(--bg-2)}
 .drawing-list{list-style:none; margin:var(--sp-2) 0 0; padding:0;
   display:flex; flex-direction:column; gap:var(--sp-1)}
 .drawing-list .drawing-del{width:100%; text-align:left; background:var(--surface);
