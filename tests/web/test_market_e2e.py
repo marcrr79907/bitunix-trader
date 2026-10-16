@@ -3663,3 +3663,36 @@ def test_position_seed_copies_smc_setup_verbatim(seeded_5m_candles, browser_page
     assert body["points"]["take_profit"] == expected["take_profit"]
     assert body["points"]["entry"]["price"] == expected["entry"]
     assert body["points"]["entry"]["time"] == expected["time"]
+
+
+@p
+def test_position_readout_reports_rr_after_seed(seeded_5m_candles, browser_page):
+    # R6 (design-system): the selected position's R:R lives in the aria-live
+    # ``#position-readout`` DOM node, not only on the canvas. Selecting the tree
+    # row for the seeded position shows "R:R <n>"; deselecting clears it.
+    page, base_url = browser_page
+    page.route_web_socket("wss://fapi.bitunix.com/**", lambda ws: None)
+    page.goto(f"{base_url}/market/")
+    _wait_ready(page)
+    page.select_option("#interval", "5m")
+    page.wait_for_function(
+        "() => window.marketChart.smc && window.marketChart.smc.interval === '5m'",
+        timeout=10000,
+    )
+    if not page.evaluate("() => window.marketChart.smc.setups"):
+        pytest.skip("no setup computed for the seeded window")
+    page.locator("#position-seed").click()
+    page.wait_for_function(
+        "() => window.marketChart.drawings && window.marketChart.drawings.length >= 1",
+        timeout=10000,
+    )
+    assert page.locator("#position-readout").get_attribute("aria-live") == "polite"
+    # Select the position row in the object tree -> the R:R is announced.
+    page.locator("#object-tree li.tree-row[data-id]").first.click()
+    page.wait_for_function(
+        "() => { const n = document.getElementById('position-readout');"
+        " return n && /^R:R \\d/.test(n.textContent.trim()); }",
+        timeout=10000,
+    )
+    rr = page.locator("#position-readout").text_content().strip()
+    assert rr.startswith("R:R "), rr

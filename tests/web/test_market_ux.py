@@ -257,6 +257,17 @@ def test_signals_route_is_served(logged_in_client):
     assert response["Content-Type"].startswith("text/html")
 
 
+def test_f6_position_readout_is_an_aria_live_node(logged_in_client):
+    # R6 (design-system): the position R:R lives in an aria-live DOM node (the
+    # canvas text is only visual reinforcement). The node starts empty and is
+    # filled by the interaction controller on selection/drag.
+    response = logged_in_client.get("/market/")
+    assert response.status_code == 200
+    body = response.content.decode()
+    assert 'id="position-readout"' in body
+    assert 'aria-live="polite"' in body
+
+
 def test_csp_present_on_market_page(logged_in_client):
     response = logged_in_client.get("/market/")
     assert response.status_code == 200
