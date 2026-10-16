@@ -1158,6 +1158,14 @@ def _post_drawing(client, payload):
     )
 
 
+def _put_drawing(client, drawing_id, payload):
+    return client.put(
+        f"{DRAWINGS_URL}/{drawing_id}",
+        data=json.dumps(payload),
+        content_type="application/json",
+    )
+
+
 def _drawing_body(**overrides):
     # Per SYMBOL (R1): no ``interval`` in the canonical body. A stale client may
     # still send one; POST accepts and ignores it (see the stale-interval test).
@@ -1380,6 +1388,220 @@ def test_drawings_isolation_b_delete_of_a_id_is_404_and_a_unchanged():
     response = b_client.delete(f"{DRAWINGS_URL}/{created['id']}")
     assert response.status_code == 404
     assert Drawing.objects.filter(pk=a_row.pk).exists()  # A's row untouched
+
+
+# --- WU2: drawings PUT update path (R2 modified / R14.6) --------------------
+
+
+def _trendline_body(**overrides):
+    """A valid ``trendline`` create body (two fully-specified anchors)."""
+    body = _drawing_body(
+        kind="trendline",
+        points={"p1": {"time": 1, "price": 1.0}, "p2": {"time": 2, "price": 2.0}},
+    )
+    body.update(overrides)
+    return body
+
+
+def test_drawings_anonymous_put_redirects_to_login():
+    response = _put_drawing(ANON, 1, {"points": {"price": 1.0}})
+    assert response.status_code == 302
+    assert response.url.startswith("/login/")
+
+
+def test_drawings_put_updates_points_round_trip():
+    created = _post_drawing(USER, _trendline_body()).json()
+
+    new_points = {
+        "p1": {"time": 10, "price": 9.5},
+        "p2": {"time": 20, "price": 11.5},
+    }
+    response = _put_drawing(USER, created["id"], {"points": new_points})
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["id"] == created["id"]
+    assert body["kind"] == "trendline"
+    assert body["points"] == new_points
+    # Persisted (not just echoed): a fresh GET reflects the update.
+    listed = USER.get(f"{DRAWINGS_URL}?symbol=BTCUSDT").json()["drawings"]
+    assert listed[0]["points"] == new_points
+
+
+def test_drawings_put_updates_style_round_trip():
+    created = _post_drawing(USER, _trendline_body()).json()
+
+    new_style = {"color": "#00ff00", "lineWidth": 3}
+    response = _put_drawing(USER, created["id"], {"style": new_style})
+
+    assert response.status_code == 200
+    assert response.json()["style"] == new_style
+    listed = USER.get(f"{DRAWINGS_URL}?symbol=BTCUSDT").json()["drawings"]
+    assert listed[0]["style"] == new_style
+
+
+def test_drawings_put_partial_points_only_keeps_style():
+    created = _post_drawing(USER, _trendline_body()).json()
+    original_style = created["style"]
+
+    response = _put_drawing(
+        USER,
+        created["id"],
+        {"points": {"p1": {"time": 5, "price": 5.0}, "p2": {"time": 6, "price": 6.0}}},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["style"] == original_style  # untouched
+    listed = USER.get(f"{DRAWINGS_URL}?symbol=BTCUSDT").json()["drawings"]
+    assert listed[0]["style"] == original_style
+
+
+def test_drawings_put_partial_style_only_keeps_points():
+    created = _post_drawing(USER, _trendline_body()).json()
+    original_points = created["points"]
+
+    response = _put_drawing(USER, created["id"], {"style": {"lineWidth": 4}})
+
+    assert response.status_code == 200
+    assert response.json()["points"] == original_points  # untouched
+
+
+def test_drawings_put_kind_immutable_differing_is_400_and_no_write():
+    from trading.models import Drawing
+
+    created = _post_drawing(USER, _trendline_body()).json()
+    a_row = Drawing.objects.get(pk=created["id"])
+
+    response = _put_drawing(
+        USER,
+        created["id"],
+        {"kind": "hline", "points": {"price": 9.0}},
+    )
+
+    assert response.status_code == 400
+    assert "error" in response.json()
+    a_row.refresh_from_db()
+    assert a_row.kind == "trendline"
+    assert a_row.points == created["points"]  # no write at all
+
+
+def test_drawings_put_equal_kind_is_accepted_and_ignored():
+    created = _post_drawing(USER, _trendline_body()).json()
+
+    response = _put_drawing(
+        USER, created["id"], {"kind": "trendline", "style": {"lineWidth": 2}}
+    )
+
+    assert response.status_code == 200
+    assert response.json()["kind"] == "trendline"
+    assert response.json()["style"] == {"lineWidth": 2}
+
+
+@pytest.mark.parametrize(
+    "points",
+    [
+        {"nope": 1},  # malformed for trendline (missing p1/p2)
+        {"p1": {"time": 1, "price": 1.0}},  # only one anchor
+        {"p1": {"time": "x", "price": 1.0}, "p2": {"time": 2, "price": 2.0}},  # bad
+    ],
+)
+def test_drawings_put_invalid_points_is_400_and_writes_nothing(points):
+    from trading.models import Drawing
+
+    created = _post_drawing(USER, _trendline_body()).json()
+    a_row = Drawing.objects.get(pk=created["id"])
+
+    response = _put_drawing(USER, created["id"], {"points": points})
+
+    assert response.status_code == 400
+    assert "error" in response.json()
+    a_row.refresh_from_db()
+    assert a_row.points == created["points"]  # unchanged
+
+
+def test_drawings_put_invalid_style_is_400_and_writes_nothing():
+    from trading.models import Drawing
+
+    created = _post_drawing(USER, _trendline_body()).json()
+    a_row = Drawing.objects.get(pk=created["id"])
+
+    response = _put_drawing(USER, created["id"], {"style": "not-an-object"})
+
+    assert response.status_code == 400
+    assert "error" in response.json()
+    a_row.refresh_from_db()
+    assert a_row.style == created["style"]
+
+
+def test_drawings_put_invalid_json_is_400():
+    created = _post_drawing(USER, _trendline_body()).json()
+
+    response = USER.put(
+        f"{DRAWINGS_URL}/{created['id']}",
+        data="not-json",
+        content_type="application/json",
+    )
+
+    assert response.status_code == 400
+    assert "error" in response.json()
+
+
+def test_drawings_put_non_object_body_is_400():
+    created = _post_drawing(USER, _trendline_body()).json()
+
+    response = USER.put(
+        f"{DRAWINGS_URL}/{created['id']}",
+        data="[1, 2]",
+        content_type="application/json",
+    )
+
+    assert response.status_code == 400
+    assert "error" in response.json()
+
+
+def test_drawings_put_miss_is_404():
+    response = _put_drawing(USER, 999999, {"style": {"lineWidth": 2}})
+    assert response.status_code == 404
+    assert "error" in response.json()
+
+
+def test_drawings_put_requires_csrf():
+    created = _post_drawing(USER, _trendline_body()).json()
+    enforcing = Client(enforce_csrf_checks=True)
+    enforcing.force_login(AUTH_USER)
+    response = enforcing.put(
+        f"{DRAWINGS_URL}/{created['id']}",
+        data=json.dumps({"style": {"lineWidth": 2}}),
+        content_type="application/json",
+    )
+    assert response.status_code == 403
+
+
+def test_drawings_isolation_b_put_of_a_id_is_404_and_a_unchanged():
+    # R14.6: cross-user update denied — for_user resolves nothing for B, so the
+    # PUT is a 404 with no existence leak and A's row is untouched.
+    from django.contrib.auth import get_user_model
+    from trading.models import Drawing
+
+    created = _post_drawing(USER, _trendline_body()).json()
+    a_row = Drawing.objects.get(pk=created["id"])
+
+    b_client = Client()
+    b = get_user_model().objects.create_user(
+        email="putb@example.com", password="pw-123456"
+    )
+    b_client.force_login(b)
+
+    response = _put_drawing(
+        b_client,
+        created["id"],
+        {"points": {"p1": {"time": 9, "price": 9.0}, "p2": {"time": 9, "price": 9.0}}},
+    )
+
+    assert response.status_code == 404
+    a_row.refresh_from_db()
+    assert a_row.points == created["points"]  # A unchanged
+    assert a_row.style == created["style"]
 
 
 # --- parse_drawing: pure validation seam (R4/R5) ----------------------------

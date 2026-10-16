@@ -1011,6 +1011,59 @@ def test_drag_persists_single_put_and_moves_points(
 
 
 @p
+def test_drag_put_returns_200_and_persists_across_reload(
+    seeded_5m_candles, interaction_drawing, browser_page
+):
+    # S3: the PUT endpoint is real now, so the S2 drag lands (200) and a reload
+    # restores the drawing at its new position (asserted via the seam, not DOM
+    # pixels). Readiness-gated (DEBT-8); dev-only (class-C WS flake, #149).
+    page, base_url = browser_page
+    puts = []
+    page.on(
+        "request",
+        lambda r: (
+            puts.append(r)
+            if r.method == "PUT" and "/market/api/drawings/" in r.url
+            else None
+        ),
+    )
+    page.goto(f"{base_url}/market/")
+    _wait_ready(page)
+    page.wait_for_function(
+        "() => window.marketChart.drawings && window.marketChart.drawings.length === 1",
+        timeout=10000,
+    )
+    chart, box = _select_hline(page)
+    y = _hline_y(page, 100.0)
+    start_x = box["x"] + box["width"] / 2
+    start_y = box["y"] + y
+    page.mouse.move(start_x, start_y)
+    page.mouse.down()
+    page.mouse.move(start_x, start_y - 40, steps=8)
+    with page.expect_response(
+        lambda r: r.request.method == "PUT" and "/market/api/drawings/" in r.url,
+        timeout=10000,
+    ) as resp_info:
+        page.mouse.up()
+    # The endpoint is real now: the drag's PUT lands with a 200.
+    assert resp_info.value.status == 200, resp_info.value.status
+    moved = page.evaluate("() => window.marketChart.drawings[0].points.price")
+    assert moved != 100.0
+    assert len(puts) == 1, [r.url for r in puts]  # exactly one write per gesture
+
+    # Reload: the persisted row is restored at the moved price.
+    page.reload()
+    _wait_ready(page)
+    page.wait_for_function(
+        "() => window.marketChart.drawings && window.marketChart.drawings.length === 1",
+        timeout=10000,
+    )
+    restored = page.evaluate("() => window.marketChart.drawings[0].points.price")
+    assert restored != 100.0
+    assert abs(restored - moved) < 1e-6
+
+
+@p
 def test_keyboard_delete_removes_selected(
     seeded_5m_candles, interaction_drawing, browser_page
 ):
