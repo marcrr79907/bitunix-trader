@@ -576,6 +576,41 @@ def _tree_tokens(page):
     )
 
 
+# --- F5 S3 E2E coverage delta (F5 FIX-5, issue #177) -------------------------
+#
+# S3 legitimately deleted the DOM these assertions checked: the indicators
+# `fieldset` (add-any-token via checkbox) and `#drawing-list`. R18's "green with
+# NO assertion edits" clause was unmeetable by the change that removes that DOM,
+# so the archive reconciles R18/R20 to "green except the assertions removed AND
+# REPLACED by equivalent coverage". This is that reconciliation. Format:
+# "removed scenario -> what it verified -> replacement".
+#
+# * checkbox `.indicator-toggle[sma/ema/rsi]` checked -> saved layout restored
+#   -> test_boot_restores_saved_layout (tree tokens)
+# * checkbox is_checked -> active membership render
+#   -> test_fetch_failure_falls_back_to_defaults (tree tokens)
+# * checkbox `rsi` on -> one debounced PUT body -> persist a change
+#   -> test_toggle_fires_one_debounced_put (tree eye -> visible:false)
+# * checkbox `sma`/`rsi` across interval switch -> per-interval layout load
+#   -> test_switch_loads_target_layout (tree tokens)
+# * test_toggle_adds_and_removes_panes: uncheck rsi -> pane gone + check macd ->
+#   pane + `indicators=macd` -> config change -> rebuild + REFETCH with the new
+#   set, and ADD an indicator
+#   -> test_indicator_eye_hides_option_only_and_delete_removes_pane: delete rsi
+#      -> pane gone AND history REFETCHES with the set minus rsi. ADDING has NO
+#      replacement -> issue #176 (new capability, slice S5)
+# * `#drawing-list .drawing-del` delete -> drawing delete by id
+#   -> test_tree_row_delete_fires_delete (row-delete)
+# * settings gear `.indicator-settings[sma]` -> open the settings dialog
+#   -> _SETTINGS_GEAR = `.tree-row[data-token=sma] .row-settings`
+# * legend: check `bollinger` -> 2nd build -> legend survives a rebuild
+#   -> test_legend_resubscribes_across_rebuild (seeded bollinger + style edit)
+#
+# Net: every removed scenario has an equivalent replacement EXCEPT adding an
+# indicator, which S3 removed (active-only membership) and is tracked as the new
+# capability issue #176 (add-indicator affordance, slice S5).
+
+
 @p
 def test_boot_restores_saved_layout(saved_layout, browser_page):
     # R4 (issue #71): a persisted layout wins over the DOM defaults on boot —
@@ -780,11 +815,17 @@ def test_indicator_eye_hides_option_only_and_delete_removes_pane(
         timeout=10000,
     )
     assert page.locator("#chart canvas").count() < with_pane
-    # The rebuild refetches history WITHOUT the deleted token in the set.
-    page.wait_for_function("() => true", timeout=1000)
-    assert not any("indicators=" in u and "rsi" in u for u in kline_requests), (
-        kline_requests
-    )
+    # The rebuild REFETCHES history with the indicator set minus the deleted token
+    # — the positive replacement for `test_toggle_adds_and_removes_panes`'s
+    # "history refetches with the indicator set" (F5 FIX-5, issue #177). A new
+    # kline request MUST appear carrying `indicators=` WITHOUT rsi.
+    page.wait_for_function(
+        "() => true", timeout=1000
+    )  # let the rebuild's fetchHistory land
+    assert kline_requests, "the delete rebuild MUST refetch history"
+    refetched = [u for u in kline_requests if "indicators=" in u]
+    assert refetched, kline_requests
+    assert not any("rsi" in u.split("indicators=", 1)[1] for u in refetched), refetched
 
 
 @pytest.fixture
