@@ -1,14 +1,18 @@
 // chart-bus.js — tiny event bus (no lib).
 //
 // Commands main subscribes to: config:changed {symbol,interval}, indicator:changed,
-// scale:changed {mode}. Notifications: layout:loaded, chart:built, history:loaded,
-// candle:closed, drawings:changed, smc:loaded, smc:toggles, ready.
+// scale:changed {mode}, indicator:visibility {token,visible}. Notifications:
+// layout:loaded, chart:built, history:loaded, candle:closed, drawings:changed,
+// smc:loaded, smc:toggles, ready.
 //
 // API: on(name, fn) -> unsubscribe | off(name, fn) | emit(name, payload).
 export const EVENTS = Object.freeze({
   configChanged: "config:changed",
   indicatorChanged: "indicator:changed",
   scaleChanged: "scale:changed",
+  // F5 S3 (R20): the ONE new event. Routed by main to the option-only
+  // setSeriesVisible (#68) — never the indicator:changed rebuild/setData path.
+  indicatorVisibility: "indicator:visibility",
   layoutLoaded: "layout:loaded",
   chartBuilt: "chart:built",
   historyLoaded: "history:loaded",
