@@ -1227,6 +1227,79 @@ def test_drag_put_returns_200_and_persists_across_reload(
     assert abs(restored - moved) < 1e-6
 
 
+@pytest.fixture
+def hidden_hline(e2e_user):
+    """One hline at 100.0 with ``visible:false`` (R9: not pointer-grabbable)."""
+    from trading.models import Drawing
+
+    return Drawing.objects.create(
+        user=e2e_user,
+        symbol="BTCUSDT",
+        kind="hline",
+        points={"price": 100.0},
+        style={"color": "#2962ff", "lineWidth": 1},
+        visible=False,
+    )
+
+
+@p
+def test_hidden_drawing_is_not_pointer_grabbable(
+    seeded_5m_candles, hidden_hline, browser_page
+):
+    # R9 (F5 FIX-2): a hidden drawing renders blank AND is not pointer-grabbable —
+    # a drag at its price moves nothing and issues no PUT. The tree still selects
+    # it (a bus emit, not a pointer hit).
+    page, base_url = browser_page
+    puts = []
+    page.on(
+        "request",
+        lambda r: (
+            puts.append(r)
+            if r.method == "PUT" and "/market/api/drawings/" in r.url
+            else None
+        ),
+    )
+    page.goto(f"{base_url}/market/")
+    _wait_ready(page)
+    page.wait_for_function(
+        "() => window.marketChart.drawings && window.marketChart.drawings.length === 1",
+        timeout=10000,
+    )
+    # The row is present (parked, R4) and reflects the hidden flag.
+    assert page.evaluate("() => window.marketChart.drawings[0].visible === false")
+    assert page.locator('.tree-row[data-id] .row-eye').first.get_attribute(
+        "aria-pressed"
+    ) == "false"
+
+    page.select_option("#interval", "5m")
+    page.wait_for_function(
+        "() => window.marketChart.candleSeries &&"
+        " window.marketChart.candleSeries.data().length > 0",
+        timeout=10000,
+    )
+    y = _hline_y(page, 100.0)
+    assert y is not None, "no price coordinate for the seeded hidden hline"
+    box = page.locator("#chart").bounding_box()
+    start_x = box["x"] + box["width"] / 2
+    start_y = box["y"] + y
+    page.mouse.move(start_x, start_y)
+    page.mouse.down()
+    page.mouse.move(start_x, start_y - 40, steps=8)
+    page.mouse.up()
+    page.wait_for_timeout(300)
+    # The pointer drag was ignored: no PUT, price unchanged.
+    assert puts == [], [r.url for r in puts]
+    assert page.evaluate("() => window.marketChart.drawings[0].points.price") == 100.0
+
+    # Tree selection still works (bus emit, not a pointer hit).
+    page.locator(".tree-row[data-id]").first.click()
+    page.wait_for_function(
+        "() => document.querySelector('.tree-row[data-id]')"
+        ".getAttribute('aria-selected') === 'true'",
+        timeout=5000,
+    )
+
+
 @p
 def test_keyboard_delete_removes_selected(
     seeded_5m_candles, interaction_drawing, browser_page
