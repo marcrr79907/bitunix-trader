@@ -828,6 +828,87 @@ def test_indicator_eye_hides_option_only_and_delete_removes_pane(
     assert not any("rsi" in u.split("indicators=", 1)[1] for u in refetched), refetched
 
 
+@p
+def test_add_indicator_renders_pane_and_refetches(seeded_5m_candles, browser_page):
+    # F5 S5 (issue #176): the counterpart to the S3 delete — the tree is
+    # ACTIVE-ONLY, so the ADD affordance lists the registry tokens NOT active.
+    # Picking MACD (absent from the default set) rebuilds: a MACD pane appears
+    # AND history refetches carrying `indicators=` WITH macd (the positive
+    # refetch assertion #177 flagged as lost).
+    page, base_url = browser_page
+    kline_requests = []
+    page.on(
+        "request",
+        lambda r: (
+            kline_requests.append(r.url) if "/market/api/kline" in r.url else None
+        ),
+    )
+    page.goto(f"{base_url}/market/")
+    page.select_option("#interval", "5m")
+    page.wait_for_function(
+        "() => window.marketChart && window.marketChart.candleSeries"
+        " && window.marketChart.candleSeries.data().length > 0",
+        timeout=10000,
+    )
+    assert not page.evaluate(
+        "() => !!(window.marketChart.panes && window.marketChart.panes.macd)"
+    ), "MACD absent from the default set"
+
+    kline_requests.clear()
+    page.locator(".add-indicator .add-toggle").click()
+    macd = page.locator('.add-indicator .add-item[data-token="macd"]')
+    assert macd.count() == 1, "macd offered as an inactive candidate"
+    macd.click()
+    # A MACD pane series renders after the rebuild.
+    page.wait_for_function(
+        "() => !!(window.marketChart.panes && window.marketChart.panes.macd)",
+        timeout=10000,
+    )
+    # The rebuild refetches history WITH macd in the indicator set.
+    page.wait_for_function("() => true", timeout=1000)  # let fetchHistory land
+    assert kline_requests, "the add rebuild MUST refetch history"
+    refetched = [u for u in kline_requests if "indicators=" in u]
+    assert refetched, kline_requests
+    assert any("macd" in u.split("indicators=", 1)[1] for u in refetched), refetched
+    # The tree lists macd as active now.
+    assert "macd" in _tree_tokens(page)
+
+
+@p
+def test_add_indicator_persists_across_reload(seeded_5m_candles, browser_page):
+    # R7: an added token round-trips — the debounced PUT persists membership,
+    # and a reload for the same (symbol, interval) shows it active + rendered.
+    page, base_url = browser_page
+    page.goto(f"{base_url}/market/")
+    page.select_option("#interval", "5m")
+    page.wait_for_function(
+        "() => window.marketChart && window.marketChart.candleSeries"
+        " && window.marketChart.candleSeries.data().length > 0",
+        timeout=10000,
+    )
+    page.locator(".add-indicator .add-toggle").click()
+    page.locator('.add-indicator .add-item[data-token="macd"]').click()
+    page.wait_for_function(
+        "() => !!(window.marketChart.panes && window.marketChart.panes.macd)",
+        timeout=10000,
+    )
+    page.wait_for_timeout(1200)  # debounced PUT lands before reload
+
+    page.reload()
+    page.wait_for_function(
+        "() => window.marketChart && window.marketChart.ready === true",
+        timeout=10000,
+    )
+    page.wait_for_function(
+        "() => !!document.querySelector('.tree-row[data-token=\"macd\"]')",
+        timeout=10000,
+    )
+    page.wait_for_function(
+        "() => !!(window.marketChart.panes && window.marketChart.panes.macd)",
+        timeout=10000,
+    )
+
+
 @pytest.fixture
 def seeded_drawings(e2e_user):
     """Seed drawings for the boot key (BTCUSDT, 1m) BEFORE the browser context.

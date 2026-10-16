@@ -7,7 +7,7 @@
 // project's no-new-dependency rule and the draw-toolbar test precedent.
 import test from "node:test";
 import assert from "node:assert";
-import { createBus } from "../../web/market/templates/market/chart-bus.js";
+import { createBus, EVENTS } from "../../web/market/templates/market/chart-bus.js";
 
 // --- minimal DOM shim -------------------------------------------------------
 function makeEl(tag) {
@@ -351,6 +351,109 @@ test("indicator row: v hides, Delete removes, s opens settings (R6/R9)", () => {
     assert.deepStrictEqual(opened, ["sma"]);
     row.keydown("Delete");
     assert.deepStrictEqual(rebuilds, [1]);
+  } finally { restore(); }
+});
+
+// --- F5 S5 add-indicator affordance (issue #176) ----------------------------
+
+const addButton = (root) => byClass(root, "add-toggle")[0];
+const addItems = (root) => byClass(root, "add-item");
+
+test("add affordance lists ONLY inactive registry tokens (R1)", () => {
+  const { mount, restore } = setup({
+    indicators: ["sma", "ema", "rsi"],
+    indicatorVisible: {},
+    params: {},
+  });
+  try {
+    const btn = addButton(mount);
+    assert.ok(btn, "the add button exists");
+    assert.strictEqual(btn.getAttribute("aria-label"), "Add indicator");
+    btn.click();
+    const tokens = addItems(mount).map((b) => b.dataset.token);
+    assert.deepStrictEqual(tokens, [
+      "bollinger",
+      "vwap",
+      "macd",
+      "stochastic",
+      "atr",
+      "volume",
+    ]);
+    // No candidate duplicates an active token (R1).
+    ["sma", "ema", "rsi"].forEach((t) => assert.ok(!tokens.includes(t), t));
+  } finally { restore(); }
+});
+
+test("choosing an inactive token adds it: store + one indicator:changed (R2)", () => {
+  const { mount, restore, bus, store } = setup({
+    indicators: ["sma", "ema", "rsi"],
+    indicatorVisible: {},
+    params: {},
+  });
+  try {
+    const rebuilds = [];
+    bus.on("indicator:changed", () => rebuilds.push(1));
+    addButton(mount).click();
+    const macd = addItems(mount).find((b) => b.dataset.token === "macd");
+    macd.click();
+    assert.deepStrictEqual(store.get().indicators, ["sma", "ema", "rsi", "macd"]);
+    assert.deepStrictEqual(rebuilds, [1], "exactly one rebuild");
+  } finally { restore(); }
+});
+
+test("all tokens active disables the add affordance, no candidates (R6)", () => {
+  const { mount, restore } = setup({
+    indicators: [
+      "sma", "ema", "bollinger", "vwap", "rsi", "macd", "stochastic", "atr", "volume",
+    ],
+    indicatorVisible: {},
+    params: {},
+  });
+  try {
+    const btn = addButton(mount);
+    assert.strictEqual(btn.getAttribute("aria-disabled"), "true");
+    assert.strictEqual(addItems(mount).length, 0);
+  } finally { restore(); }
+});
+
+test("add reuses indicator:changed; no add-specific bus event (R4)", () => {
+  const { mount, restore, bus } = setup({
+    indicators: ["sma"],
+    indicatorVisible: {},
+    params: {},
+  });
+  try {
+    const seen = [];
+    // Every event name the add path emits, captured by wrapping emit.
+    const orig = bus.emit;
+    bus.emit = (name, p) => { seen.push(name); return orig(name, p); };
+    addButton(mount).click();
+    addItems(mount).find((b) => b.dataset.token === "macd").click();
+    assert.ok(seen.includes("indicator:changed"), seen);
+    assert.ok(!seen.some((n) => n.startsWith("indicator:add")), seen);
+    assert.strictEqual(EVENTS.indicatorAdd, undefined);
+  } finally { restore(); }
+});
+
+test("add control is a native keyboard-operable button (R1)", () => {
+  const { mount, restore } = setup({
+    indicators: ["sma"],
+    indicatorVisible: {},
+    params: {},
+  });
+  try {
+    const btn = addButton(mount);
+    assert.strictEqual(btn.tagName, "button");
+    assert.strictEqual(btn.getAttribute("type"), "button");
+    // Native <button> = focusable + Enter/Space activation (no key handler, no
+    // inline attribute): assert the tabindex is not removed and the items are
+    // buttons too.
+    assert.notStrictEqual(btn.getAttribute("tabindex"), "-1");
+    btn.click();
+    addItems(mount).forEach((it) => {
+      assert.strictEqual(it.tagName, "button");
+      assert.strictEqual(it.getAttribute("type"), "button");
+    });
   } finally { restore(); }
 });
 
