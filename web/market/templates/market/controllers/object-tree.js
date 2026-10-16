@@ -72,7 +72,7 @@ export function createObjectTree({ store, bus, onIndicatorSettings }) {
     });
     const labelEl = el("span", "tree-group-label", {});
     labelEl.textContent = label;
-    const toggle = el("button", "tree-toggle", { type: "button", tabindex: "-1" });
+    const toggle = el("button", "tree-toggle", { type: "button", tabindex: "-1", "aria-label": "Toggle " + label + " group" });
     toggle.textContent = "\u25be";
     toggle.addEventListener("click", function () { setExpanded(label); });
     li.appendChild(toggle);
