@@ -252,6 +252,8 @@ class Drawing(UserOwnedModel):
     kind = models.CharField(max_length=16, choices=Kind.choices)
     points = models.JSONField(default=dict)
     style = models.JSONField(default=dict)
+    visible = models.BooleanField(default=True)
+    locked = models.BooleanField(default=False)
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
