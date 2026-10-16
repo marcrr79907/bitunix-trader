@@ -143,7 +143,7 @@ def test_controller_allowlist_routes_serve_javascript(logged_in_client):
     # ``market/controllers/`` as JS (a missing route = import 404 = blank chart).
     from market import views
 
-    assert len(views.CONTROLLER_ALLOWLIST) == 11
+    assert len(views.CONTROLLER_ALLOWLIST) == 12
     for name in views.CONTROLLER_ALLOWLIST:
         response = logged_in_client.get(f"/market/controllers/{name}.js")
         assert response.status_code == 200, name
@@ -153,6 +153,40 @@ def test_controller_allowlist_routes_serve_javascript(logged_in_client):
     main = logged_in_client.get("/market/main.js")
     assert main.status_code == 200
     assert main["Content-Type"] == "text/javascript"
+
+
+def test_f6_cores_and_measure_controller_are_served(logged_in_client):
+    # R14 (F6): measure-core/position-core join MODULE_ALLOWLIST and
+    # ``measure`` joins CONTROLLER_ALLOWLIST; each MUST be served same-origin
+    # as JS or its import 404s and blanks the chart.
+    from market import views
+
+    for name in ("measure-core", "position-core"):
+        assert name in views.MODULE_ALLOWLIST, name
+        response = logged_in_client.get(f"/market/{name}.js")
+        assert response.status_code == 200, name
+        assert response["Content-Type"] == "text/javascript", name
+
+    assert "measure" in views.CONTROLLER_ALLOWLIST
+    response = logged_in_client.get("/market/controllers/measure.js")
+    assert response.status_code == 200
+    assert response["Content-Type"] == "text/javascript"
+
+
+def test_market_page_preloads_f6_modules(logged_in_client):
+    # R14 (F6): the chart shell modulepreloads measure-core/position-core/measure
+    # alongside the existing blocks (a missing preload is a slower, not broken,
+    # chart — but the block is part of the frozen inventory contract).
+    response = logged_in_client.get("/market/")
+    body = response.content.decode()
+
+    assert 'rel="modulepreload"' in body
+    for name in (
+        "/market/measure-core.js",
+        "/market/position-core.js",
+        "/market/controllers/measure.js",
+    ):
+        assert f'href="{name}"' in body, name
 
 
 def test_import_graph_routes_resolve(logged_in_client):

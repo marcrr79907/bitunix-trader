@@ -457,6 +457,16 @@ def parse_drawing(
             raise ValueError("invalid text price")
         if not isinstance(points.get("text"), str) or not points["text"].strip():
             raise ValueError("text requires a label")
+    elif kind == "position":
+        if set(points) != {"entry", "stop", "take_profit"}:
+            raise ValueError("position requires entry, stop, take_profit")
+        _parse_point(points["entry"], require_time=True, where="position entry")
+        if not _is_number(points["stop"]):
+            raise ValueError("invalid position stop")
+        if not _is_number(points["take_profit"]):
+            raise ValueError("invalid position take_profit")
+        if points["stop"] == points["entry"]["price"]:
+            raise ValueError("position stop must differ from entry")
     return points, style, visible, locked
 
 
