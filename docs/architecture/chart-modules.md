@@ -13,7 +13,7 @@ The split exists so each concern is independently readable and testable
 | Pure cores | `chart-core`, `chart-types-core`, `drawing-core`, `smc-overlay-core` | Timeline/series math, chart-type vocabulary + Heikin Ashi transform, drawing geometry, SMC mapping. No DOM, no chart lib, no network. | nothing |
 | State | `chart-store`, `chart-bus` | UI/config state + event bus. Store holds **config only, never candles**. | cores |
 | Host | `chart-host`, `chart-host-candles` | The ONLY `LightweightCharts` construction surface. `chart-host` owns the chart/panes/scale lifecycle + the seam; `chart-host-candles` owns the candle channel (series, raw array, incremental HA state). | cores |
-| Controllers | `controllers/{indicators,history,stream,drawings,smc,toolbar}` | DOM, REST and stream concerns. DI factories `create({store,bus,host,config})`. | cores, store, bus, host — **never `main`** |
+| Controllers | `controllers/{indicators,history,stream,drawings,smc,toolbar,draw-toolbar,object-tree,legend,drawing-interaction,preference}` | DOM, REST and stream concerns. DI factories `create({store,bus,host,config})`; `preference` is a leaf `({config})` factory for the debounced preference PUT/GET. | cores, store, bus, host — **never `main`** |
 | Orchestration | `main` | Wires store/bus/host/controllers; owns `boot()`/`switchTo()` and the `gen` guard. | all of the above |
 | Entry | `chart` (Django-rendered) | `export const CONFIG` (injected) + `boot(CONFIG)`. The final side effect. | `main` |
 
@@ -48,10 +48,13 @@ impossible (unknown name → 404).
 | `/market/<name>.js` | allowlisted module | `views.MODULE_ALLOWLIST` |
 | `/market/controllers/<name>.js` | allowlisted controller | `views.CONTROLLER_ALLOWLIST` |
 
-Allowlisted modules: `chart-core`, `chart-types-core`, `drawing-core`,
-`smc-overlay-core`, `chart-store`, `chart-bus`, `chart-host`,
-`chart-host-candles`, `main`. Controllers: `indicators`, `history`, `stream`,
-`drawings`, `smc`, `toolbar`.
+Allowlisted modules: `chart-core`, `chart-types-core`, `chart-registry-core`,
+`theme-core`, `drawing-core`, `drawing-interaction-core`, `drawing-primitive`,
+`tool-icons-core`, `smc-overlay-core`, `legend-core`, `indicator-settings-core`,
+`chart-store`, `chart-bus`, `chart-host`, `chart-host-candles`, `main`.
+Controllers: `indicators`, `history`, `stream`, `drawings`,
+`drawing-interaction`, `smc`, `toolbar`, `legend`, `draw-toolbar`,
+`object-tree`, `preference`.
 
 `LightweightCharts` stays a classic CDN global (`unpkg.com`); every other
 script is same-origin ESM, so CSP `script-src 'self' https://unpkg.com` is

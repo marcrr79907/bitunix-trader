@@ -1388,9 +1388,10 @@ def test_hidden_drawing_is_not_pointer_grabbable(
     )
     # The row is present (parked, R4) and reflects the hidden flag.
     assert page.evaluate("() => window.marketChart.drawings[0].visible === false")
-    assert page.locator('.tree-row[data-id] .row-eye').first.get_attribute(
-        "aria-pressed"
-    ) == "false"
+    assert (
+        page.locator(".tree-row[data-id] .row-eye").first.get_attribute("aria-pressed")
+        == "false"
+    )
 
     page.select_option("#interval", "5m")
     page.wait_for_function(
