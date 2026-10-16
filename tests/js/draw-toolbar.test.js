@@ -75,9 +75,9 @@ test("renders a vertical role=toolbar with one role=group per tool group", () =>
     assert.strictEqual(toolbar.getAttribute("aria-label"), "Drawing tools");
     assert.deepStrictEqual(
       toolbar.children.map((g) => g.getAttribute("aria-label")),
-      ["Lines", "Fib", "Shapes", "Text"],
+      ["Lines", "Fib", "Shapes", "Text", "Measure", "Positions"],
     );
-    assert.strictEqual(buttonsOf(mount).length, 5);
+    assert.strictEqual(buttonsOf(mount).length, 7);
   } finally { restore(); }
 });
 
@@ -121,13 +121,13 @@ test("roving tabindex: exactly one 0, the rest -1; ArrowDown moves focus (R3)", 
     createDrawToolbar({ store: makeStore({ tool: null }) });
     const btns = buttonsOf(mount);
     assert.strictEqual(btns.filter((b) => b.getAttribute("tabindex") === "0").length, 1);
-    assert.strictEqual(btns.filter((b) => b.getAttribute("tabindex") === "-1").length, 4);
+    assert.strictEqual(btns.filter((b) => b.getAttribute("tabindex") === "-1").length, 6);
     btns[0].focus();
     btns[0].keydown("ArrowDown");
     assert.strictEqual(globalThis.document.activeElement, btns[1]);
     btns[1].keydown("End");
-    assert.strictEqual(globalThis.document.activeElement, btns[4]);
-    btns[4].keydown("Home");
+    assert.strictEqual(globalThis.document.activeElement, btns[6]);
+    btns[6].keydown("Home");
     assert.strictEqual(globalThis.document.activeElement, btns[0]);
   } finally { restore(); }
 });

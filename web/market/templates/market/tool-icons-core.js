@@ -16,12 +16,16 @@ export const TOOL_GROUPS = [
   { label: "Fib", kinds: ["fib"] },
   { label: "Shapes", kinds: ["rect"] },
   { label: "Text", kinds: ["text"] },
+  // F6 (R1): the two TradingView-style instruments. ``measure`` is ephemeral
+  // (no Drawing kind); ``position`` is a persisted Drawing kind.
+  { label: "Measure", kinds: ["measure"] },
+  { label: "Positions", kinds: ["position"] },
 ];
 
 // Object-tree group vocab (S3 consumes these labels; kept here so the icon
 // vocabulary is the single source for both sidebar idioms).
 export const TREE_GROUPS = [
-  { label: "Drawings", kinds: ["hline", "trendline", "fib", "rect", "text"] },
+  { label: "Drawings", kinds: ["hline", "trendline", "fib", "rect", "text", "position"] },
   { label: "Indicators", kinds: [] },
 ];
 
@@ -36,6 +40,9 @@ const ICON_BODIES = {
   fib: '<line x1="4" y1="8" x2="20" y2="8"/><line x1="4" y1="12" x2="20" y2="12"/><line x1="4" y1="16" x2="20" y2="16"/>',
   rect: '<rect x="4" y="6" width="16" height="12" rx="1"/>',
   text: '<polyline points="5 7 12 7 12 18"/><line x1="8" y1="18" x2="16" y2="18"/><line x1="19" y1="7" x2="19" y2="14"/>',
+  // F6: measure = a ruler with tick marks; position = a three-level box.
+  measure: '<path d="M3 15l12-12 6 6-12 12z"/><line x1="8" y1="10" x2="10" y2="12"/><line x1="11" y1="7" x2="13" y2="9"/><line x1="5" y1="13" x2="7" y2="15"/>',
+  position: '<rect x="4" y="8" width="16" height="8" rx="1"/><line x1="4" y1="8" x2="20" y2="8"/><line x1="4" y1="12" x2="20" y2="12"/><line x1="4" y1="16" x2="20" y2="16"/>',
 };
 
 // A kind -> a self-contained inline-SVG string (no event attribute), or "" for
