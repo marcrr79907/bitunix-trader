@@ -8,11 +8,15 @@
 // needs no re-attach (R6/#68: redraw via ``requestUpdate`` only).
 import * as Draw from "./drawing-core.js";
 import { handlesFor, HANDLE_RADIUS } from "./drawing-interaction-core.js";
+import { positionBox } from "./position-core.js";
 
-// Price range so a full-width ray / rect is not clipped on pan/zoom (R6).
+// Price range so a full-width ray / rect / position box is not clipped (R6).
 function priceRangeFor(row) {
   const prices = [];
   if (typeof row.points.price === "number") prices.push(row.points.price);
+  // F6 (R6): a position's stop/take_profit levels must be in range too.
+  if (typeof row.points.stop === "number") prices.push(row.points.stop);
+  if (typeof row.points.take_profit === "number") prices.push(row.points.take_profit);
   ["p1", "p2"].forEach(function (k) {
     const p = row.points[k];
     if (p && typeof p.price === "number") prices.push(p.price);
@@ -74,9 +78,47 @@ function renderShape(ctx, size, row, map, selected) {
       ctx.font = (row.style.fontSize || 14) + "px sans-serif";
       ctx.fillText(tx.text, tx.x, tx.y);
     }
+  } else if (kind === "position") {
+    renderPosition(ctx, row, map);
   }
   if (selected) drawHandles(ctx, row, map);
   ctx.restore();
+}
+
+// F6 (R6): a position box — a risk zone (entry->stop) and a reward zone
+// (entry->take_profit), three level lines with labels, and a LONG/SHORT label +
+// arrow + R:R text. Geometry comes from position-core.positionBox; a null box
+// (off-bar entry) skips every leg. NOT colour-only: the label + arrow carry the
+// direction as text (design-system R6/R9).
+function renderPosition(ctx, row, map) {
+  const box = positionBox(row.points, map);
+  if (!box) return;
+  const fill = function (band, color) {
+    if (band.top === null || band.bottom === null) return;
+    ctx.globalAlpha = 0.15;
+    ctx.fillStyle = color;
+    ctx.fillRect(box.left, band.top, box.right - box.left, band.bottom - band.top);
+    ctx.globalAlpha = 1;
+  };
+  fill(box.riskBand, "#ef5350"); // risk (entry -> stop)
+  fill(box.rewardBand, "#26a69a"); // reward (entry -> tp)
+  ctx.strokeStyle = row.style.color || "#787b86";
+  ctx.fillStyle = row.style.color || "#787b86";
+  ctx.font = "11px sans-serif";
+  box.levels.forEach(function (l) {
+    if (l.y === null || l.y === undefined) return;
+    ctx.beginPath();
+    ctx.moveTo(box.left, l.y);
+    ctx.lineTo(box.right, l.y);
+    ctx.stroke();
+    ctx.fillText(l.label + " " + l.price, box.left + 2, l.y - 2);
+  });
+  const dir = box.long ? "LONG" : "SHORT";
+  const arrow = box.long ? "\u25b2" : "\u25bc";
+  ctx.fillText(arrow + " " + dir, box.left + 2, box.rewardBand.top - 4);
+  if (box.rr !== null && box.rr !== undefined) {
+    ctx.fillText("R:R " + box.rr.toFixed(2), box.left + 2, box.riskBand.bottom + 12);
+  }
 }
 
 // The per-kind handle dots for a selected shape (skip any off-bar anchor).

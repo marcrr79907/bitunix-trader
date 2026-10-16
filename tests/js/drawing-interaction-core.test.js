@@ -216,3 +216,104 @@ test("applyDrag never throws on malformed input", () => {
   assert.doesNotThrow(() => core.applyDrag({ kind: "trendline" }, 0, 1, 1, ident));
   assert.doesNotThrow(() => core.applyDrag(null, "body", 1, 1, ident));
 });
+
+// --- position kind (F6 R10) --------------------------------------------------
+
+const position = () => ({
+  id: 9,
+  kind: "position",
+  points: { entry: { time: 10, price: 50 }, stop: 45, take_profit: 60 },
+});
+
+test("handlesFor position returns the 4 handles (entry anchor + 3 levels)", () => {
+  // entry anchor at the entry column; levels on the right edge (BOX_WIDTH=120).
+  assert.deepStrictEqual(core.handlesFor("position", position().points, ident), [
+    { id: "entry", x: 10, y: 50 },
+    { id: "entry_price", x: 130, y: 50 },
+    { id: "stop", x: 130, y: 45 },
+    { id: "take_profit", x: 130, y: 60 },
+  ]);
+});
+
+test("handlesFor resolves 1 / 2 / 2 / 4 / 1 / 4 per kind", () => {
+  const pts = { time: 7, price: 3, p1: { time: 10, price: 1 }, p2: { time: 20, price: 2 } };
+  assert.strictEqual(core.handlesFor("hline", { price: 50 }, ident).length, 1);
+  assert.strictEqual(core.handlesFor("trendline", pts, ident).length, 2);
+  assert.strictEqual(core.handlesFor("fib", pts, ident).length, 2);
+  assert.strictEqual(core.handlesFor("rect", pts, ident).length, 4);
+  assert.strictEqual(core.handlesFor("text", pts, ident).length, 1);
+  assert.strictEqual(core.handlesFor("position", position().points, ident).length, 4);
+});
+
+test("handlesFor position omits everything when the entry is off-bar", () => {
+  const map = { ...ident, x: () => null };
+  assert.deepStrictEqual(core.handlesFor("position", position().points, map), []);
+});
+
+test("bodyHit position covers the entry->stop and entry->tp band", () => {
+  const row = position();
+  // Inside the box (x within [left,right], y between stop and tp).
+  assert.strictEqual(core.bodyHit(row, 60, 52, ident), true);
+  // x to the right of the box -> miss.
+  assert.strictEqual(core.bodyHit(row, 400, 52, ident), false);
+  // y above the highest level (tp 60) -> miss.
+  assert.strictEqual(core.bodyHit(row, 60, 200, ident), false);
+});
+
+test("applyDrag position moves ONLY the dragged stop level", () => {
+  const row = position();
+  const out = core.applyDrag(row, 2, 0, -5, ident); // index 2 = stop
+  assert.deepStrictEqual(out, {
+    entry: { time: 10, price: 50 },
+    stop: 40,
+    take_profit: 60,
+  });
+  // input untouched (never mutates).
+  assert.deepStrictEqual(row.points, { entry: { time: 10, price: 50 }, stop: 45, take_profit: 60 });
+});
+
+test("applyDrag position moves ONLY the dragged take_profit level", () => {
+  assert.deepStrictEqual(core.applyDrag(position(), 3, 0, 7, ident), {
+    entry: { time: 10, price: 50 },
+    stop: 45,
+    take_profit: 67,
+  });
+});
+
+test("applyDrag position body shifts all three levels + the anchor column", () => {
+  assert.deepStrictEqual(core.applyDrag(position(), "body", 3, 4, ident), {
+    entry: { time: 13, price: 54 },
+    stop: 49,
+    take_profit: 64,
+  });
+});
+
+test("applyDrag position entry_price level moves only the entry price", () => {
+  assert.deepStrictEqual(core.applyDrag(position(), 1, 0, -2, ident), {
+    entry: { time: 10, price: 48 },
+    stop: 45,
+    take_profit: 60,
+  });
+});
+
+test("applyDrag position entry anchor moves the entry (time + price)", () => {
+  assert.deepStrictEqual(core.applyDrag(position(), 0, 4, -2, ident), {
+    entry: { time: 14, price: 48 },
+    stop: 45,
+    take_profit: 60,
+  });
+});
+
+test("applyDrag position keeps a level when the y inverse is null", () => {
+  const map = { ...ident, price: () => null };
+  assert.deepStrictEqual(core.applyDrag(position(), 2, 0, -5, map), {
+    entry: { time: 10, price: 50 },
+    stop: 45,
+    take_profit: 60,
+  });
+});
+
+test("grabHandle resolves a position level handle", () => {
+  // stop handle sits at (right=130, y=45).
+  assert.deepStrictEqual(core.grabHandle([position()], 130, 45, ident), { id: 9, target: 2 });
+});

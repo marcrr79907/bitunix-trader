@@ -66,3 +66,49 @@ test("autoscaleInfo is null when the drawing is hidden (R6)", () => {
   const hidden = makeDrawingPrimitive({ ...HLINE, visible: false }, {});
   assert.strictEqual(hidden.autoscaleInfo(), null);
 });
+
+// --- position render (F6 R6) -------------------------------------------------
+
+const POSITION = {
+  id: 9,
+  kind: "position",
+  points: { entry: { time: 10, price: 50 }, stop: 45, take_profit: 60 },
+  style: { color: "#26a69a", lineWidth: 1 },
+};
+
+test("renderShape draws a position via position-core (zones + levels + R:R)", () => {
+  const ctx = recordingCtx();
+  renderShape(ctx, { width: 300, height: 300 }, POSITION, MAP, false);
+  // Two filled bands (risk + reward) and three level strokes.
+  assert.ok(ctx.calls.filter((c) => c === "fillRect").length >= 2, "risk + reward bands");
+  assert.ok(ctx.calls.filter((c) => c === "stroke").length >= 3, "three level lines");
+  // The LONG/SHORT label + the R:R figure are written as text (not colour-only).
+  assert.ok(ctx.calls.filter((c) => c === "fillText").length >= 2, "label + R:R");
+});
+
+test("renderShape position degrades (no throw) when the entry is off-bar", () => {
+  const ctx = recordingCtx();
+  const map = { x: () => null, y: (p) => p };
+  assert.doesNotThrow(() =>
+    renderShape(ctx, { width: 300, height: 300 }, POSITION, map, false),
+  );
+  assert.strictEqual(ctx.calls.filter((c) => c === "fillRect").length, 0, "no box off-bar");
+});
+
+test("renderShape position draws nothing when hidden (R6)", () => {
+  const ctx = recordingCtx();
+  renderShape(ctx, { width: 300, height: 300 }, { ...POSITION, visible: false }, MAP, false);
+  assert.deepStrictEqual(ctx.calls, ["save", "restore"]);
+});
+
+test("autoscaleInfo of a position includes stop and take_profit (R6)", () => {
+  const prim = makeDrawingPrimitive(POSITION, {});
+  assert.deepStrictEqual(prim.autoscaleInfo(), {
+    priceRange: { minValue: 45, maxValue: 60 },
+  });
+});
+
+test("autoscaleInfo of a hidden position is null (R6)", () => {
+  const prim = makeDrawingPrimitive({ ...POSITION, visible: false }, {});
+  assert.strictEqual(prim.autoscaleInfo(), null);
+});
