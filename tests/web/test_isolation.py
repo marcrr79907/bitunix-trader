@@ -299,6 +299,25 @@ def test_drawing_visible_locked_persist_and_stay_scoped(user_a, user_b):
 
 
 @pytest.mark.django_db
+def test_drawing_position_kind_round_trips_and_stays_scoped(user_a, user_b):
+    # R1/R5/R3 (F6): a ``position`` row persists its level schema and is
+    # invisible cross-user through for_user.
+    points = {
+        "entry": {"time": 1700000000, "price": 50000.0},
+        "stop": 49000.0,
+        "take_profit": 52000.0,
+    }
+    drawing = Drawing.objects.create(
+        user=user_a, symbol="BTCUSDT", kind="position", points=points
+    )
+
+    saved = Drawing.for_user(user_a).get(pk=drawing.pk)
+    assert saved.kind == "position"
+    assert saved.points == points
+    assert Drawing.for_user(user_b).count() == 0
+
+
+@pytest.mark.django_db
 def test_drawing_owner_is_required():
     with pytest.raises(IntegrityError):
         with transaction.atomic():

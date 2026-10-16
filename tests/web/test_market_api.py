@@ -2843,3 +2843,206 @@ def test_preference_isolation_b_never_sees_a_smc():
     body = b_client.get(PREF_URL).json()
     assert body["smc"] == {}
     assert body["exists"] is False
+
+
+# --- F6 S2: position drawing kind (R1/R5/R14) --------------------------------
+
+
+def _position_body(**overrides):
+    """A valid ``position`` create body (entry anchor + SL/TP levels)."""
+    body = _drawing_body(
+        kind="position",
+        points={
+            "entry": {"time": 1700000000, "price": 50000.0},
+            "stop": 49000.0,
+            "take_profit": 52000.0,
+        },
+    )
+    body.update(overrides)
+    return body
+
+
+def test_position_kind_is_a_member_of_drawing_kinds():
+    from market.quotes import DRAWING_KINDS
+
+    assert "position" in DRAWING_KINDS
+
+
+def test_drawings_position_post_get_put_round_trip():
+    points = {
+        "entry": {"time": 1700000000, "price": 50000.0},
+        "stop": 49000.0,
+        "take_profit": 52000.0,
+    }
+    response = _post_drawing(USER, _position_body())
+
+    assert response.status_code == 201
+    created = response.json()
+    assert created["kind"] == "position"
+    assert created["points"] == points
+
+    listed = USER.get(f"{DRAWINGS_URL}?symbol=BTCUSDT").json()["drawings"]
+    assert listed[0]["points"] == points
+    assert listed[0]["kind"] == "position"
+
+    new_points = {
+        "entry": {"time": 1700000060, "price": 51000.0},
+        "stop": 50000.0,
+        "take_profit": 53000.0,
+    }
+    updated = _put_drawing(USER, created["id"], {"points": new_points})
+
+    assert updated.status_code == 200
+    assert updated.json()["points"] == new_points
+    listed = USER.get(f"{DRAWINGS_URL}?symbol=BTCUSDT").json()["drawings"]
+    assert listed[0]["points"] == new_points
+
+
+def test_drawings_position_post_accepts_and_ignores_stale_interval():
+    response = _post_drawing(USER, _position_body(interval="7m"))
+
+    assert response.status_code == 201
+    assert len(USER.get(f"{DRAWINGS_URL}?symbol=BTCUSDT").json()["drawings"]) == 1
+
+
+@pytest.mark.parametrize(
+    "points",
+    [
+        {"entry": {"time": 1700000000, "price": 50000.0}, "stop": 49000.0},  # no tp
+        {"entry": {"time": 1700000000, "price": 50000.0}, "take_profit": 52000.0},
+        # extra key
+        {
+            "entry": {"time": 1700000000, "price": 50000.0},
+            "stop": 49000.0,
+            "take_profit": 52000.0,
+            "extra": 1,
+        },
+        "not-an-object",  # points not an object
+        {
+            "entry": {"time": 1700000000, "price": 50000.0},
+            "stop": 49000.0,
+            "take_profit": 52000.0,
+            "entry_price": 50000.0,
+        },  # noqa: E501
+        # entry not a dict
+        {"entry": 50000.0, "stop": 49000.0, "take_profit": 52000.0},
+        # entry missing time
+        {"entry": {"price": 50000.0}, "stop": 49000.0, "take_profit": 52000.0},
+        # entry time non-int
+        {
+            "entry": {"time": "x", "price": 50000.0},
+            "stop": 49000.0,
+            "take_profit": 52000.0,
+        },  # noqa: E501
+        # entry price non-numeric
+        {
+            "entry": {"time": 1700000000, "price": "x"},
+            "stop": 49000.0,
+            "take_profit": 52000.0,
+        },  # noqa: E501
+        # non-numeric / bool stop
+        {
+            "entry": {"time": 1700000000, "price": 50000.0},
+            "stop": "x",
+            "take_profit": 52000.0,
+        },  # noqa: E501
+        {
+            "entry": {"time": 1700000000, "price": 50000.0},
+            "stop": True,
+            "take_profit": 52000.0,
+        },  # noqa: E501
+        # non-numeric / bool take_profit
+        {
+            "entry": {"time": 1700000000, "price": 50000.0},
+            "stop": 49000.0,
+            "take_profit": "x",
+        },  # noqa: E501
+        {
+            "entry": {"time": 1700000000, "price": 50000.0},
+            "stop": 49000.0,
+            "take_profit": False,
+        },  # noqa: E501
+        # degenerate entry.price == stop
+        {
+            "entry": {"time": 1700000000, "price": 50000.0},
+            "stop": 50000.0,
+            "take_profit": 52000.0,
+        },  # noqa: E501
+    ],
+)
+def test_drawings_position_post_invalid_points_is_400_and_writes_nothing(points):
+    from trading.models import Drawing
+
+    response = _post_drawing(USER, _position_body(points=points))
+
+    assert response.status_code == 400
+    assert "error" in response.json()
+    assert Drawing.objects.count() == 0
+
+
+def test_drawings_position_put_invalid_points_is_400_and_writes_nothing():
+    from trading.models import Drawing
+
+    created = _post_drawing(USER, _position_body()).json()
+    a_row = Drawing.objects.get(pk=created["id"])
+
+    response = _put_drawing(
+        USER,
+        created["id"],
+        {
+            "points": {
+                "entry": {"time": 1700000000, "price": 50000.0},
+                "stop": 50000.0,  # degenerate
+                "take_profit": 52000.0,
+            }
+        },
+    )
+
+    assert response.status_code == 400
+    assert "error" in response.json()
+    a_row.refresh_from_db()
+    assert a_row.points == created["points"]
+
+
+def test_drawings_position_isolation_b_get_never_sees_a():
+    from django.contrib.auth import get_user_model
+
+    _post_drawing(USER, _position_body())
+
+    b_client = Client()
+    b = get_user_model().objects.create_user(
+        email="posb@example.com", password="pw-123456"
+    )
+    b_client.force_login(b)
+
+    assert b_client.get(f"{DRAWINGS_URL}?symbol=BTCUSDT").json()["drawings"] == []
+
+
+def test_drawings_position_isolation_b_put_of_a_id_is_404_and_a_unchanged():
+    from django.contrib.auth import get_user_model
+    from trading.models import Drawing
+
+    created = _post_drawing(USER, _position_body()).json()
+    a_row = Drawing.objects.get(pk=created["id"])
+
+    b_client = Client()
+    b = get_user_model().objects.create_user(
+        email="posputb@example.com", password="pw-123456"
+    )
+    b_client.force_login(b)
+
+    response = _put_drawing(
+        b_client,
+        created["id"],
+        {
+            "points": {
+                "entry": {"time": 1, "price": 1.0},
+                "stop": 2.0,
+                "take_profit": 3.0,
+            }
+        },
+    )
+
+    assert response.status_code == 404
+    a_row.refresh_from_db()
+    assert a_row.points == created["points"]
