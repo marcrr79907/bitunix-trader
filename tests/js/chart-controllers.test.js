@@ -284,3 +284,158 @@ test("resolveToggles: a null/garbage payload degrades to all ON", () => {
   assert.deepStrictEqual(resolveToggles(undefined), allOn);
   assert.deepStrictEqual(resolveToggles("nope"), allOn);
 });
+
+// --- measure controller (F6 S3 / R1-R4) --------------------------------------
+//
+// The controller's chart peers need a browser (E2E), but its gesture +
+// ephemeral-readout contract is DOM + a stubbed host/series: it owns the
+// ``#chart`` pointer listeners guarded by ``state.tool==="measure"`` and writes
+// the ``#measure-readout`` textContent via the pure measure-core. A hand-rolled
+// shim (no jsdom) keeps the test framework-free.
+const { createMeasure } = await import(
+  "../../web/market/templates/market/controllers/measure.js"
+);
+
+function makeEl(tag) {
+  const el = {
+    tagName: tag,
+    _listeners: {},
+    textContent: "",
+    setAttribute() {},
+    addEventListener(type, fn) { (this._listeners[type] = this._listeners[type] || []).push(fn); },
+    removeEventListener() {},
+    getBoundingClientRect() { return { left: 0, top: 0 }; },
+    setPointerCapture() {},
+    releasePointerCapture() {},
+    hasPointerCapture() { return false; },
+    fire(type, ev) { (this._listeners[type] || []).forEach((fn) => fn(ev)); },
+  };
+  return el;
+}
+
+function makeStore(initial) {
+  const state = { ...initial };
+  const listeners = [];
+  return {
+    get: () => state,
+    set: (patch) => { Object.assign(state, patch); listeners.slice().forEach((fn) => fn(state)); },
+    subscribe: (fn) => { listeners.push(fn); },
+  };
+}
+
+// A host stub: the chart maps time<->px, the series maps price<->px and records
+// every primitive attach/detach + each requestUpdate (so we can assert #68).
+function makeHost() {
+  const series = {
+    _prim: null,
+    attaches: 0,
+    updates: 0,
+    attachPrimitive(prim) {
+      this._prim = prim;
+      this.attaches += 1;
+      const seriesRef = this;
+      prim.attached({
+        chart: chartRef,
+        series: this,
+        requestUpdate() { seriesRef.updates += 1; },
+      });
+    },
+    detachPrimitive(prim) { if (this._prim === prim) this._prim = null; },
+    priceToCoordinate(p) { return p; },
+    coordinateToPrice(y) { return y; },
+    setData() { throw new Error("measure must never call setData"); },
+    update() { throw new Error("measure must never call update"); },
+  };
+  const chart = { timeScale() { return { timeToCoordinate: (t) => t, coordinateToTime: (x) => x }; } };
+  const chartRef = chart;
+  return { getChart: () => chart, getCandleSeries: () => series, _series: series };
+}
+
+function measureFixture(tool = "measure") {
+  const chartEl = makeEl("section");
+  const readout = makeEl("p");
+  const prev = globalThis.document;
+  globalThis.document = {
+    getElementById: (id) => (id === "chart" ? chartEl : id === "measure-readout" ? readout : null),
+  };
+  const store = makeStore({ tool: tool, interval: "1m", symbol: "BTCUSDT" });
+  const host = makeHost();
+  const bus = { on() {}, emit() {} };
+  const m = createMeasure({ store, bus, host, config: {} });
+  m.attach();
+  return { m, store, host, bus, chartEl, readout, restore: () => { globalThis.document = prev; } };
+}
+
+function ev(x, y) {
+  return { clientX: x, clientY: y, pointerId: 1, button: 0, preventDefault() {}, stopPropagation() {} };
+}
+
+test("measure drag → readout DOM, one primitive, no setData/update (R1/R2/R3)", () => {
+  const f = measureFixture();
+  try {
+    f.chartEl.fire("pointerdown", ev(10, 100));
+    f.chartEl.fire("pointermove", ev(50, 120));
+    assert.strictEqual(f.host._series.attaches, 1, "one primitive attached while measuring");
+    assert.ok(f.host._series.updates > 0, "redraw via requestUpdate (#68)");
+    // The readout carries the price/time/bar figures from measure-core.
+    assert.match(f.readout.textContent, /\d/);
+    assert.notStrictEqual(f.readout.textContent, "");
+    // The primitive never moves the scale and never writes series data.
+    assert.strictEqual(f.host._series._prim.autoscaleInfo(), null);
+  } finally { f.restore(); }
+});
+
+test("a new measure replaces the old (one primitive, not two) (R1)", () => {
+  const f = measureFixture();
+  try {
+    f.chartEl.fire("pointerdown", ev(10, 100));
+    f.chartEl.fire("pointermove", ev(50, 120));
+    f.chartEl.fire("pointerup", ev(50, 120));
+    f.chartEl.fire("pointerdown", ev(20, 80));
+    f.chartEl.fire("pointermove", ev(60, 90));
+    assert.strictEqual(f.host._series.attaches, 1, "the primitive is attached exactly once");
+    assert.ok(f.host._series._prim, "a primitive remains after the second gesture");
+  } finally { f.restore(); }
+});
+
+test("Escape cancels the measurement and clears the readout (R4)", () => {
+  const f = measureFixture();
+  try {
+    f.chartEl.fire("pointerdown", ev(10, 100));
+    f.chartEl.fire("pointermove", ev(50, 120));
+    f.chartEl.fire("keydown", { key: "Escape", preventDefault() {}, stopPropagation() {} });
+    assert.strictEqual(f.host._series._prim, null, "the primitive is detached on Escape");
+    assert.strictEqual(f.readout.textContent, "");
+  } finally { f.restore(); }
+});
+
+test("changing the tool away from measure clears (R4)", () => {
+  const f = measureFixture();
+  try {
+    f.chartEl.fire("pointerdown", ev(10, 100));
+    f.chartEl.fire("pointermove", ev(50, 120));
+    f.store.set({ tool: "hline" });
+    assert.strictEqual(f.host._series._prim, null);
+    assert.strictEqual(f.readout.textContent, "");
+  } finally { f.restore(); }
+});
+
+test("clearForSwitch detaches the primitive and clears the readout (R4)", () => {
+  const f = measureFixture();
+  try {
+    f.chartEl.fire("pointerdown", ev(10, 100));
+    f.chartEl.fire("pointermove", ev(50, 120));
+    f.m.clearForSwitch();
+    assert.strictEqual(f.host._series._prim, null);
+    assert.strictEqual(f.readout.textContent, "");
+  } finally { f.restore(); }
+});
+
+test("no pointerdown starts a measurement when the tool is not measure (R1)", () => {
+  const f = measureFixture("hline");
+  try {
+    f.chartEl.fire("pointerdown", ev(10, 100));
+    f.chartEl.fire("pointermove", ev(50, 120));
+    assert.strictEqual(f.host._series.attaches, 0, "the gesture is guarded on state.tool");
+  } finally { f.restore(); }
+});
