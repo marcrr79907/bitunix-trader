@@ -49,3 +49,21 @@ export function iconFor(kind) {
 export function groupLabel(group) {
   return group ? group.label : "";
 }
+
+// --- object-tree row-control glyphs (F5) ------------------------------------
+// Inline SVG strings, NO event attribute (CSP-clean). Not color-only (R6/R9):
+// eye swaps filled/outline, lock swaps closed/open, alongside aria-pressed.
+export const EYE_ON = `${SVG_OPEN}<path d="M1 12s4-7 11-7 11 7 11 7-4 7-11 7S1 12 1 12Z"/>`
+  + '<circle cx="12" cy="12" r="3"/></svg>';
+export const EYE_OFF = `${SVG_OPEN}<path d="M3 3l18 18"/>`
+  + '<path d="M10.6 5.1A10.9 10.9 0 0 1 12 5c7 0 11 7 11 7a18 18 0 0 1-3.2 4.2"/>'
+  + '<path d="M6.1 6.1A18 18 0 0 0 1 12s4 7 11 7a10.9 10.9 0 0 0 4.4-.9"/></svg>';
+export const LOCK_ON = `${SVG_OPEN}<rect x="5" y="11" width="14" height="9" rx="1"/>`
+  + '<path d="M8 11V8a4 4 0 0 1 8 0v3"/></svg>';
+export const LOCK_OFF = `${SVG_OPEN}<rect x="5" y="11" width="14" height="9" rx="1"/>`
+  + '<path d="M8 11V8a4 4 0 0 1 7-2.6"/></svg>';
+export const TRASH = `${SVG_OPEN}<path d="M4 7h16"/><path d="M9 7V5h6v2"/>`
+  + '<path d="M6 7l1 13h10l1-13"/></svg>';
+export const GEAR = `${SVG_OPEN}<circle cx="12" cy="12" r="3"/>`
+  + '<path d="M12 2v3M12 19v3M2 12h3M19 12h3'
+  + 'M4.9 4.9l2.1 2.1M17 17l2.1 2.1M19.1 4.9L17 7M7 17l-2.1 2.1"/></svg>';

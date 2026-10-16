@@ -68,6 +68,22 @@ test("iconFor: an unknown kind degrades to an empty string, never throws", () =>
   assert.strictEqual(core.iconFor(undefined), "");
 });
 
+test("row-control glyphs: every exported object-tree icon is CSP-clean SVG", () => {
+  // F5 FIX-3 hoisted the eye/lock/delete/gear strings here (their proper home).
+  ["EYE_ON", "EYE_OFF", "LOCK_ON", "LOCK_OFF", "TRASH", "GEAR"].forEach((name) => {
+    const svg = core[name];
+    assert.strictEqual(typeof svg, "string", name);
+    assert.match(svg, /^<svg\b/, name);
+    assert.match(svg, /<\/svg>$/, name);
+    assert.match(svg, /currentColor/, name);
+    assert.doesNotMatch(svg, /\son[a-z]+\s*=/i, name); // no inline handler
+    assert.doesNotMatch(svg, /<script/i, name);
+  });
+  // The on/off pairs differ (state is not a single static glyph).
+  assert.notStrictEqual(core.EYE_ON, core.EYE_OFF);
+  assert.notStrictEqual(core.LOCK_ON, core.LOCK_OFF);
+});
+
 test("purity: the icon core imports nothing", () => {
   const src = readFileSync(
     fileURLToPath(

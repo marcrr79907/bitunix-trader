@@ -73,6 +73,7 @@ CONTROLLER_ALLOWLIST: frozenset[str] = frozenset(
         "legend",
         "draw-toolbar",
         "object-tree",
+        "preference",
     }
 )
 

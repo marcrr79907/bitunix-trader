@@ -576,6 +576,41 @@ def _tree_tokens(page):
     )
 
 
+# --- F5 S3 E2E coverage delta (F5 FIX-5, issue #177) -------------------------
+#
+# S3 legitimately deleted the DOM these assertions checked: the indicators
+# `fieldset` (add-any-token via checkbox) and `#drawing-list`. R18's "green with
+# NO assertion edits" clause was unmeetable by the change that removes that DOM,
+# so the archive reconciles R18/R20 to "green except the assertions removed AND
+# REPLACED by equivalent coverage". This is that reconciliation. Format:
+# "removed scenario -> what it verified -> replacement".
+#
+# * checkbox `.indicator-toggle[sma/ema/rsi]` checked -> saved layout restored
+#   -> test_boot_restores_saved_layout (tree tokens)
+# * checkbox is_checked -> active membership render
+#   -> test_fetch_failure_falls_back_to_defaults (tree tokens)
+# * checkbox `rsi` on -> one debounced PUT body -> persist a change
+#   -> test_toggle_fires_one_debounced_put (tree eye -> visible:false)
+# * checkbox `sma`/`rsi` across interval switch -> per-interval layout load
+#   -> test_switch_loads_target_layout (tree tokens)
+# * test_toggle_adds_and_removes_panes: uncheck rsi -> pane gone + check macd ->
+#   pane + `indicators=macd` -> config change -> rebuild + REFETCH with the new
+#   set, and ADD an indicator
+#   -> test_indicator_eye_hides_option_only_and_delete_removes_pane: delete rsi
+#      -> pane gone AND history REFETCHES with the set minus rsi. ADDING has NO
+#      replacement -> issue #176 (new capability, slice S5)
+# * `#drawing-list .drawing-del` delete -> drawing delete by id
+#   -> test_tree_row_delete_fires_delete (row-delete)
+# * settings gear `.indicator-settings[sma]` -> open the settings dialog
+#   -> _SETTINGS_GEAR = `.tree-row[data-token=sma] .row-settings`
+# * legend: check `bollinger` -> 2nd build -> legend survives a rebuild
+#   -> test_legend_resubscribes_across_rebuild (seeded bollinger + style edit)
+#
+# Net: every removed scenario has an equivalent replacement EXCEPT adding an
+# indicator, which S3 removed (active-only membership) and is tracked as the new
+# capability issue #176 (add-indicator affordance, slice S5).
+
+
 @p
 def test_boot_restores_saved_layout(saved_layout, browser_page):
     # R4 (issue #71): a persisted layout wins over the DOM defaults on boot —
@@ -780,11 +815,17 @@ def test_indicator_eye_hides_option_only_and_delete_removes_pane(
         timeout=10000,
     )
     assert page.locator("#chart canvas").count() < with_pane
-    # The rebuild refetches history WITHOUT the deleted token in the set.
-    page.wait_for_function("() => true", timeout=1000)
-    assert not any("indicators=" in u and "rsi" in u for u in kline_requests), (
-        kline_requests
-    )
+    # The rebuild REFETCHES history with the indicator set minus the deleted token
+    # — the positive replacement for `test_toggle_adds_and_removes_panes`'s
+    # "history refetches with the indicator set" (F5 FIX-5, issue #177). A new
+    # kline request MUST appear carrying `indicators=` WITHOUT rsi.
+    page.wait_for_function(
+        "() => true", timeout=1000
+    )  # let the rebuild's fetchHistory land
+    assert kline_requests, "the delete rebuild MUST refetch history"
+    refetched = [u for u in kline_requests if "indicators=" in u]
+    assert refetched, kline_requests
+    assert not any("rsi" in u.split("indicators=", 1)[1] for u in refetched), refetched
 
 
 @pytest.fixture
@@ -1048,6 +1089,53 @@ def test_tree_keyboard_navigation_and_indicator_visibility(
     assert klines == [], klines
 
 
+@p
+def test_tree_row_actions_reachable_and_activatable_by_keyboard(
+    seeded_drawings, browser_page
+):
+    # R6/R9 (F5 FIX-3): the drawing row's eye/lock were mouse-only. A focused row
+    # MUST activate them by the documented keys (v = visibility, l = lock) and
+    # advertise the binding; the action persists via its own bus path.
+    page, base_url = browser_page
+    puts = []
+    page.on(
+        "request",
+        lambda r: (
+            puts.append(r)
+            if r.method == "PUT" and "/market/api/drawings/" in r.url
+            else None
+        ),
+    )
+    page.goto(f"{base_url}/market/")
+    _wait_ready(page)
+    page.wait_for_function(
+        "() => window.marketChart.drawings && window.marketChart.drawings.length === 2",
+        timeout=10000,
+    )
+    row = page.locator("#object-tree .tree-row[data-id]").first
+    assert row.locator(".row-eye").get_attribute("aria-keyshortcuts") == "v"
+    assert row.locator(".row-lock").get_attribute("aria-keyshortcuts") == "l"
+
+    row.focus()
+    page.keyboard.press("v")  # eye -> hide
+    page.wait_for_function(
+        "() => document.querySelector('#object-tree .tree-row[data-id] .row-eye')"
+        ".getAttribute('aria-pressed') === 'false'",
+        timeout=10000,
+    )
+    page.keyboard.press("l")  # lock -> locked
+    page.wait_for_function(
+        "() => document.querySelector('#object-tree .tree-row[data-id] .row-lock')"
+        ".getAttribute('aria-pressed') === 'true'",
+        timeout=10000,
+    )
+    page.wait_for_timeout(300)  # let the debounced PUT land
+    assert page.evaluate(
+        "() => window.marketChart.drawings.some((d) => d.locked === true)"
+    )
+    assert len(puts) >= 1, [r.url for r in puts]
+
+
 # --- Drawing interaction (R9-R14): select / drag / delete / deselect ---------
 #
 # The canvas is not introspectable, so every assertion rides the seam
@@ -1225,6 +1313,154 @@ def test_drag_put_returns_200_and_persists_across_reload(
     restored = page.evaluate("() => window.marketChart.drawings[0].points.price")
     assert restored != 100.0
     assert abs(restored - moved) < 1e-6
+
+
+@pytest.fixture
+def hidden_hline(e2e_user):
+    """One hline at 100.0 with ``visible:false`` (R9: not pointer-grabbable)."""
+    from trading.models import Drawing
+
+    return Drawing.objects.create(
+        user=e2e_user,
+        symbol="BTCUSDT",
+        kind="hline",
+        points={"price": 100.0},
+        style={"color": "#2962ff", "lineWidth": 1},
+        visible=False,
+    )
+
+
+@pytest.fixture
+def locked_hline(e2e_user):
+    """One hline at 100.0 with ``locked:true`` (R9: not pointer-grabbable)."""
+    from trading.models import Drawing
+
+    return Drawing.objects.create(
+        user=e2e_user,
+        symbol="BTCUSDT",
+        kind="hline",
+        points={"price": 100.0},
+        style={"color": "#2962ff", "lineWidth": 1},
+        locked=True,
+    )
+
+
+@p
+def test_locked_drawing_is_not_pointer_grabbable_but_tree_selectable(
+    seeded_5m_candles, locked_hline, browser_page
+):
+    # R9 (F5 FIX-1): a locked drawing is NOT pointer-selectable/draggable — a
+    # pointerdown on it neither moves it (no PUT) nor opens it (no dialog) — but
+    # the tree still selects it via a bus emit (drawing:selected).
+    page, base_url = browser_page
+    puts = []
+    page.on(
+        "request",
+        lambda r: (
+            puts.append(r)
+            if r.method == "PUT" and "/market/api/drawings/" in r.url
+            else None
+        ),
+    )
+    page.goto(f"{base_url}/market/")
+    _wait_ready(page)
+    page.wait_for_function(
+        "() => window.marketChart.drawings && window.marketChart.drawings.length === 1",
+        timeout=10000,
+    )
+    assert page.evaluate("() => window.marketChart.drawings[0].locked === true")
+
+    page.select_option("#interval", "5m")
+    page.wait_for_function(
+        "() => window.marketChart.candleSeries &&"
+        " window.marketChart.candleSeries.data().length > 0",
+        timeout=10000,
+    )
+    y = _hline_y(page, 100.0)
+    assert y is not None, "no price coordinate for the seeded locked hline"
+    box = page.locator("#chart").bounding_box()
+    start_x = box["x"] + box["width"] / 2
+    start_y = box["y"] + y
+    page.mouse.move(start_x, start_y)
+    page.mouse.down()
+    page.mouse.move(start_x, start_y - 40, steps=8)
+    page.mouse.up()
+    page.wait_for_timeout(300)
+    # The pointer drag was ignored: no PUT, price unchanged.
+    assert puts == [], [r.url for r in puts]
+    assert page.evaluate("() => window.marketChart.drawings[0].points.price") == 100.0
+
+    # Double-click on the locked line opens NO properties dialog (R13 no-op).
+    page.mouse.dblclick(start_x, start_y)
+    page.wait_for_timeout(200)
+    assert not page.locator("#drawing-settings-dialog[open]").count()
+
+    # Tree selection still works (bus emit, not a pointer hit).
+    page.locator(".tree-row[data-id]").first.click()
+    page.wait_for_function(
+        "() => document.querySelector('.tree-row[data-id]')"
+        ".getAttribute('aria-selected') === 'true'",
+        timeout=5000,
+    )
+
+
+@p
+def test_hidden_drawing_is_not_pointer_grabbable(
+    seeded_5m_candles, hidden_hline, browser_page
+):
+    # R9 (F5 FIX-2): a hidden drawing renders blank AND is not pointer-grabbable —
+    # a drag at its price moves nothing and issues no PUT. The tree still selects
+    # it (a bus emit, not a pointer hit).
+    page, base_url = browser_page
+    puts = []
+    page.on(
+        "request",
+        lambda r: (
+            puts.append(r)
+            if r.method == "PUT" and "/market/api/drawings/" in r.url
+            else None
+        ),
+    )
+    page.goto(f"{base_url}/market/")
+    _wait_ready(page)
+    page.wait_for_function(
+        "() => window.marketChart.drawings && window.marketChart.drawings.length === 1",
+        timeout=10000,
+    )
+    # The row is present (parked, R4) and reflects the hidden flag.
+    assert page.evaluate("() => window.marketChart.drawings[0].visible === false")
+    assert (
+        page.locator(".tree-row[data-id] .row-eye").first.get_attribute("aria-pressed")
+        == "false"
+    )
+
+    page.select_option("#interval", "5m")
+    page.wait_for_function(
+        "() => window.marketChart.candleSeries &&"
+        " window.marketChart.candleSeries.data().length > 0",
+        timeout=10000,
+    )
+    y = _hline_y(page, 100.0)
+    assert y is not None, "no price coordinate for the seeded hidden hline"
+    box = page.locator("#chart").bounding_box()
+    start_x = box["x"] + box["width"] / 2
+    start_y = box["y"] + y
+    page.mouse.move(start_x, start_y)
+    page.mouse.down()
+    page.mouse.move(start_x, start_y - 40, steps=8)
+    page.mouse.up()
+    page.wait_for_timeout(300)
+    # The pointer drag was ignored: no PUT, price unchanged.
+    assert puts == [], [r.url for r in puts]
+    assert page.evaluate("() => window.marketChart.drawings[0].points.price") == 100.0
+
+    # Tree selection still works (bus emit, not a pointer hit).
+    page.locator(".tree-row[data-id]").first.click()
+    page.wait_for_function(
+        "() => document.querySelector('.tree-row[data-id]')"
+        ".getAttribute('aria-selected') === 'true'",
+        timeout=5000,
+    )
 
 
 @p

@@ -152,6 +152,29 @@ test("drawing lock emits drawing:changed {locked,persist} (R2)", () => {
   } finally { restore(); }
 });
 
+test("a locked row is still tree-selectable (R9: bus emit, not pointer hit)", () => {
+  // R9 (F5 FIX-1): lock blocks the POINTER path only. The tree must still emit
+  // drawing:selected for a locked row — that is what the locked filter relies on.
+  const { mount, restore, bus } = setup({
+    indicators: [],
+    indicatorVisible: {},
+    params: {},
+  });
+  try {
+    const emitted = [];
+    bus.on("drawing:selected", (p) => emitted.push(p));
+    bus.emit("drawings:changed", { rows: TWO_DRAWINGS.map((r) => ({ ...r })) });
+    const locked = rowsWith(mount, "id").find((r) => r.dataset.id == 2); // locked
+    locked.keydown("Enter");
+    assert.deepStrictEqual(emitted, [{ id: 2 }]);
+    assert.strictEqual(
+      rowsWith(mount, "id").find((r) => r.dataset.id == 2)
+        .getAttribute("aria-selected"),
+      "true",
+    );
+  } finally { restore(); }
+});
+
 test("persisted flags render on first paint (R4)", () => {
   const { mount, restore, bus } = setup({
     indicators: [],
@@ -260,6 +283,74 @@ test("roving tabindex: exactly one 0; ArrowDown moves focus between treeitems (R
     assert.ok(focused, "focus moved");
     assert.notStrictEqual(focused, first);
     assert.strictEqual(focused.getAttribute("role"), "treeitem");
+  } finally { restore(); }
+});
+
+test("drawing row: v toggles visibility, l toggles lock by keyboard (R6/R9)", () => {
+  // R6/R9 (F5 FIX-3): the eye/lock buttons are mouse-only. A focused row MUST
+  // expose documented key bindings that activate the same actions, without
+  // moving the roving tabindex off the R3 row-based Up/Down model.
+  const { mount, restore, bus } = setup({
+    indicators: [],
+    indicatorVisible: {},
+    params: {},
+  });
+  try {
+    const changed = [];
+    bus.on("drawing:changed", (p) => changed.push(p));
+    bus.emit("drawings:changed", { rows: TWO_DRAWINGS.map((r) => ({ ...r })) });
+    const row = rowsWith(mount, "id").find((r) => r.dataset.id == 1);
+    row.focus();
+    row.keydown("v");
+    assert.deepStrictEqual(changed[0], { id: 1, visible: false, persist: true });
+    row.keydown("l");
+    assert.deepStrictEqual(changed[1], { id: 1, locked: true, persist: true });
+    assert.strictEqual(globalThis.document.activeElement, row);
+  } finally { restore(); }
+});
+
+test("row action buttons advertise their key binding (R6)", () => {
+  const { mount, restore, bus } = setup({
+    indicators: ["sma"],
+    indicatorVisible: {},
+    params: {},
+  });
+  try {
+    bus.emit("drawings:changed", { rows: TWO_DRAWINGS.map((r) => ({ ...r })) });
+    const drawRow = rowsWith(mount, "id").find((r) => r.dataset.id == 1);
+    assert.strictEqual(byClass(drawRow, "row-eye")[0].getAttribute("aria-keyshortcuts"), "v");
+    assert.strictEqual(byClass(drawRow, "row-lock")[0].getAttribute("aria-keyshortcuts"), "l");
+    const indRow = rowsWith(mount, "token").find((r) => r.dataset.token === "sma");
+    assert.strictEqual(byClass(indRow, "row-eye")[0].getAttribute("aria-keyshortcuts"), "v");
+    assert.strictEqual(byClass(indRow, "row-settings")[0].getAttribute("aria-keyshortcuts"), "s");
+  } finally { restore(); }
+});
+
+test("indicator row: v hides, Delete removes, s opens settings (R6/R9)", () => {
+  const mount = makeEl("div");
+  const restore = installDom(mount);
+  const bus = createBus();
+  const store = makeStore({ indicators: ["sma"], indicatorVisible: {}, params: {} });
+  const opened = [];
+  createObjectTree({
+    store,
+    bus,
+    onIndicatorSettings: (token) => opened.push(token),
+  });
+  try {
+    const vis = [];
+    const rebuilds = [];
+    bus.on("indicator:visibility", (p) => vis.push(p));
+    bus.on("indicator:changed", () => rebuilds.push(1));
+    const row = rowsWith(mount, "token").find((r) => r.dataset.token === "sma");
+    row.focus();
+    row.keydown("v");
+    assert.deepStrictEqual(vis, [{ token: "sma", visible: false }]);
+    assert.strictEqual(store.get().indicatorVisible.sma, false);
+    row.keydown("s");
+    assert.deepStrictEqual(opened, ["sma"]);
+    row.keydown("Delete");
+    assert.deepStrictEqual(rebuilds, [1]);
   } finally { restore(); }
 });
 
