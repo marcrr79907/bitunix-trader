@@ -19,6 +19,7 @@ import {
 import { createHistory } from "./controllers/history.js";
 import { createStream } from "./controllers/stream.js";
 import { createDrawings } from "./controllers/drawings.js";
+import { createDrawingInteraction } from "./controllers/drawing-interaction.js";
 import { createSmc, readSmc } from "./controllers/smc.js";
 import { createToolbar } from "./controllers/toolbar.js";
 import { createLegend } from "./controllers/legend.js";
@@ -63,6 +64,7 @@ export function boot(config) {
   const history = createHistory({ store, bus, host, config });
   const stream = createStream({ store, bus, host, config });
   const drawings = createDrawings({ store, bus, host, config });
+  const drawingInteraction = createDrawingInteraction({ store, bus, host, config });
   const smc = createSmc({ store, bus, host, config });
   // Theme (R27/CT2/CT3): the toolbar resolves + writes ``data-theme``, then
   // calls this callback (NO bus event — R20). Live flip is option-only (#68);
@@ -93,6 +95,9 @@ export function boot(config) {
     // re-attach them — no series setData/update involved (#68 preserved).
     drawings.attachAllDrawings();
     smc.attachSmcLayer();
+    // The #chart container survives a rebuild; bind() is idempotent (first build
+    // binds, later builds are no-ops). Drawings re-attach above.
+    drawingInteraction.attach();
     host.subscribeClick(drawings.onChartClick);
     host.subscribeVisibleRange(history.onVisibleRange);
     bus.emit("chart:built", {
@@ -131,6 +136,9 @@ export function boot(config) {
     // it always clears. The bumps invalidate in-flight fetches.
     if (symbolChanged) drawings.clearForSwitch();
     smc.clearForSwitch();
+    // R14: a symbol switch clears selection with the drawings; an interval-only
+    // switch keeps it (the drawings stay attached, #68).
+    if (symbolChanged) drawingInteraction.clearForSwitch();
     host.setLastBucket(0);
     stream.subscribe({ symbol: symbol, interval: interval });
     // Load THIS chart's layout first (R4), then build + attach its drawings

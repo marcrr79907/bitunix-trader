@@ -65,6 +65,7 @@ CONTROLLER_ALLOWLIST: frozenset[str] = frozenset(
         "history",
         "stream",
         "drawings",
+        "drawing-interaction",
         "smc",
         "toolbar",
         "legend",

@@ -103,6 +103,9 @@ function makeDrawingPrimitive(row, selection) {
   return {
     attached: function (p) { c.chart = p.chart; c.series = p.series; c.requestUpdate = p.requestUpdate; },
     detached: function () { c.chart = null; c.series = null; },
+    // Force a redraw after a live row/selection change — the v5 primitive's
+    // requestUpdate only (never setData/update: #68). No-op before attach.
+    requestUpdate: function () { if (c.requestUpdate) c.requestUpdate(); },
     paneViews: function () {
       return [{
         renderer: function () {

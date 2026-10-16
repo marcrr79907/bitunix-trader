@@ -7,7 +7,7 @@
 {% block content %}
 <div class="market-layout">
   <button type="button" class="panel-toggle" aria-expanded="true" aria-controls="panel">Panel</button>
-  <section id="chart" aria-label="Candlestick chart"></section>
+  <section id="chart" tabindex="0" aria-label="Candlestick chart"></section>
   <aside class="panel" id="panel">
     <h1>Market</h1>
     <h2>Pairs</h2>
@@ -113,6 +113,17 @@
     <button type="submit" value="cancel">Cancel</button>
   </form>
 </dialog>
+
+<dialog id="drawing-settings-dialog" aria-label="Drawing settings">
+  <form method="dialog">
+    <label for="ds-color">Color</label>
+    <input id="ds-color" type="color" value="#2962ff" required>
+    <label for="ds-width">Line width</label>
+    <input id="ds-width" type="number" min="1" max="4" step="1" value="1" required>
+    <button type="submit" value="ok">Apply</button>
+    <button type="submit" value="cancel">Cancel</button>
+  </form>
+</dialog>
 {% endblock %}
 
 {% block scripts %}
@@ -135,6 +146,7 @@
 <link rel="modulepreload" href="{% url 'market_controller_js' name='history' %}">
 <link rel="modulepreload" href="{% url 'market_controller_js' name='stream' %}">
 <link rel="modulepreload" href="{% url 'market_controller_js' name='drawings' %}">
+<link rel="modulepreload" href="{% url 'market_controller_js' name='drawing-interaction' %}">
 <link rel="modulepreload" href="{% url 'market_controller_js' name='smc' %}">
 <link rel="modulepreload" href="{% url 'market_controller_js' name='toolbar' %}">
 <link rel="modulepreload" href="{% url 'market_controller_js' name='legend' %}">

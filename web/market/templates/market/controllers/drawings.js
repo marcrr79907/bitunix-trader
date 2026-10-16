@@ -25,6 +25,8 @@ export function createDrawings({ store, bus, host, config }) {
   let attached = []; // [{id, prim}] — the primitives currently on the series
   let drawGen = 0; // monotonic guard against a stale drawings fetch
   let pendingAnchor = null; // first click of a two-point drawing
+  let selectedId = null; // interaction selection (closure only; never a store key)
+  const selection = { isSelected: function (row) { return row.id === selectedId; } };
   const enc = encodeURIComponent;
 
   function renderDrawingList() {
@@ -54,7 +56,7 @@ export function createDrawings({ store, bus, host, config }) {
     attached = [];
     if (candleSeries) {
       currentDrawings.forEach(function (row) {
-        const prim = makeDrawingPrimitive(row);
+        const prim = makeDrawingPrimitive(row, selection);
         candleSeries.attachPrimitive(prim);
         attached.push({ id: row.id, prim: prim });
       });
@@ -91,6 +93,52 @@ export function createDrawings({ store, bus, host, config }) {
 
   function refreshDrawings() {
     return loadDrawings(state.symbol);
+  }
+
+  // The primitive currently attached for ``id`` (undefined before a build).
+  function primFor(id) {
+    const hit = attached.find(function (a) { return a.id === id; });
+    return hit && hit.prim;
+  }
+
+  // Selection highlight (R9): mark + redraw via the primitive requestUpdate only.
+  bus.on("drawing:selected", function (p) {
+    selectedId = p ? p.id : null;
+    attached.forEach(function (a) { if (a.prim.requestUpdate) a.prim.requestUpdate(); });
+  });
+
+  // Live drag / style edit (R10/R12): replace the row in place, redraw via
+  // requestUpdate (#68), refresh the seam. ``persist`` → one PUT (D7), sending
+  // ONLY the field(s) this gesture changed (partial body, R2).
+  bus.on("drawing:changed", function (p) {
+    if (!p) return;
+    const row = currentDrawings.find(function (d) { return d.id === p.id; });
+    if (!row) return;
+    if (p.points) row.points = p.points;
+    if (p.style) row.style = p.style;
+    const prim = primFor(p.id);
+    if (prim && prim.requestUpdate) prim.requestUpdate();
+    window.marketChart.drawings = currentDrawings.slice();
+    if (!p.persist) return;
+    const body = {};
+    if (p.points) body.points = row.points;
+    if (p.style) body.style = row.style;
+    persistDrawing(row.id, body);
+  });
+
+  // Keyboard delete (R11): same path as the panel list button.
+  bus.on("drawing:delete", function (p) {
+    if (p && p.id !== undefined) deleteDrawing(p.id);
+  });
+
+  // One write per gesture (D7/R2): PUT only the changed field(s). A failed save
+  // is silent — the in-session shape is unaffected.
+  function persistDrawing(id, body) {
+    fetch(config.urls.drawings + "/" + id, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json", "X-CSRFToken": csrfToken() },
+      body: JSON.stringify(body),
+    }).catch(function () { /* non-fatal */ });
   }
 
   function createDrawing(kind, points, style) {
@@ -203,6 +251,7 @@ export function createDrawings({ store, bus, host, config }) {
   function clearForSwitch() {
     state.tool = null;
     pendingAnchor = null;
+    selectedId = null; // R14: a symbol switch clears selection with the drawings
     syncToolButtons();
     currentDrawings = [];
     drawGen++;

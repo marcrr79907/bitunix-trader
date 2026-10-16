@@ -884,6 +884,297 @@ def test_delete_from_panel_fires_delete(seeded_drawings, browser_page):
     assert len(deletes) == 1, [r.url for r in deletes]
 
 
+# --- Drawing interaction (R9-R14): select / drag / delete / deselect ---------
+#
+# The canvas is not introspectable, so every assertion rides the seam
+# (``window.marketChart.drawings``) or the captured network request — never DOM
+# pixels. Readiness-gated (DEBT-8). The hline sits at price 100.0,
+# inside the seeded 5m candle range, so its pixel y comes from the live series.
+
+
+@pytest.fixture
+def interaction_drawing(e2e_user):
+    """One hline at 100.0 — inside the seeded 5m candle range (93-107)."""
+    from trading.models import Drawing
+
+    return Drawing.objects.create(
+        user=e2e_user,
+        symbol="BTCUSDT",
+        kind="hline",
+        points={"price": 100.0},
+        style={"color": "#2962ff", "lineWidth": 1},
+    )
+
+
+def _hline_y(page, price):
+    """Pane-relative y for ``price`` on the live candle series (or None)."""
+    return page.evaluate(
+        "(price) => { const s = window.marketChart.candleSeries;"
+        " return s ? s.priceToCoordinate(price) : null; }",
+        price,
+    )
+
+
+def _select_hline(page):
+    """Switch to the seeded 5m key and click the hline at price 100.0."""
+    page.select_option("#interval", "5m")
+    page.wait_for_function(
+        "() => window.marketChart.candleSeries &&"
+        " window.marketChart.candleSeries.data().length > 0",
+        timeout=10000,
+    )
+    y = _hline_y(page, 100.0)
+    assert y is not None, "no price coordinate for the seeded hline"
+    chart = page.locator("#chart")
+    box = chart.bounding_box()
+    page.mouse.click(box["x"] + box["width"] / 2, box["y"] + y)
+    chart.focus()
+    return chart, box
+
+
+@p
+def test_click_empty_plot_then_delete_is_noop(
+    seeded_5m_candles, interaction_drawing, browser_page
+):
+    # R9/R11: a pointerdown on empty plot clears selection, so a following Delete
+    # deletes nothing and issues no request.
+    page, base_url = browser_page
+    deletes = []
+    page.on(
+        "request",
+        lambda r: (
+            deletes.append(r)
+            if r.method == "DELETE" and "/market/api/drawings/" in r.url
+            else None
+        ),
+    )
+    page.goto(f"{base_url}/market/")
+    _wait_ready(page)
+    page.wait_for_function(
+        "() => window.marketChart.drawings && window.marketChart.drawings.length === 1",
+        timeout=10000,
+    )
+    page.select_option("#interval", "5m")
+    page.wait_for_function(
+        "() => window.marketChart.candleSeries &&"
+        " window.marketChart.candleSeries.data().length > 0",
+        timeout=10000,
+    )
+    chart = page.locator("#chart")
+    box = chart.bounding_box()
+    # Bottom-right corner of the plot is empty (below the hline).
+    page.mouse.click(box["x"] + box["width"] - 8, box["y"] + box["height"] - 8)
+    chart.focus()
+    page.keyboard.press("Delete")
+    page.wait_for_timeout(300)
+    assert deletes == [], [r.url for r in deletes]
+    assert page.evaluate("() => window.marketChart.drawings.length") == 1
+
+
+@p
+def test_drag_persists_single_put_and_moves_points(
+    seeded_5m_candles, interaction_drawing, browser_page
+):
+    # R10/R7: dragging the selected hline body moves its price and issues exactly
+    # ONE PUT (single write per gesture); the seam reflects the new points.
+    page, base_url = browser_page
+    puts = []
+    page.on(
+        "request",
+        lambda r: (
+            puts.append(r)
+            if r.method == "PUT" and "/market/api/drawings/" in r.url
+            else None
+        ),
+    )
+    page.goto(f"{base_url}/market/")
+    _wait_ready(page)
+    page.wait_for_function(
+        "() => window.marketChart.drawings && window.marketChart.drawings.length === 1",
+        timeout=10000,
+    )
+    chart, box = _select_hline(page)
+    y = _hline_y(page, 100.0)
+    start_x = box["x"] + box["width"] / 2
+    start_y = box["y"] + y
+    page.mouse.move(start_x, start_y)
+    page.mouse.down()
+    page.mouse.move(start_x, start_y - 40, steps=8)
+    page.mouse.up()
+    page.wait_for_function(
+        "() => window.marketChart.drawings[0].points.price !== 100.0",
+        timeout=5000,
+    )
+    assert len(puts) == 1, [r.url for r in puts]
+    moved = page.evaluate("() => window.marketChart.drawings[0].points.price")
+    assert moved != 100.0
+
+
+@p
+def test_keyboard_delete_removes_selected(
+    seeded_5m_candles, interaction_drawing, browser_page
+):
+    # R11: with a shape selected and #chart focused, Delete removes it (same
+    # DELETE path as the panel list) and the seam drops the row.
+    page, base_url = browser_page
+    deletes = []
+    page.on(
+        "request",
+        lambda r: (
+            deletes.append(r)
+            if r.method == "DELETE" and "/market/api/drawings/" in r.url
+            else None
+        ),
+    )
+    page.goto(f"{base_url}/market/")
+    _wait_ready(page)
+    page.wait_for_function(
+        "() => window.marketChart.drawings && window.marketChart.drawings.length === 1",
+        timeout=10000,
+    )
+    _select_hline(page)
+    page.keyboard.press("Delete")
+    page.wait_for_function(
+        "() => window.marketChart.drawings.length === 0",
+        timeout=5000,
+    )
+    assert len(deletes) == 1, [r.url for r in deletes]
+
+
+@p
+def test_escape_deselects_without_delete(
+    seeded_5m_candles, interaction_drawing, browser_page
+):
+    # R11/R13: Escape clears the selection and issues no DELETE.
+    page, base_url = browser_page
+    deletes = []
+    page.on(
+        "request",
+        lambda r: (
+            deletes.append(r)
+            if r.method == "DELETE" and "/market/api/drawings/" in r.url
+            else None
+        ),
+    )
+    page.goto(f"{base_url}/market/")
+    _wait_ready(page)
+    page.wait_for_function(
+        "() => window.marketChart.drawings && window.marketChart.drawings.length === 1",
+        timeout=10000,
+    )
+    _select_hline(page)
+    page.keyboard.press("Escape")
+    page.wait_for_timeout(300)
+    assert deletes == [], [r.url for r in deletes]
+    assert page.evaluate("() => window.marketChart.drawings.length") == 1
+
+
+@pytest.fixture
+def selection_symbol_switch_drawings(e2e_user):
+    """BTC + ETH hlines at 100.0, seeded BEFORE the Playwright context (sync ORM)."""
+    from trading.models import Drawing
+
+    Drawing.objects.create(
+        user=e2e_user,
+        symbol="BTCUSDT",
+        kind="hline",
+        points={"price": 100.0},
+        style={},
+    )
+    eth = Drawing.objects.create(
+        user=e2e_user,
+        symbol="ETHUSDT",
+        kind="hline",
+        points={"price": 100.0},
+        style={},
+    )
+    return eth
+
+
+@p
+def test_symbol_switch_clears_selection_state(
+    seeded_5m_candles,
+    seeded_eth_5m_candles,
+    selection_symbol_switch_drawings,
+    browser_page,
+):
+    # R14: a SYMBOL switch clears the selection with the drawings, so a stale id
+    # can never delete a new-symbol row.
+    eth = selection_symbol_switch_drawings
+    page, base_url = browser_page
+    page.goto(f"{base_url}/market/")
+    _wait_ready(page)
+    page.wait_for_function(
+        "() => window.marketChart.drawings && window.marketChart.drawings.length === 1",
+        timeout=10000,
+    )
+    _select_hline(page)
+    page.locator('.pair[data-symbol="ETHUSDT"]').click()
+    page.wait_for_function(
+        "() => window.marketChart.drawings.length === 1"
+        f" && window.marketChart.drawings[0].id === {eth.id}",
+        timeout=10000,
+    )
+    deletes = []
+    page.on(
+        "request",
+        lambda r: (
+            deletes.append(r)
+            if r.method == "DELETE" and "/market/api/drawings/" in r.url
+            else None
+        ),
+    )
+    page.locator("#chart").focus()
+    page.keyboard.press("Delete")
+    page.wait_for_timeout(300)
+    assert deletes == [], f"stale selection deleted a new-symbol row: {deletes}"
+    assert page.evaluate("() => window.marketChart.drawings.length") == 1
+
+
+@p
+def test_dialog_edits_style_and_persists_single_put(
+    seeded_5m_candles, interaction_drawing, browser_page
+):
+    # R12: double-clicking a shape opens the properties dialog; confirming merges
+    # color/lineWidth into style, re-renders and PUTs once. kind/points untouched.
+    page, base_url = browser_page
+    puts = []
+    page.on(
+        "request",
+        lambda r: (
+            puts.append(r)
+            if r.method == "PUT" and "/market/api/drawings/" in r.url
+            else None
+        ),
+    )
+    page.goto(f"{base_url}/market/")
+    _wait_ready(page)
+    page.wait_for_function(
+        "() => window.marketChart.drawings && window.marketChart.drawings.length === 1",
+        timeout=10000,
+    )
+    chart, box = _select_hline(page)
+    y = _hline_y(page, 100.0)
+    page.mouse.dblclick(box["x"] + box["width"] / 2, box["y"] + y)
+    dialog = page.locator("#drawing-settings-dialog")
+    dialog.wait_for(state="visible", timeout=5000)
+    # Edited color + width, then confirm (method=dialog -> value "ok").
+    page.fill("#ds-color", "#ff0000")
+    page.fill("#ds-width", "3")
+    dialog.locator('button[value="ok"]').click()
+    page.wait_for_function(
+        "() => window.marketChart.drawings[0].style.color === '#ff0000'",
+        timeout=5000,
+    )
+    style = page.evaluate("() => window.marketChart.drawings[0].style")
+    assert style["color"] == "#ff0000"
+    assert style["lineWidth"] == 3
+    assert len(puts) == 1, [r.url for r in puts]
+    body = json.loads(puts[0].post_data or "{}")
+    assert body["style"]["color"] == "#ff0000"
+    assert "kind" not in body and "points" not in body
+
+
 @p
 def test_interval_switch_keeps_drawings(seeded_drawings, browser_page):
     # R7: a drawing is per SYMBOL, so an interval-only switch keeps every shape
