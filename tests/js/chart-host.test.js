@@ -41,6 +41,7 @@ function withChartStub(fn) {
   function makeSeries() {
     const s = { optionsArgs: null, calls: [] };
     s.applyOptions = (o) => { s.style = { ...(s.style || {}), ...o }; };
+    s.options = () => s.style || {};
     s.setData = (d) => { s.calls.push({ method: "setData", data: d }); };
     s.update = (d) => { s.calls.push({ method: "update", data: d }); };
     created.push(s);
@@ -358,6 +359,55 @@ test("setTheme is option-only: applyOptions, no setData/update (#68)", () => {
     assert.strictEqual(cs.calls.length, dataCallsBefore);
     assert.strictEqual(cs.calls.filter((c) => c.method === "setData").length, 0);
     assert.strictEqual(cs.calls.filter((c) => c.method === "update").length, 0);
+  });
+});
+
+test("setSeriesVisible flips options().visible for the token only (option-only, #68)", () => {
+  withChartStub((created) => {
+    const host = createHost();
+    host.build({ indicators: ["sma", "ema"], styles: {} });
+    // sma = registry #2962ff, ema = #ff6d00.
+    const sma = created.find((s) => s.optionsArgs.color === "#2962ff");
+    const ema = created.find((s) => s.optionsArgs.color === "#ff6d00");
+    assert.strictEqual(sma.options().visible, undefined);
+
+    host.setSeriesVisible("sma", false);
+
+    assert.strictEqual(sma.options().visible, false, "sma hidden");
+    assert.strictEqual(ema.options().visible, undefined, "ema untouched");
+    // Option-only: no data write (#68).
+    assert.strictEqual(sma.calls.filter((c) => c.method === "setData").length, 0);
+    assert.strictEqual(sma.calls.filter((c) => c.method === "update").length, 0);
+    assert.strictEqual(ema.calls.length, 0);
+
+    // Triangulate: re-show coerces to a real boolean.
+    host.setSeriesVisible("sma", true);
+    assert.strictEqual(sma.options().visible, true);
+  });
+});
+
+test("build applies initial hidden state from state.indicatorVisible", () => {
+  withChartStub((created) => {
+    const host = createHost();
+    host.build({
+      indicators: ["sma", "ema"],
+      styles: {},
+      indicatorVisible: { sma: false },
+    });
+    const sma = created.find((s) => s.optionsArgs.color === "#2962ff");
+    const ema = created.find((s) => s.optionsArgs.color === "#ff6d00");
+    assert.strictEqual(sma.options().visible, false, "sma born hidden");
+    assert.strictEqual(ema.options().visible, undefined, "ema born visible");
+  });
+});
+
+test("setSeriesVisible before a chart / for an unknown token is a safe no-op", () => {
+  const host = createHost();
+  assert.doesNotThrow(() => host.setSeriesVisible("sma", false));
+  withChartStub(() => {
+    const host2 = createHost();
+    host2.build({ indicators: [] });
+    assert.doesNotThrow(() => host2.setSeriesVisible("nope", false));
   });
 });
 
