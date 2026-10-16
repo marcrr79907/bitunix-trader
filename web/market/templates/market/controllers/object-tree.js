@@ -17,6 +17,7 @@ import {
   TRASH,
   GEAR,
 } from "../tool-icons-core.js";
+import { createAddIndicator } from "../add-indicator-core.js";
 
 const DRAWINGS = TREE_GROUPS[0].label; // "Drawings"
 const INDICATORS = TREE_GROUPS[1].label; // "Indicators"
@@ -98,6 +99,7 @@ export function createObjectTree({ store, bus, onIndicatorSettings }) {
   };
   tree.appendChild(groups[DRAWINGS].li);
   tree.appendChild(groups[INDICATORS].li);
+  groups[INDICATORS].li.appendChild(createAddIndicator({ store, bus }));
 
   // --- rows -------------------------------------------------------------------
 
