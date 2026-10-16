@@ -1103,6 +1103,71 @@ def test_smc_switch_refetches_for_new_key(
     assert script_errors == [], f"console errors: {script_errors}"
 
 
+@p
+def test_smc_toggle_persists_across_reload(seeded_5m_candles, browser_page):
+    # R7: unchecking a family debounce-saves it; after a reload the checkbox is
+    # restored OFF from ChartPreference (no longer session-only).
+    page, base_url = browser_page
+    page.goto(f"{base_url}/market/")
+    _wait_ready(page)
+
+    page.locator('.smc-toggle[data-family="range"]').uncheck()
+    page.wait_for_timeout(900)  # let the debounce PUT land
+
+    page.reload()
+    _wait_ready(page)
+    assert not page.locator('.smc-toggle[data-family="range"]').is_checked()
+    # The other families stay ON (only the toggled one persisted).
+    assert page.locator('.smc-toggle[data-family="swings"]').is_checked()
+    # Seam frozen (R18): restoring a toggle adds no 9th key.
+    assert page.evaluate("() => Object.keys(window.marketChart).length") == 8
+
+
+@p
+def test_smc_toggle_survives_interval_switch(seeded_5m_candles, browser_page):
+    # R7: the toggle is user-global, not per-chart — a switchTo must NOT reset a
+    # family toggled off on the boot key.
+    page, base_url = browser_page
+    page.goto(f"{base_url}/market/")
+    _wait_ready(page)
+
+    page.locator('.smc-toggle[data-family="range"]').uncheck()
+    page.wait_for_function(
+        "() => window.marketChart.smcToggles.range === false", timeout=5000
+    )
+
+    page.select_option("#interval", "5m")
+    page.wait_for_function(
+        "() => window.marketChart.smc && window.marketChart.smc.interval === '5m'",
+        timeout=10000,
+    )
+    assert not page.locator('.smc-toggle[data-family="range"]').is_checked()
+    assert page.evaluate("() => window.marketChart.smcToggles.range") is False
+
+
+@p
+def test_smc_boot_preference_fetch_failure_defaults_all_on(
+    seeded_5m_candles, browser_page
+):
+    # R7: a failed preference fetch at boot is non-fatal — all families stay ON
+    # and the SMC layer still renders.
+    page, base_url = browser_page
+    page.route(
+        "**/market/api/preference",
+        lambda route: route.abort(),
+    )
+    page.goto(f"{base_url}/market/")
+    _wait_ready(page)
+
+    for family in ("swings", "structure", "order_blocks", "fvg", "range", "setups"):
+        assert page.locator(f'.smc-toggle[data-family="{family}"]').is_checked(), family
+    page.wait_for_function(
+        "() => window.marketChart.smcCounts"
+        " && window.marketChart.smcCounts.swings >= 0",
+        timeout=10000,
+    )
+
+
 # --- chart legend overlay (LC1-LC6) -----------------------------------------
 #
 # DOM/computed-style assertions only (no image diffs, no new seam key). The

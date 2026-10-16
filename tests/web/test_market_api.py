@@ -1911,6 +1911,7 @@ def test_preference_get_default_when_absent():
         "scale_mode": "linear",
         "chart_type": "candles",
         "theme": "system",
+        "smc": {},
         "exists": False,
     }
     assert ChartPreference.objects.count() == 0
@@ -1924,6 +1925,7 @@ def test_preference_put_then_get_round_trip():
         "scale_mode": "linear",
         "chart_type": "candles",
         "theme": "system",
+        "smc": {},
         "exists": True,
     }
 
@@ -1933,6 +1935,7 @@ def test_preference_put_then_get_round_trip():
         "scale_mode": "linear",
         "chart_type": "candles",
         "theme": "system",
+        "smc": {},
         "exists": True,
     }
 
@@ -1969,6 +1972,7 @@ def test_preference_put_empty_body_writes_nothing_and_returns_defaults():
         "scale_mode": "linear",
         "chart_type": "candles",
         "theme": "system",
+        "smc": {},
         "exists": False,
     }
     assert ChartPreference.objects.count() == 0
@@ -1986,6 +1990,7 @@ def test_preference_put_empty_body_returns_saved_when_present():
         "scale_mode": "log",
         "chart_type": "area",
         "theme": "system",
+        "smc": {},
         "exists": True,
     }
     assert ChartPreference.for_user(AUTH_USER).count() == 1
@@ -2031,6 +2036,7 @@ def test_preference_isolation_b_get_never_sees_a():
         "scale_mode": "linear",
         "chart_type": "candles",
         "theme": "system",
+        "smc": {},
         "exists": False,
     }
 
@@ -2065,6 +2071,7 @@ def test_preference_get_is_not_scoped_to_interval_query_param():
         "scale_mode": "linear",
         "chart_type": "candles",
         "theme": "system",
+        "smc": {},
         "exists": True,
     }
 
@@ -2080,6 +2087,7 @@ def test_preference_put_scale_then_get_round_trip():
         "scale_mode": "log",
         "chart_type": "candles",
         "theme": "system",
+        "smc": {},
         "exists": True,
     }
     assert USER.get(PREF_URL).json()["scale_mode"] == "log"
@@ -2093,6 +2101,7 @@ def test_preference_put_chart_type_then_get_round_trip():
         "scale_mode": "linear",
         "chart_type": "heikin-ashi",
         "theme": "system",
+        "smc": {},
         "exists": True,
     }
     assert USER.get(PREF_URL).json()["chart_type"] == "heikin-ashi"
@@ -2110,6 +2119,7 @@ def test_preference_partial_put_updates_only_present_key():
         "scale_mode": "log",
         "chart_type": "line",
         "theme": "system",
+        "smc": {},
         "exists": True,
     }
     row = ChartPreference.for_user(AUTH_USER).get()
@@ -2170,6 +2180,7 @@ def test_preference_isolation_b_never_sees_a_scale_or_type():
         "scale_mode": "linear",
         "chart_type": "candles",
         "theme": "system",
+        "smc": {},
         "exists": False,
     }
 
@@ -2195,6 +2206,7 @@ def test_preference_get_default_includes_system_theme():
         "scale_mode": "linear",
         "chart_type": "candles",
         "theme": "system",
+        "smc": {},
         "exists": False,
     }
     assert ChartPreference.objects.count() == 0
@@ -2208,6 +2220,7 @@ def test_preference_put_theme_then_get_round_trip():
         "scale_mode": "linear",
         "chart_type": "candles",
         "theme": "light",
+        "smc": {},
         "exists": True,
     }
     assert USER.get(PREF_URL).json()["theme"] == "light"
@@ -2225,6 +2238,7 @@ def test_preference_partial_put_theme_applies_only_theme():
         "scale_mode": "log",
         "chart_type": "area",
         "theme": "dark",
+        "smc": {},
         "exists": True,
     }
     row = ChartPreference.for_user(AUTH_USER).get()
@@ -2268,4 +2282,159 @@ def test_preference_isolation_b_never_sees_a_theme():
 
     body = b_client.get(PREF_URL).json()
     assert body["theme"] == "system"
+    assert body["exists"] is False
+
+
+# --- Slice 2 (persistence-foundation): SMC toggles persistence (R7/R8/R9) -----
+
+
+def test_parse_smc_family_vocabulary_is_frozen():
+    # R7: quotes.SMC_FAMILIES mirrors the six JS SMC families (single vocabulary).
+    from market import quotes
+
+    assert quotes.SMC_FAMILIES == (
+        "swings",
+        "structure",
+        "order_blocks",
+        "fvg",
+        "range",
+        "setups",
+    )
+
+
+def test_parse_smc_accepts_known_families_and_returns_verbatim():
+    from market.quotes import parse_smc
+
+    saved = {"range": False, "fvg": True}
+    assert parse_smc(saved) == saved
+    # `{}` (all ON) is a valid payload and round-trips unchanged.
+    assert parse_smc({}) == {}
+
+
+def test_parse_smc_rejects_non_dict():
+    from market.quotes import parse_smc
+
+    for bad in ("notanobject", [], 3, None):
+        with pytest.raises(ValueError):
+            parse_smc(bad)
+
+
+def test_parse_smc_rejects_unknown_family():
+    from market.quotes import parse_smc
+
+    with pytest.raises(ValueError):
+        parse_smc({"bogus": True})
+
+
+def test_parse_smc_rejects_non_bool_value():
+    from market.quotes import parse_smc
+
+    for bad in ("no", 1, 0, None):
+        with pytest.raises(ValueError):
+            parse_smc({"range": bad})
+
+
+def test_preference_get_default_includes_empty_smc():
+    from trading.models import ChartPreference
+
+    response = USER.get(PREF_URL)
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "interval": "1m",
+        "scale_mode": "linear",
+        "chart_type": "candles",
+        "theme": "system",
+        "smc": {},
+        "exists": False,
+    }
+    assert ChartPreference.objects.count() == 0
+
+
+def test_preference_put_smc_then_get_round_trip():
+    put = _put_pref(USER, {"smc": {"range": False, "fvg": True}})
+    assert put.status_code == 200
+    assert put.json()["smc"] == {"range": False, "fvg": True}
+
+    body = USER.get(PREF_URL).json()
+    assert body["smc"] == {"range": False, "fvg": True}
+    assert body["exists"] is True
+
+
+def test_preference_partial_put_smc_applies_only_smc():
+    from trading.models import ChartPreference
+
+    _put_pref(USER, {"interval": "1h", "scale_mode": "log", "chart_type": "area"})
+    response = _put_pref(USER, {"smc": {"setups": False}})
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "interval": "1h",
+        "scale_mode": "log",
+        "chart_type": "area",
+        "theme": "system",
+        "smc": {"setups": False},
+        "exists": True,
+    }
+    row = ChartPreference.for_user(AUTH_USER).get()
+    assert row.smc == {"setups": False}
+    assert (row.last_interval, row.scale_mode, row.chart_type) == ("1h", "log", "area")
+
+
+def test_preference_put_invalid_smc_non_object_is_400_and_writes_nothing():
+    from trading.models import ChartPreference
+
+    response = _put_pref(USER, {"smc": "notanobject"})
+
+    assert response.status_code == 400
+    assert "error" in response.json()
+    assert ChartPreference.objects.count() == 0
+
+
+def test_preference_put_invalid_smc_family_is_400_and_writes_nothing():
+    from trading.models import ChartPreference
+
+    response = _put_pref(USER, {"smc": {"bogus": True}})
+
+    assert response.status_code == 400
+    assert "error" in response.json()
+    assert ChartPreference.objects.count() == 0
+
+
+def test_preference_put_invalid_smc_value_is_400_and_writes_nothing():
+    from trading.models import ChartPreference
+
+    response = _put_pref(USER, {"smc": {"range": "no"}})
+
+    assert response.status_code == 400
+    assert "error" in response.json()
+    assert ChartPreference.objects.count() == 0
+
+
+def test_preference_smc_field_round_trips_json():
+    from trading.models import ChartPreference
+
+    pref = ChartPreference.objects.create(user=AUTH_USER, smc={"range": False})
+    reread = ChartPreference.for_user(AUTH_USER).get(pk=pref.pk)
+    assert reread.smc == {"range": False}
+    # Default is the empty object (all families ON).
+    assert ChartPreference().smc == {}
+
+
+def test_preference_isolation_b_never_sees_a_smc():
+    from django.contrib.auth import get_user_model
+    from trading.models import ChartPreference
+
+    ChartPreference.objects.create(
+        user=AUTH_USER, last_interval="4h", smc={"range": False}
+    )
+
+    b_client = Client()
+    b = get_user_model().objects.create_user(
+        email="pref-smc-b@example.com", password="pw-123456"
+    )
+    b_client.force_login(b)
+
+    body = b_client.get(PREF_URL).json()
+    assert body["smc"] == {}
     assert body["exists"] is False

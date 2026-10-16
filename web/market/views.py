@@ -28,6 +28,7 @@ from market.quotes import (
     parse_drawing,
     parse_indicators,
     parse_layout_indicators,
+    parse_smc,
 )
 from src.client import BitunixClient, BitunixError
 from src.config import SYMBOLS
@@ -303,16 +304,23 @@ def api_preference(request: HttpRequest) -> JsonResponse:
 
     saved = ChartPreference.for_user(request.user).first()
     if saved is None:
-        return JsonResponse(
-            {
-                "interval": "1m",
-                "scale_mode": "linear",
-                "chart_type": "candles",
-                "theme": "system",
-                "exists": False,
-            }
-        )
+        return JsonResponse(_preference_defaults())
     return JsonResponse(_preference_body(saved))
+
+
+# Absent-preference body: field defaults + ``exists:false``. The single source
+# for the "no row" shape returned by GET, an empty PUT and a defaults PUT.
+_PREFERENCE_DEFAULTS = {
+    "interval": "1m",
+    "scale_mode": "linear",
+    "chart_type": "candles",
+    "theme": "system",
+    "smc": {},
+}
+
+
+def _preference_defaults() -> dict:
+    return {**_PREFERENCE_DEFAULTS, "exists": False}
 
 
 def _preference_body(pref) -> dict:
@@ -321,6 +329,7 @@ def _preference_body(pref) -> dict:
         "scale_mode": pref.scale_mode,
         "chart_type": pref.chart_type,
         "theme": pref.theme,
+        "smc": pref.smc,
         "exists": True,
     }
 
@@ -335,7 +344,7 @@ def _put_preference(request: HttpRequest) -> JsonResponse:
 
     # Validate every PRESENT field before any write (per-field 400, no partial
     # write). Absent keys are left untouched (partial body).
-    defaults: dict[str, str] = {}
+    defaults: dict = {}
     if "interval" in body:
         if body["interval"] not in INTERVALS:
             return JsonResponse({"error": "invalid interval"}, status=400)
@@ -352,21 +361,18 @@ def _put_preference(request: HttpRequest) -> JsonResponse:
         if body["theme"] not in THEMES:
             return JsonResponse({"error": "invalid theme"}, status=400)
         defaults["theme"] = body["theme"]
+    if "smc" in body:
+        try:
+            defaults["smc"] = parse_smc(body["smc"])
+        except ValueError as exc:
+            return JsonResponse({"error": str(exc)}, status=400)
 
     if not defaults:
         # Nothing to apply: return the current preference (or the defaults)
         # without creating a row.
         saved = ChartPreference.for_user(request.user).first()
         if saved is None:
-            return JsonResponse(
-                {
-                    "interval": "1m",
-                    "scale_mode": "linear",
-                    "chart_type": "candles",
-                    "theme": "system",
-                    "exists": False,
-                }
-            )
+            return JsonResponse(_preference_defaults())
         return JsonResponse(_preference_body(saved))
 
     # for_user filters; it does NOT inject the owner (A2 gotcha) — pass user.
