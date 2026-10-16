@@ -30,11 +30,13 @@ lookup that bypasses `for_user` MUST NOT be used by request-serving code. The
 denial MUST hold when the owned row carries per-indicator `style` data (F2.9),
 proven by a committed assertion in `tests/web/test_isolation.py`: A's
 `ChartLayout` with a styled indicator yields `for_user(B).count() == 0` and
-`for_user(B).get(...)` raises `DoesNotExist`.
+`for_user(B).get(...)` raises `DoesNotExist`. The denial MUST hold for a `Drawing`
+regardless of the symbol it is keyed on (the per-symbol keying drops `interval`;
+ownership is unaffected).
 (Delivered with: `ExchangeCredential`, `Watchlist`, `PositionSnapshot`,
 `AccountSnapshot`, `Trade`, `ChartLayout`, `Drawing`, `AlertRule`,
 `ChartPreference`.)
-(Previously: the A≠B evidence covered the layout row but not an attached indicator `style`.)
+(Previously: the Drawing evidence was keyed `(user, symbol, interval)`.)
 
 #### Scenario: A cannot read B's ExchangeCredential
 
@@ -78,9 +80,9 @@ proven by a committed assertion in `tests/web/test_isolation.py`: A's
 - WHEN `tests/web/test_isolation.py` evaluates `for_user(B)`
 - THEN `for_user(B).count() == 0` and `for_user(B).get(...)` raises `DoesNotExist` — B never sees the row carrying A's style
 
-#### Scenario: A cannot read B's Drawing
+#### Scenario: A cannot read B's per-symbol Drawing
 
-- GIVEN a `Drawing` owned by A
+- GIVEN a `Drawing` owned by A keyed `(user, symbol)`
 - WHEN `for_user(B).get(pk=row.pk)` is called
 - THEN it raises `DoesNotExist`
 
