@@ -59,6 +59,16 @@ SCALE_MODES = ("linear", "log", "percentage")
 CHART_TYPES = ("candles", "line", "area", "heikin-ashi")
 # R13: the theme preference vocabulary ("system" follows the OS media query).
 THEMES = ("light", "dark", "system")
+# R7: the SMC family toggle vocabulary. Mirrors ``smc-overlay-core.js``
+# ``FAMILIES`` (the render order); server-side validation of ``ChartPreference.smc``.
+SMC_FAMILIES = (
+    "swings",
+    "structure",
+    "order_blocks",
+    "fvg",
+    "range",
+    "setups",
+)
 
 
 CHART_KEYS = ("time", "open", "high", "low", "close")
@@ -433,6 +443,24 @@ def parse_drawing(kind, points, style) -> tuple[dict, dict]:
         if not isinstance(points.get("text"), str) or not points["text"].strip():
             raise ValueError("text requires a label")
     return points, style
+
+
+def parse_smc(raw) -> dict:
+    """Validate the SMC family toggle map; raise ``ValueError`` on any breach (R7).
+
+    ``raw`` MUST be a JSON object whose keys are a subset of ``SMC_FAMILIES`` and
+    whose values are booleans; ``{}`` (all families ON) is valid. The validated
+    object is returned verbatim (no defaults injected) so a stored ``smc``
+    round-trips unchanged. The view maps ``ValueError`` → 400 with no write.
+    """
+    if not isinstance(raw, dict):
+        raise ValueError("smc must be an object")
+    for family, value in raw.items():
+        if family not in SMC_FAMILIES:
+            raise ValueError(f"unknown smc family: {family}")
+        if not isinstance(value, bool):
+            raise ValueError(f"invalid smc value for {family}")
+    return raw
 
 
 def _now_seconds() -> int:

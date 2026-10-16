@@ -17,6 +17,7 @@ import {
   changePctText,
   prevClose,
 } from "../../web/market/templates/market/controllers/legend.js";
+import { resolveToggles } from "../../web/market/templates/market/controllers/smc.js";
 
 test("buildIndicators: token-only entries when no params", () => {
   assert.deepStrictEqual(buildIndicators(["sma", "rsi"], {}), [
@@ -230,4 +231,42 @@ test("changePctText: signed percent vs prevClose, placeholder when unknown", () 
   assert.strictEqual(changePctText(100, 100), "0.00%");
   assert.strictEqual(changePctText(105, null), "\u2013");
   assert.strictEqual(changePctText(null, 100), "\u2013");
+});
+
+// --- SMC persisted toggles (Slice 2 / R7) ------------------------------------
+
+test("resolveToggles: {} means all families ON", () => {
+  assert.deepStrictEqual(resolveToggles({}), {
+    swings: true,
+    structure: true,
+    order_blocks: true,
+    fvg: true,
+    range: true,
+    setups: true,
+  });
+});
+
+test("resolveToggles: an explicit false hides only that family", () => {
+  assert.deepStrictEqual(resolveToggles({ range: false }), {
+    swings: true,
+    structure: true,
+    order_blocks: true,
+    fvg: true,
+    range: false,
+    setups: true,
+  });
+});
+
+test("resolveToggles: a null/garbage payload degrades to all ON", () => {
+  const allOn = {
+    swings: true,
+    structure: true,
+    order_blocks: true,
+    fvg: true,
+    range: true,
+    setups: true,
+  };
+  assert.deepStrictEqual(resolveToggles(null), allOn);
+  assert.deepStrictEqual(resolveToggles(undefined), allOn);
+  assert.deepStrictEqual(resolveToggles("nope"), allOn);
 });

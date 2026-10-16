@@ -35,6 +35,17 @@ export function readSmc() {
   return out;
 }
 
+// Persisted map ({family: bool}) -> a COMPLETE {family: bool} map with an
+// absent/invalid family defaulting to ON (R7: `{}` means all ON). Pure, so the
+// boot restore path is node-testable without a DOM.
+export function resolveToggles(saved) {
+  const out = {};
+  Smc.FAMILIES.forEach(function (f) {
+    out[f] = !saved || typeof saved !== "object" ? true : saved[f] !== false;
+  });
+  return out;
+}
+
 export function createSmc({ store, bus, host, config }) {
   const state = store.get();
   const smcToggles = Array.prototype.slice.call(
@@ -260,6 +271,21 @@ export function createSmc({ store, bus, host, config }) {
     window.marketChart.smcCounts = smcBody ? Smc.counts(smcBody, state.smc) : null;
   }
 
+  // Boot restore (R7): apply the persisted toggles to the checkboxes and render
+  // from the (already fetched or empty) payload WITHOUT emitting ``smc:toggles``
+  // — restoring is not a user change, so it must not trigger a save.
+  function applyToggles(saved) {
+    const resolved = resolveToggles(saved);
+    state.smc = resolved;
+    window.marketChart.smcToggles = resolved;
+    smcToggles.forEach(function (el) {
+      if (el.dataset.family in resolved) el.checked = resolved[el.dataset.family];
+    });
+    if (smcCtx.requestUpdate) smcCtx.requestUpdate();
+    if (smcMarkers) smcMarkers.setMarkers(Smc.setupMarkers(smcBody, resolved));
+    window.marketChart.smcCounts = smcBody ? Smc.counts(smcBody, resolved) : null;
+  }
+
   // Called by main on switchTo: clear the previous key's layer immediately
   // (primitives/markers never cross keys) and invalidate any in-flight fetch.
   function clearForSwitch() {
@@ -270,5 +296,5 @@ export function createSmc({ store, bus, host, config }) {
 
   smcToggles.forEach(function (t) { t.addEventListener("change", refreshSmc); });
 
-  return { loadSmc, attachSmcLayer, refreshSmc, clearForSwitch };
+  return { loadSmc, attachSmcLayer, refreshSmc, clearForSwitch, applyToggles };
 }

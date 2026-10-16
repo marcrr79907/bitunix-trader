@@ -28,6 +28,7 @@ from market.quotes import (
     parse_drawing,
     parse_indicators,
     parse_layout_indicators,
+    parse_smc,
 )
 from src.client import BitunixClient, BitunixError
 from src.config import SYMBOLS
@@ -303,16 +304,23 @@ def api_preference(request: HttpRequest) -> JsonResponse:
 
     saved = ChartPreference.for_user(request.user).first()
     if saved is None:
-        return JsonResponse(
-            {
-                "interval": "1m",
-                "scale_mode": "linear",
-                "chart_type": "candles",
-                "theme": "system",
-                "exists": False,
-            }
-        )
+        return JsonResponse(_preference_defaults())
     return JsonResponse(_preference_body(saved))
+
+
+# Absent-preference body: field defaults + ``exists:false``. The single source
+# for the "no row" shape returned by GET, an empty PUT and a defaults PUT.
+_PREFERENCE_DEFAULTS = {
+    "interval": "1m",
+    "scale_mode": "linear",
+    "chart_type": "candles",
+    "theme": "system",
+    "smc": {},
+}
+
+
+def _preference_defaults() -> dict:
+    return {**_PREFERENCE_DEFAULTS, "exists": False}
 
 
 def _preference_body(pref) -> dict:
@@ -321,6 +329,7 @@ def _preference_body(pref) -> dict:
         "scale_mode": pref.scale_mode,
         "chart_type": pref.chart_type,
         "theme": pref.theme,
+        "smc": pref.smc,
         "exists": True,
     }
 
@@ -335,7 +344,7 @@ def _put_preference(request: HttpRequest) -> JsonResponse:
 
     # Validate every PRESENT field before any write (per-field 400, no partial
     # write). Absent keys are left untouched (partial body).
-    defaults: dict[str, str] = {}
+    defaults: dict = {}
     if "interval" in body:
         if body["interval"] not in INTERVALS:
             return JsonResponse({"error": "invalid interval"}, status=400)
@@ -352,21 +361,18 @@ def _put_preference(request: HttpRequest) -> JsonResponse:
         if body["theme"] not in THEMES:
             return JsonResponse({"error": "invalid theme"}, status=400)
         defaults["theme"] = body["theme"]
+    if "smc" in body:
+        try:
+            defaults["smc"] = parse_smc(body["smc"])
+        except ValueError as exc:
+            return JsonResponse({"error": str(exc)}, status=400)
 
     if not defaults:
         # Nothing to apply: return the current preference (or the defaults)
         # without creating a row.
         saved = ChartPreference.for_user(request.user).first()
         if saved is None:
-            return JsonResponse(
-                {
-                    "interval": "1m",
-                    "scale_mode": "linear",
-                    "chart_type": "candles",
-                    "theme": "system",
-                    "exists": False,
-                }
-            )
+            return JsonResponse(_preference_defaults())
         return JsonResponse(_preference_body(saved))
 
     # for_user filters; it does NOT inject the owner (A2 gotcha) — pass user.
@@ -380,27 +386,25 @@ def _put_preference(request: HttpRequest) -> JsonResponse:
 @login_required
 @require_http_methods(["GET", "POST"])
 def api_drawings(request: HttpRequest) -> JsonResponse:
-    """Per-user drawing collection (R2): GET lists, POST creates.
+    """Per-user, per-SYMBOL drawing collection (R2): GET lists, POST creates.
 
     All access routes through ``Drawing.for_user`` — no unscoped query in this
-    request path (R14.3). GET never 404s (an empty key returns ``[]``). POST
+    request path (R14.3). GET keys on ``symbol`` ONLY (no ``interval``; a stray
+    query key is ignored) and never 404s (an empty symbol returns ``[]``). POST
     validates the payload BEFORE writing; a bad body → 400 with no row created.
+    An incoming ``interval`` key is accepted and ignored (stale clients).
     """
     if request.method == "POST":
         return _post_drawing(request)
 
     symbol = request.GET.get("symbol", "")
-    interval = request.GET.get("interval", "")
     if not symbol:
         return JsonResponse({"error": "symbol required"}, status=400)
-    if interval not in INTERVALS:
-        return JsonResponse({"error": "invalid interval"}, status=400)
 
-    rows = Drawing.for_user(request.user).filter(symbol=symbol, interval=interval)
+    rows = Drawing.for_user(request.user).filter(symbol=symbol)
     return JsonResponse(
         {
             "symbol": symbol,
-            "interval": interval,
             "drawings": [
                 {"id": d.id, "kind": d.kind, "points": d.points, "style": d.style}
                 for d in rows
@@ -418,11 +422,10 @@ def _post_drawing(request: HttpRequest) -> JsonResponse:
         return JsonResponse({"error": "invalid body"}, status=400)
 
     symbol = body.get("symbol", "")
-    interval = body.get("interval", "")
     if not symbol:
         return JsonResponse({"error": "symbol required"}, status=400)
-    if interval not in INTERVALS:
-        return JsonResponse({"error": "invalid interval"}, status=400)
+    # ``interval`` is deliberately NOT read: the key is per SYMBOL now. A stale
+    # client may still send one — accept-and-ignore, never 400 (R4).
     try:
         points, style = parse_drawing(
             body.get("kind"), body.get("points"), body.get("style")
@@ -434,7 +437,6 @@ def _post_drawing(request: HttpRequest) -> JsonResponse:
     drawing = Drawing.for_user(request.user).create(
         user=request.user,
         symbol=symbol,
-        interval=interval,
         kind=body["kind"],
         points=points,
         style=style,

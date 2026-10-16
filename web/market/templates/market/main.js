@@ -35,7 +35,7 @@ export function boot(config) {
     indicators: readIndicators(),
     params: readParams(),
     styles: {}, // per-token presentation style (F2.4; loaded from layout, never in params)
-    smc: readSmc(), // session-only SMC family toggles (R7)
+    smc: readSmc(), // SMC family toggles (persisted user-global, R7)
     scaleMode: "linear", // F8 price-scale option (persistence is Slice 3)
     chartType: "candles", // F8 candle-series Ctor (persistence is Slice 3)
     theme: "system", // resolved theme (light/dark) after boot; pref "system" default
@@ -122,11 +122,14 @@ export function boot(config) {
 
   function switchTo(symbol, interval) {
     const mine = ++gen;
+    const symbolChanged = symbol !== state.symbol;
     state.symbol = symbol;
     state.interval = interval;
-    // Clear the previous key's drawings + SMC immediately: shapes/primitives/
-    // markers never cross keys (R7/R8). The bumps invalidate in-flight fetches.
-    drawings.clearForSwitch();
+    // Drawings are per SYMBOL (R1/R7): clear + reload ONLY when the symbol
+    // changed; an interval-only switch keeps the shapes attached with no
+    // refetch (buildChart re-attaches them). SMC is per (symbol, interval), so
+    // it always clears. The bumps invalidate in-flight fetches.
+    if (symbolChanged) drawings.clearForSwitch();
     smc.clearForSwitch();
     host.setLastBucket(0);
     stream.subscribe({ symbol: symbol, interval: interval });
@@ -136,6 +139,7 @@ export function boot(config) {
     indicators.loadLayout(symbol, interval).then(function () {
       if (mine !== gen) return; // a newer switch won the race
       buildChart();
+      if (!symbolChanged) return; // interval-only: drawings stay, no refetch
       return drawings.refreshDrawings();
     }).then(function () {
       if (mine !== gen) return;
@@ -156,6 +160,11 @@ export function boot(config) {
     switchTo(p.symbol, p.interval);
   });
   bus.on("indicator:changed", rebuild);
+  // R7: a family toggle is a user change — re-render already happens in the
+  // controller; main only persists the full family map (debounced, partial PUT).
+  bus.on("smc:toggles", function (p) {
+    savePreference({ smc: p.families });
+  });
   // F8: a scale change is a host price-scale OPTION only — no rebuild, no
   // fetchHistory (#68 held). The store already holds the new mode. Persist it
   // (debounced, changed field only).
@@ -205,10 +214,17 @@ export function boot(config) {
           scaleMode: (body && body.scale_mode) || "linear",
           chartType: (body && body.chart_type) || "candles",
           theme: (body && body.theme) || "system",
+          smc: (body && body.smc) || {}, // R7: persisted family toggles
         };
       })
       .catch(function () {
-        return { interval: "1m", scaleMode: "linear", chartType: "candles", theme: "system" };
+        return {
+          interval: "1m",
+          scaleMode: "linear",
+          chartType: "candles",
+          theme: "system",
+          smc: {},
+        };
       });
   }
 
@@ -235,6 +251,9 @@ export function boot(config) {
       toolbar.setInterval(pref.interval);
       toolbar.setScaleMode(pref.scaleMode);
       toolbar.setChartType(pref.chartType);
+      // R7: apply the persisted SMC family toggles to the checkboxes BEFORE the
+      // first SMC render (no emit — restore is not a user change).
+      smc.applyToggles(pref.smc);
       return indicators.loadLayout(state.symbol, state.interval).then(function () {
         if (mine !== gen) return; // a switch raced ahead of boot
         buildChart();

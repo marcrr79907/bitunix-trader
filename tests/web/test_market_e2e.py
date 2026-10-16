@@ -766,7 +766,6 @@ def seeded_drawings(e2e_user):
     Drawing.objects.create(
         user=e2e_user,
         symbol="BTCUSDT",
-        interval="1m",
         kind="hline",
         points={"price": 50000.0},
         style={"color": "#2962ff", "lineWidth": 1},
@@ -774,7 +773,6 @@ def seeded_drawings(e2e_user):
     Drawing.objects.create(
         user=e2e_user,
         symbol="BTCUSDT",
-        interval="1m",
         kind="rect",
         points={"p1": {"time": 1, "price": 1.0}, "p2": {"time": 2, "price": 2.0}},
         style={"color": "#26a69a", "fill": True},
@@ -783,22 +781,20 @@ def seeded_drawings(e2e_user):
 
 
 @pytest.fixture
-def per_interval_drawings(e2e_user):
-    """Drawings on (BTCUSDT,1m) and (BTCUSDT,5m): a switch must clear + reload."""
+def per_symbol_drawings(e2e_user):
+    """A drawing on BTCUSDT and a different one on ETHUSDT (per SYMBOL, R1)."""
     from trading.models import Drawing
 
     Drawing.objects.create(
         user=e2e_user,
         symbol="BTCUSDT",
-        interval="1m",
         kind="hline",
         points={"price": 1.0},
         style={},
     )
     Drawing.objects.create(
         user=e2e_user,
-        symbol="BTCUSDT",
-        interval="5m",
+        symbol="ETHUSDT",
         kind="hline",
         points={"price": 2.0},
         style={},
@@ -856,7 +852,8 @@ def test_click_with_tool_fires_post(seeded_5m_candles, browser_page):
     body = json.loads(posts[0].post_data or "{}")
     assert body["kind"] == "hline"
     assert body["symbol"] == "BTCUSDT"
-    assert body["interval"] == "5m"
+    # R2: the drawing body is per SYMBOL now — ``interval`` is no longer sent.
+    assert "interval" not in body
     assert "price" in body["points"]
 
 
@@ -888,15 +885,39 @@ def test_delete_from_panel_fires_delete(seeded_drawings, browser_page):
 
 
 @p
-def test_switch_clears_then_loads_drawings(per_interval_drawings, browser_page):
-    # R7: switching interval clears the previous key's shapes and loads the new.
+def test_interval_switch_keeps_drawings(seeded_drawings, browser_page):
+    # R7: a drawing is per SYMBOL, so an interval-only switch keeps every shape
+    # attached and issues NO drawings refetch.
+    page, base_url = browser_page
+    page.goto(f"{base_url}/market/")
+    _wait_ready(page)
+    assert page.evaluate("() => window.marketChart.drawings.length") == 2
+
+    fetches = []
+    page.on(
+        "request",
+        lambda r: fetches.append(r.url) if "/market/api/drawings?" in r.url else None,
+    )
+    page.select_option("#interval", "5m")
+    page.wait_for_function(
+        "() => window.marketChart.smc && window.marketChart.smc.interval === '5m'",
+        timeout=10000,
+    )
+    # Shapes survived the interval switch unchanged (same symbol).
+    assert page.evaluate("() => window.marketChart.drawings.length") == 2
+    assert fetches == [], f"unexpected drawings refetch: {fetches}"
+
+
+@p
+def test_symbol_switch_clears_then_loads_drawings(per_symbol_drawings, browser_page):
+    # R7: switching SYMBOL clears the previous shapes and loads the new symbol's.
     page, base_url = browser_page
     page.goto(f"{base_url}/market/")
     _wait_ready(page)
     assert page.evaluate("() => window.marketChart.drawings.length") == 1
     assert page.evaluate("() => window.marketChart.drawings[0].points.price") == 1.0
 
-    page.select_option("#interval", "5m")
+    page.locator('.pair[data-symbol="ETHUSDT"]').click()
     page.wait_for_function(
         "() => window.marketChart.drawings.length === 1"
         " && window.marketChart.drawings[0].points.price === 2.0",
@@ -1080,6 +1101,71 @@ def test_smc_switch_refetches_for_new_key(
     assert counts["swings"] > 0 and counts["setups"] > 0, counts
     script_errors = [e for e in errors if "net::" not in e and "WebSocket" not in e]
     assert script_errors == [], f"console errors: {script_errors}"
+
+
+@p
+def test_smc_toggle_persists_across_reload(seeded_5m_candles, browser_page):
+    # R7: unchecking a family debounce-saves it; after a reload the checkbox is
+    # restored OFF from ChartPreference (no longer session-only).
+    page, base_url = browser_page
+    page.goto(f"{base_url}/market/")
+    _wait_ready(page)
+
+    page.locator('.smc-toggle[data-family="range"]').uncheck()
+    page.wait_for_timeout(900)  # let the debounce PUT land
+
+    page.reload()
+    _wait_ready(page)
+    assert not page.locator('.smc-toggle[data-family="range"]').is_checked()
+    # The other families stay ON (only the toggled one persisted).
+    assert page.locator('.smc-toggle[data-family="swings"]').is_checked()
+    # Seam frozen (R18): restoring a toggle adds no 9th key.
+    assert page.evaluate("() => Object.keys(window.marketChart).length") == 8
+
+
+@p
+def test_smc_toggle_survives_interval_switch(seeded_5m_candles, browser_page):
+    # R7: the toggle is user-global, not per-chart — a switchTo must NOT reset a
+    # family toggled off on the boot key.
+    page, base_url = browser_page
+    page.goto(f"{base_url}/market/")
+    _wait_ready(page)
+
+    page.locator('.smc-toggle[data-family="range"]').uncheck()
+    page.wait_for_function(
+        "() => window.marketChart.smcToggles.range === false", timeout=5000
+    )
+
+    page.select_option("#interval", "5m")
+    page.wait_for_function(
+        "() => window.marketChart.smc && window.marketChart.smc.interval === '5m'",
+        timeout=10000,
+    )
+    assert not page.locator('.smc-toggle[data-family="range"]').is_checked()
+    assert page.evaluate("() => window.marketChart.smcToggles.range") is False
+
+
+@p
+def test_smc_boot_preference_fetch_failure_defaults_all_on(
+    seeded_5m_candles, browser_page
+):
+    # R7: a failed preference fetch at boot is non-fatal — all families stay ON
+    # and the SMC layer still renders.
+    page, base_url = browser_page
+    page.route(
+        "**/market/api/preference",
+        lambda route: route.abort(),
+    )
+    page.goto(f"{base_url}/market/")
+    _wait_ready(page)
+
+    for family in ("swings", "structure", "order_blocks", "fvg", "range", "setups"):
+        assert page.locator(f'.smc-toggle[data-family="{family}"]').is_checked(), family
+    page.wait_for_function(
+        "() => window.marketChart.smcCounts"
+        " && window.marketChart.smcCounts.swings >= 0",
+        timeout=10000,
+    )
 
 
 # --- chart legend overlay (LC1-LC6) -----------------------------------------

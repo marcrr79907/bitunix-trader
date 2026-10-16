@@ -20,7 +20,7 @@ export function createDrawings({ store, bus, host, config }) {
   const textDialog = document.getElementById("text-dialog");
   const textDialogInput = document.getElementById("text-dialog-input");
   const drawingListEl = document.getElementById("drawing-list");
-  let currentDrawings = []; // rows loaded for the active (symbol, interval)
+  let currentDrawings = []; // rows loaded for the active SYMBOL
   let attached = []; // [{id, prim}] — the primitives currently on the series
   let drawGen = 0; // monotonic guard against a stale drawings fetch
   let pendingAnchor = null; // first click of a two-point drawing
@@ -152,12 +152,13 @@ export function createDrawings({ store, bus, host, config }) {
     bus.emit("drawings:changed", { rows: currentDrawings.slice() });
   }
 
-  // Load the active key's drawings, then attach them to the CURRENT series
+  // Load the active SYMBOL's drawings, then attach them to the CURRENT series
   // (called AFTER buildChart, per R7: layout -> build -> drawings -> attach).
-  // A stale fetch (drawGen moved on) discards its result.
-  function loadDrawings(symbol, interval) {
+  // Per SYMBOL (R1): an interval-only switch does NOT reload. A stale fetch
+  // (drawGen moved on) discards its result.
+  function loadDrawings(symbol) {
     const mine = ++drawGen;
-    const url = config.urls.drawings + "?symbol=" + enc(symbol) + "&interval=" + enc(interval);
+    const url = config.urls.drawings + "?symbol=" + enc(symbol);
     return fetch(url)
       .then(function (r) {
         if (!r.ok) throw new Error("drawings " + r.status);
@@ -177,13 +178,11 @@ export function createDrawings({ store, bus, host, config }) {
   }
 
   function refreshDrawings() {
-    return loadDrawings(state.symbol, state.interval);
+    return loadDrawings(state.symbol);
   }
 
   function createDrawing(kind, points, style) {
-    const body = {
-      symbol: state.symbol, interval: state.interval, kind: kind, points: points, style: style,
-    };
+    const body = { symbol: state.symbol, kind: kind, points: points, style: style };
     fetch(config.urls.drawings, {
       method: "POST",
       headers: { "Content-Type": "application/json", "X-CSRFToken": csrfToken() },
@@ -286,8 +285,9 @@ export function createDrawings({ store, bus, host, config }) {
     });
   }
 
-  // Called by main on switchTo: clear shapes immediately (they never cross keys,
-  // R7) and invalidate any in-flight fetch for the old key.
+  // Called by main on switchTo when the SYMBOL changed: clear shapes
+  // immediately (they never cross symbols, R7) and invalidate any in-flight
+  // fetch for the old symbol.
   function clearForSwitch() {
     state.tool = null;
     pendingAnchor = null;
