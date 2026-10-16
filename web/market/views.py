@@ -47,6 +47,8 @@ MODULE_ALLOWLIST = frozenset(
         "chart-types-core",
         "theme-core",
         "drawing-core",
+        "drawing-interaction-core",
+        "drawing-primitive",
         "smc-overlay-core",
         "legend-core",
         "indicator-settings-core",
@@ -63,6 +65,7 @@ CONTROLLER_ALLOWLIST: frozenset[str] = frozenset(
         "history",
         "stream",
         "drawings",
+        "drawing-interaction",
         "smc",
         "toolbar",
         "legend",
@@ -453,18 +456,60 @@ def _post_drawing(request: HttpRequest) -> JsonResponse:
 
 
 @login_required
-@require_http_methods(["DELETE"])
+@require_http_methods(["PUT", "DELETE"])
 def api_drawing_detail(request: HttpRequest, id: int) -> HttpResponse:
-    """DELETE one drawing by id (R2/R3): scoped via ``for_user``.
+    """PUT updates / DELETE removes one drawing by id (R2/R3/R14.6).
 
-    A miss — including another user's id — resolves to nothing → 404, so
-    existence is never leaked (no id-only lookup).
+    Both verbs resolve the row through ``Drawing.for_user(request.user)`` — an
+    id-only lookup MUST NOT be used. A miss (including another user's id) is a
+    404, so existence is never leaked. PUT accepts a PARTIAL ``{points?, style?}``
+    body: ``kind`` is immutable (a differing value → 400), validation runs via
+    ``parse_drawing`` BEFORE any write (a bad payload → 400 with no row touched),
+    and only the provided fields are persisted.
     """
     drawing = Drawing.for_user(request.user).filter(pk=id).first()
     if drawing is None:
         return JsonResponse({"error": "not found"}, status=404)
-    drawing.delete()
-    return HttpResponse(status=204)
+    if request.method == "DELETE":
+        drawing.delete()
+        return HttpResponse(status=204)
+    return _put_drawing(request, drawing)
+
+
+def _put_drawing(request: HttpRequest, drawing: Drawing) -> JsonResponse:
+    try:
+        body = json.loads(request.body or b"{}")
+    except json.JSONDecodeError:
+        return JsonResponse({"error": "invalid JSON"}, status=400)
+    if not isinstance(body, dict):
+        return JsonResponse({"error": "invalid body"}, status=400)
+
+    # ``kind`` is immutable (D9): a differing value is rejected. An equal value
+    # is accepted and ignored (mirrors the stale-``interval`` precedent).
+    if "kind" in body and body["kind"] != drawing.kind:
+        return JsonResponse({"error": "kind is immutable"}, status=400)
+
+    # Partial body: each absent field keeps the stored value. Validation runs
+    # BEFORE any write, so a bad payload leaves the row untouched.
+    try:
+        points, style = parse_drawing(
+            drawing.kind,
+            body.get("points", drawing.points),
+            body.get("style", drawing.style),
+        )
+    except ValueError as exc:
+        return JsonResponse({"error": str(exc)}, status=400)
+
+    drawing.points, drawing.style = points, style
+    drawing.save(update_fields=["points", "style"])
+    return JsonResponse(
+        {
+            "id": drawing.id,
+            "kind": drawing.kind,
+            "points": drawing.points,
+            "style": drawing.style,
+        }
+    )
 
 
 @login_required
