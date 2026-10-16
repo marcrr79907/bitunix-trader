@@ -6,7 +6,7 @@
 // ``layout:loaded``. Owns the indicator checkbox/param DOM and the layout
 // GET/PUT (debounced save, R5).
 import { defaultsFor, normalize } from "../indicator-settings-core.js";
-import { REGISTRY } from "../chart-host.js";
+import { REGISTRY } from "../chart-registry-core.js";
 
 export const DEFAULT_INDICATORS = ["sma", "ema", "rsi"];
 

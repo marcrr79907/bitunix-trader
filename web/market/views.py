@@ -45,6 +45,7 @@ MODULE_ALLOWLIST = frozenset(
     {
         "chart-core",
         "chart-types-core",
+        "chart-registry-core",
         "theme-core",
         "drawing-core",
         "drawing-interaction-core",
