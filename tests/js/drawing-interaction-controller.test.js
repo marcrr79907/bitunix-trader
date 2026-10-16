@@ -51,6 +51,31 @@ test("mergeStyle: a null base yields only the valid edited keys", () => {
 // R9: a locked OR hidden drawing MUST NOT be pointer-grabbable/openable. It stays
 // tree-selectable (a bus emit), so the filter lives only on the pointer path.
 
+test("pointerRows: a locked row is excluded (not pointer-grabbable)", () => {
+  const rows = [
+    { id: 1, locked: false },
+    { id: 2, locked: true },
+    { id: 3, locked: false },
+  ];
+  assert.deepStrictEqual(pointerRows(rows).map((r) => r.id), [1, 3]);
+});
+
+test("pointerRows: absent locked flag stays (default unlocked)", () => {
+  const rows = [{ id: 1 }, { id: 2, locked: true }];
+  assert.deepStrictEqual(pointerRows(rows).map((r) => r.id), [1]);
+});
+
+test("pointerRows: locked+hidden is excluded; both branches combined", () => {
+  // The two exclusions are independent: any row failing either branch drops.
+  const rows = [
+    { id: 1, locked: false, visible: true },
+    { id: 2, locked: true, visible: true },
+    { id: 3, locked: false, visible: false },
+    { id: 4, locked: true, visible: false },
+  ];
+  assert.deepStrictEqual(pointerRows(rows).map((r) => r.id), [1]);
+});
+
 test("pointerRows: a hidden row is excluded (R9 visible===false)", () => {
   const rows = [
     { id: 1, visible: true },

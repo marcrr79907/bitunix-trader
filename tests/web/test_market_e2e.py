@@ -1242,6 +1242,80 @@ def hidden_hline(e2e_user):
     )
 
 
+@pytest.fixture
+def locked_hline(e2e_user):
+    """One hline at 100.0 with ``locked:true`` (R9: not pointer-grabbable)."""
+    from trading.models import Drawing
+
+    return Drawing.objects.create(
+        user=e2e_user,
+        symbol="BTCUSDT",
+        kind="hline",
+        points={"price": 100.0},
+        style={"color": "#2962ff", "lineWidth": 1},
+        locked=True,
+    )
+
+
+@p
+def test_locked_drawing_is_not_pointer_grabbable_but_tree_selectable(
+    seeded_5m_candles, locked_hline, browser_page
+):
+    # R9 (F5 FIX-1): a locked drawing is NOT pointer-selectable/draggable — a
+    # pointerdown on it neither moves it (no PUT) nor opens it (no dialog) — but
+    # the tree still selects it via a bus emit (drawing:selected).
+    page, base_url = browser_page
+    puts = []
+    page.on(
+        "request",
+        lambda r: (
+            puts.append(r)
+            if r.method == "PUT" and "/market/api/drawings/" in r.url
+            else None
+        ),
+    )
+    page.goto(f"{base_url}/market/")
+    _wait_ready(page)
+    page.wait_for_function(
+        "() => window.marketChart.drawings && window.marketChart.drawings.length === 1",
+        timeout=10000,
+    )
+    assert page.evaluate("() => window.marketChart.drawings[0].locked === true")
+
+    page.select_option("#interval", "5m")
+    page.wait_for_function(
+        "() => window.marketChart.candleSeries &&"
+        " window.marketChart.candleSeries.data().length > 0",
+        timeout=10000,
+    )
+    y = _hline_y(page, 100.0)
+    assert y is not None, "no price coordinate for the seeded locked hline"
+    box = page.locator("#chart").bounding_box()
+    start_x = box["x"] + box["width"] / 2
+    start_y = box["y"] + y
+    page.mouse.move(start_x, start_y)
+    page.mouse.down()
+    page.mouse.move(start_x, start_y - 40, steps=8)
+    page.mouse.up()
+    page.wait_for_timeout(300)
+    # The pointer drag was ignored: no PUT, price unchanged.
+    assert puts == [], [r.url for r in puts]
+    assert page.evaluate("() => window.marketChart.drawings[0].points.price") == 100.0
+
+    # Double-click on the locked line opens NO properties dialog (R13 no-op).
+    page.mouse.dblclick(start_x, start_y)
+    page.wait_for_timeout(200)
+    assert not page.locator("#drawing-settings-dialog[open]").count()
+
+    # Tree selection still works (bus emit, not a pointer hit).
+    page.locator(".tree-row[data-id]").first.click()
+    page.wait_for_function(
+        "() => document.querySelector('.tree-row[data-id]')"
+        ".getAttribute('aria-selected') === 'true'",
+        timeout=5000,
+    )
+
+
 @p
 def test_hidden_drawing_is_not_pointer_grabbable(
     seeded_5m_candles, hidden_hline, browser_page

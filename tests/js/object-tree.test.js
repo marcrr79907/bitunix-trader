@@ -152,6 +152,29 @@ test("drawing lock emits drawing:changed {locked,persist} (R2)", () => {
   } finally { restore(); }
 });
 
+test("a locked row is still tree-selectable (R9: bus emit, not pointer hit)", () => {
+  // R9 (F5 FIX-1): lock blocks the POINTER path only. The tree must still emit
+  // drawing:selected for a locked row — that is what the locked filter relies on.
+  const { mount, restore, bus } = setup({
+    indicators: [],
+    indicatorVisible: {},
+    params: {},
+  });
+  try {
+    const emitted = [];
+    bus.on("drawing:selected", (p) => emitted.push(p));
+    bus.emit("drawings:changed", { rows: TWO_DRAWINGS.map((r) => ({ ...r })) });
+    const locked = rowsWith(mount, "id").find((r) => r.dataset.id == 2); // locked
+    locked.keydown("Enter");
+    assert.deepStrictEqual(emitted, [{ id: 2 }]);
+    assert.strictEqual(
+      rowsWith(mount, "id").find((r) => r.dataset.id == 2)
+        .getAttribute("aria-selected"),
+      "true",
+    );
+  } finally { restore(); }
+});
+
 test("persisted flags render on first paint (R4)", () => {
   const { mount, restore, bus } = setup({
     indicators: [],
