@@ -3457,6 +3457,16 @@ def test_system_theme_follows_emulated_color_scheme(seeded_5m_candles, browser_p
 # ``window.marketChart.drawings`` + the captured POST/PUT.
 
 
+# A MEASURED readout: the node seeds with an en dash (U+2013) placeholder, so a
+# ``trim().length > 0`` gate passes before any drag (vacuous, #189). A real
+# measurement carries a signed percent ("+1.23%") and a price/time figure.
+_MEASURED_JS = (
+    "() => { const n = document.getElementById('measure-readout');"
+    " const t = n ? n.textContent.trim() : '';"
+    " return /%/.test(t) && /\\d/.test(t); }"
+)
+
+
 @p
 def test_measure_drag_writes_readout_and_no_post(seeded_5m_candles, browser_page):
     # R1/R5: a drag with the measure tool active reports the span in the DOM
@@ -3488,12 +3498,12 @@ def test_measure_drag_writes_readout_and_no_post(seeded_5m_candles, browser_page
     page.mouse.down()
     page.mouse.move(x + 60, box["y"] + box["height"] * 0.6, steps=8)
     page.mouse.up()
-    page.wait_for_function(
-        "() => { const n = document.getElementById('measure-readout');"
-        " return n && n.textContent.trim().length > 0; }",
-        timeout=10000,
-    )
+    # #189: wait for a MEASURED readout (a real price/% figure), not just a
+    # non-empty node — the placeholder en dash would otherwise pass vacuously.
+    page.wait_for_function(_MEASURED_JS, timeout=10000)
     assert page.locator("#measure-readout").get_attribute("aria-live") == "polite"
+    measured = page.locator("#measure-readout").text_content()
+    assert "%" in measured, measured  # a real measurement carries a percent
     assert writes == [], f"measure issued a write: {writes}"
     assert page.evaluate("() => window.marketChart.drawings.length") == 0
 
@@ -3526,16 +3536,13 @@ def test_measure_replaced_and_cleared_on_tool_change(seeded_5m_candles, browser_
         page.mouse.up()
 
     drag(50)
-    page.wait_for_function(
-        "() => { const n = document.getElementById('measure-readout');"
-        " return n && n.textContent.trim().length > 0; }",
-        timeout=10000,
-    )
+    page.wait_for_function(_MEASURED_JS, timeout=10000)
     first = page.locator("#measure-readout").text_content()
     drag(90)
     page.wait_for_function(
         "(prev) => { const n = document.getElementById('measure-readout');"
-        " return n && n.textContent.trim() !== prev.trim(); }",
+        " if (!n || !/%/.test(n.textContent)) return false;"
+        " return n.textContent.trim() !== prev.trim(); }",
         arg=first,
         timeout=10000,
     )
