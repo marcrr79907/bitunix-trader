@@ -55,6 +55,13 @@ export function createDrawingInteraction({ store, bus, host, config }) {
     return rows.find(function (r) { return r.id === id; }) || null;
   }
 
+  // F5 (R9): a locked drawing is NOT pointer-selectable/draggable, but stays
+  // selectable from the tree (a bus emit, not a pointer hit). Filter it out of
+  // every pointer hit-test so a locked shape cannot be grabbed or opened.
+  function pointerRows() {
+    return rows.filter(function (r) { return r.locked !== true; });
+  }
+
   // Data<->pixel map for the core. All four functions may return null with no
   // chart/series or off-bar; the core keeps the old component on a null inverse.
   function map() {
@@ -84,7 +91,7 @@ export function createDrawingInteraction({ store, bus, host, config }) {
     if (!el || state.tool) return; // a drawing tool owns the click in tool mode
     if (e.button !== undefined && e.button !== 0) return;
     const p = pointFromEvent(e);
-    const hit = grabHandle(rows, p.x, p.y, map());
+    const hit = grabHandle(pointerRows(), p.x, p.y, map());
     if (!hit) {
       setSelection(null); // R9: a miss clears any current selection
       return;
@@ -161,7 +168,7 @@ export function createDrawingInteraction({ store, bus, host, config }) {
   function onDblClick(e) {
     if (!el || state.tool) return;
     const p = pointFromEvent(e);
-    const hit = grabHandle(rows, p.x, p.y, map());
+    const hit = grabHandle(pointerRows(), p.x, p.y, map());
     if (!hit) return; // R13: double-click with nothing under it is a no-op
     const row = rowById(hit.id);
     if (!row || !dialog) return;

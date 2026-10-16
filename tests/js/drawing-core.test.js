@@ -136,10 +136,22 @@ test("pointFromParam returns null with no bar under the cursor", () => {
 test("fromApi normalizes a row and rejects an unknown kind", () => {
   assert.deepStrictEqual(
     core.fromApi({ id: 3, kind: "rect", points: { p1: {} }, style: {} }),
-    { id: 3, kind: "rect", points: { p1: {} }, style: {} },
+    { id: 3, kind: "rect", points: { p1: {} }, style: {}, visible: true, locked: false },
   );
   assert.strictEqual(core.fromApi({ id: 4, kind: "nope" }), null);
   assert.strictEqual(core.fromApi(null), null);
+});
+
+test("fromApi carries visible/locked flags (absent -> visible, unlocked)", () => {
+  // Explicit flags pass through.
+  assert.deepStrictEqual(
+    core.fromApi({ id: 5, kind: "hline", points: { price: 1 }, style: {}, visible: false, locked: true }),
+    { id: 5, kind: "hline", points: { price: 1 }, style: {}, visible: false, locked: true },
+  );
+  // Absent flags default to visible/unlocked (R4: persistent model).
+  const noFlags = core.fromApi({ id: 6, kind: "hline", points: { price: 1 }, style: {} });
+  assert.strictEqual(noFlags.visible, true);
+  assert.strictEqual(noFlags.locked, false);
 });
 
 test("toApi builds the POST body shape", () => {

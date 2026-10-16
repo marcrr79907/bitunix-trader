@@ -6,7 +6,7 @@
 // (e.g. ``candles``) is silently dropped.
 //
 //   state = { symbol, interval, indicators, params, styles, smc, scaleMode,
-//             chartType, theme, tool }
+//             chartType, theme, tool, indicatorVisible }
 //
 // API: get() -> state (same reference) | set(patch) -> merge + emit |
 //      subscribe(fn) -> unsubscribe.
@@ -21,6 +21,9 @@ export const STORE_KEYS = [
   "chartType",
   "theme",
   "tool",
+  // F5 S3 (R14 delta): indicator visibility {token: bool}, config-only (#68).
+  // The object tree is its reactive consumer; it never enters params/candles.
+  "indicatorVisible",
 ];
 
 export function createStore(initial) {

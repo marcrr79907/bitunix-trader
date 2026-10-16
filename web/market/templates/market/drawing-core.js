@@ -32,6 +32,8 @@ function defaultStyle(kind) {
 // --- serialization (API shape <-> in-memory) --------------------------------
 
 // A persisted row -> in-memory shape, or null for an unknown kind (skip it).
+// F5 (R2/R4): carries the persisted ``visible``/``locked`` flags; absent →
+// visible / unlocked (the model defaults).
 function fromApi(row) {
   if (!row || DRAWING_KINDS.indexOf(row.kind) === -1) return null;
   return {
@@ -39,6 +41,8 @@ function fromApi(row) {
     kind: row.kind,
     points: row.points || {},
     style: row.style || {},
+    visible: row.visible !== false,
+    locked: row.locked === true,
   };
 }
 

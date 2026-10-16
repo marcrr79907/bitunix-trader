@@ -56,3 +56,11 @@ test("EVENTS freezes the command/notification names", () => {
   assert.strictEqual(EVENTS.ready, "ready");
   assert.ok(Object.isFrozen(EVENTS));
 });
+
+test("EVENTS carries exactly one new F5 event: indicator:visibility (R20)", () => {
+  assert.strictEqual(EVENTS.indicatorVisibility, "indicator:visibility");
+  // No drawing visibility/lock event was added (R20).
+  assert.strictEqual(EVENTS.drawingVisibility, undefined);
+  assert.strictEqual(EVENTS.drawingLock, undefined);
+  assert.strictEqual(EVENTS.toolChanged, undefined);
+});

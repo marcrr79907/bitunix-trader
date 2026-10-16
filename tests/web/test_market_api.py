@@ -1147,6 +1147,67 @@ def test_parse_layout_indicators_rejects_bad_style(bad_style):
         parse_layout_indicators([{"token": "sma", "style": bad_style}])
 
 
+# --- parse_layout_indicators: visible preservation (F5 S3 / F2.7 delta) ------
+
+
+def test_parse_layout_indicators_preserves_visible_verbatim():
+    from market.quotes import parse_layout_indicators
+
+    out = parse_layout_indicators([{"token": "sma", "visible": False}])
+    # Preserved verbatim (no default injected); key order preserved.
+    assert out == [{"token": "sma", "visible": False}]
+
+    out_true = parse_layout_indicators([{"token": "ema", "visible": True}])
+    assert out_true == [{"token": "ema", "visible": True}]
+
+
+def test_parse_layout_indicators_absent_visible_is_not_injected():
+    from market.quotes import parse_layout_indicators
+
+    # Absent = true at read time; the parser MUST NOT inject a default key.
+    out = parse_layout_indicators([{"token": "rsi"}])
+    assert out == [{"token": "rsi"}]
+    assert "visible" not in out[0]
+
+
+@pytest.mark.parametrize("bad", ["yes", 1, 0, None, []])
+def test_parse_layout_indicators_non_bool_visible_is_400(bad):
+    from market.quotes import parse_layout_indicators
+
+    with pytest.raises(ValueError):
+        parse_layout_indicators([{"token": "sma", "visible": bad}])
+
+
+def test_layout_put_then_get_round_trips_visible_verbatim():
+    indicators = [
+        {"token": "sma", "params": {"sma_len": 50}, "visible": False},
+        {"token": "macd"},
+    ]
+    put = _put_layout(
+        USER, {"symbol": "BTCUSDT", "interval": "1m", "indicators": indicators}
+    )
+    assert put.status_code == 200
+
+    body = USER.get(f"{LAYOUT_URL}?symbol=BTCUSDT&interval=1m").json()
+    assert body["indicators"] == indicators
+
+
+def test_layout_put_non_bool_visible_is_400_and_writes_nothing():
+    from trading.models import ChartLayout
+
+    response = _put_layout(
+        USER,
+        {
+            "symbol": "BTCUSDT",
+            "interval": "1m",
+            "indicators": [{"token": "sma", "visible": "yes"}],
+        },
+    )
+    assert response.status_code == 400
+    assert "error" in response.json()
+    assert ChartLayout.objects.count() == 0
+
+
 # --- WU2: drawings CRUD endpoint (R2/R3/R4/R5) ------------------------------
 
 DRAWINGS_URL = "/market/api/drawings"

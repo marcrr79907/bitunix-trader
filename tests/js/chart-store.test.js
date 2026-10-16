@@ -27,6 +27,7 @@ test("get returns the initial config state", () => {
     chartType: undefined,
     theme: undefined,
     tool: null,
+    indicatorVisible: undefined,
   });
 });
 
@@ -71,9 +72,10 @@ test("set never admits candle data — the key set is frozen (#68)", () => {
   assert.strictEqual(seeded.get().candles, undefined);
 });
 
-test("STORE_KEYS is exactly the UI/config vocabulary (10 incl. styles/scaleMode/chartType/theme)", () => {
+test("STORE_KEYS is exactly the UI/config vocabulary (11 incl. indicatorVisible)", () => {
   assert.deepStrictEqual(STORE_KEYS.slice().sort(), [
     "chartType",
+    "indicatorVisible",
     "indicators",
     "interval",
     "params",
@@ -84,6 +86,25 @@ test("STORE_KEYS is exactly the UI/config vocabulary (10 incl. styles/scaleMode/
     "theme",
     "tool",
   ]);
+  assert.strictEqual(STORE_KEYS.length, 11);
+});
+
+test("indicatorVisible is a top-level config-only slot, never params/candles (#68)", () => {
+  const store = createStore({
+    symbol: "BTCUSDT",
+    interval: "1m",
+    indicators: ["sma"],
+    params: { sma: { sma_len: 20 } },
+    indicatorVisible: { sma: false },
+  });
+  assert.deepStrictEqual(store.get().indicatorVisible, { sma: false });
+  store.set({ indicatorVisible: { sma: true, ema: false } });
+  assert.deepStrictEqual(store.get().indicatorVisible, { sma: true, ema: false });
+  // It never leaks into params (the kline query source).
+  assert.deepStrictEqual(store.get().params, { sma: { sma_len: 20 } });
+  // Candle data still never enters the frozen vocabulary.
+  store.set({ candles: [{ time: 1 }] });
+  assert.strictEqual(store.get().candles, undefined);
 });
 
 test("theme is a top-level UI slot, never nested and never candle data (#68)", () => {
