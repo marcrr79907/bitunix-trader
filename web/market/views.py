@@ -57,6 +57,7 @@ MODULE_ALLOWLIST = frozenset(
         "add-indicator-core",
         "measure-core",
         "position-core",
+        "position-draft-core",
         "chart-store",
         "chart-bus",
         "chart-host",

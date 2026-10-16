@@ -3627,6 +3627,58 @@ def test_position_three_click_persists_and_drag_one_put(
 
 
 @p
+def test_position_escape_cancels_mid_draft(seeded_5m_candles, browser_page):
+    # R6 (design-system): Escape cancels a pending position draft — no POST — and
+    # a subsequent three-click draft still finalizes exactly one position.
+    page, base_url = browser_page
+    page.route_web_socket("wss://fapi.bitunix.com/**", lambda ws: None)
+    posts = []
+    page.on(
+        "request",
+        lambda r: (
+            posts.append(r)
+            if r.method == "POST" and "/market/api/drawings" in r.url
+            else None
+        ),
+    )
+    page.goto(f"{base_url}/market/")
+    _wait_ready(page)
+    page.select_option("#interval", "5m")
+    page.wait_for_function(
+        "() => window.marketChart && window.marketChart.candleSeries &&"
+        " window.marketChart.candleSeries.data().length > 0",
+        timeout=10000,
+    )
+    page.wait_for_timeout(1200)
+    page.locator('.draw-tool[data-kind="position"]').click()
+    canvas = page.locator("#chart canvas").first
+    canvas.scroll_into_view_if_needed()
+    box = canvas.bounding_box()
+    cx = box["x"] + box["width"] / 2
+    # Two clicks (entry + stop) leave a half-collected draft, then Escape.
+    for dx, frac in ((-80, 0.5), (0, 0.68)):
+        page.mouse.click(cx + dx, box["y"] + box["height"] * frac)
+        page.wait_for_timeout(500)
+    page.locator("#chart").focus()  # the keydown listener lives on the #chart container
+    page.keyboard.press("Escape")
+    page.wait_for_timeout(300)
+    # No draft was persisted, and the abandoned draft is gone: a fresh 3-click
+    # sequence must start at entry, not resume the dead draft's take_profit.
+    assert posts == [], [r.url for r in posts]
+    for dx, frac in ((-80, 0.5), (0, 0.68), (80, 0.32)):
+        page.mouse.click(cx + dx, box["y"] + box["height"] * frac)
+        page.wait_for_timeout(500)
+    page.wait_for_function(
+        "() => window.marketChart.drawings && window.marketChart.drawings.length === 1",
+        timeout=10000,
+    )
+    assert len(posts) == 1, [r.url for r in posts]
+    body = json.loads(posts[0].post_data or "{}")
+    assert body["kind"] == "position"
+    assert set(body["points"]) == {"entry", "stop", "take_profit"}
+
+
+@p
 def test_position_seed_copies_smc_setup_verbatim(seeded_5m_candles, browser_page):
     # R15: the explicit seed copies a setup's entry/stop/take_profit VERBATIM from
     # the fetched SMC payload (no JS recompute) into the created position POST.
