@@ -17,6 +17,7 @@ import {
 import { createHistory } from "./controllers/history.js";
 import { createStream } from "./controllers/stream.js";
 import { createDrawings } from "./controllers/drawings.js";
+import { createUndo } from "./controllers/undo.js";
 import { createDrawingInteraction } from "./controllers/drawing-interaction.js";
 import { createSmc, readSmc } from "./controllers/smc.js";
 import { createToolbar } from "./controllers/toolbar.js";
@@ -71,6 +72,9 @@ export function boot(config) {
   const history = createHistory({ store, bus, host, config });
   const stream = createStream({ store, bus, host, config });
   const drawings = createDrawings({ store, bus, host, config });
+  // F7 (S2): undo/redo records the persist:true gesture boundary and replays
+  // through the drawings bus commands; it owns the document Ctrl/Cmd+Z router.
+  const undo = createUndo({ store, bus, host, config });
   const drawingInteraction = createDrawingInteraction({ store, bus, host, config });
   const measure = createMeasure({ store, bus, host, config });
   // F6 UI #194: the "Position from setup" button state + setups cache. It seeds
@@ -159,6 +163,8 @@ export function boot(config) {
     // refetch (buildChart re-attaches them). SMC is per (symbol, interval), so
     // it always clears. The bumps invalidate in-flight fetches.
     if (symbolChanged) drawings.clearForSwitch();
+    // R14: the undo stack is symbol-scoped (a gone id must not replay).
+    if (symbolChanged) undo.clearForSwitch();
     smc.clearForSwitch();
     // F6 (R4): a symbol switch clears an ephemeral measurement (no persistence).
     if (symbolChanged) measure.clearForSwitch();
