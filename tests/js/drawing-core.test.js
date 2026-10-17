@@ -6,10 +6,10 @@ import * as core from "../../web/market/templates/market/drawing-core.js";
 // A coordinate mapper stub: identity-ish, so expected pixels are obvious.
 const mapper = (x, y) => ({ x: () => x, y: () => y });
 
-test("DRAWING_KINDS exposes the five kinds", () => {
+test("DRAWING_KINDS exposes the six kinds", () => {
   assert.deepStrictEqual(
     core.DRAWING_KINDS.slice().sort(),
-    ["fib", "hline", "rect", "text", "trendline"],
+    ["fib", "hline", "position", "rect", "text", "trendline"],
   );
 });
 
@@ -142,6 +142,14 @@ test("fromApi normalizes a row and rejects an unknown kind", () => {
   assert.strictEqual(core.fromApi(null), null);
 });
 
+test("fromApi accepts a position row and keeps its points (F6)", () => {
+  const points = { entry: { time: 1700000000, price: 50000 }, stop: 49000, take_profit: 52000 };
+  assert.deepStrictEqual(
+    core.fromApi({ id: 9, kind: "position", points: points, style: {} }),
+    { id: 9, kind: "position", points: points, style: {}, visible: true, locked: false },
+  );
+});
+
 test("fromApi carries visible/locked flags (absent -> visible, unlocked)", () => {
   // Explicit flags pass through.
   assert.deepStrictEqual(
@@ -168,4 +176,11 @@ test("defaultStyle carries a color per kind and a fib level set", () => {
     0, 0.236, 0.382, 0.5, 0.618, 0.786, 1,
   ]);
   assert.strictEqual(core.defaultStyle("rect").fill, true);
+});
+
+test("defaultStyle gives position a color + lineWidth (F6)", () => {
+  const style = core.defaultStyle("position");
+  assert.strictEqual(typeof style.color, "string");
+  assert.match(style.color, /^#[0-9a-f]{6}$/i);
+  assert.strictEqual(style.lineWidth, 1);
 });

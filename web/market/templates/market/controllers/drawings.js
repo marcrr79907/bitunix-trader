@@ -5,6 +5,7 @@
 // from the pure drawing-core.js; ``drawGen`` guards a stale drawings fetch.
 import * as Draw from "../drawing-core.js";
 import { makeDrawingPrimitive } from "../drawing-primitive.js";
+import { defaultPositionStyle } from "../position-core.js";
 
 function csrfToken() {
   const meta = document.querySelector('meta[name="csrf-token"]');
@@ -22,6 +23,9 @@ export function createDrawings({ store, bus, host, config }) {
   let drawGen = 0; // monotonic guard against a stale drawings fetch
   let pendingAnchor = null; // first click of a two-point drawing
   let pendingAnchorKind = state.tool; // tool the anchor was collected under
+  // F6 (D6): a position collects entry (time+price) -> stop price -> tp price.
+  let pendingPosition = null;
+  let setups = []; // F6 (D5): SMC setups cached from ``smc:loaded`` (verbatim)
   let selectedId = null; // interaction selection (closure only; never a store key)
   const selection = { isSelected: function (row) { return row.id === selectedId; } };
   const enc = encodeURIComponent;
@@ -174,6 +178,7 @@ export function createDrawings({ store, bus, host, config }) {
     const price = candleSeries.coordinateToPrice(param.point.y);
     if (price === null || price === undefined) return;
     const kind = state.tool;
+    if (kind === "measure") return; // ephemeral: measure owns its own listeners
     if (kind === "hline") {
       createDrawing("hline", { price: price }, Draw.defaultStyle("hline"));
       return;
@@ -190,6 +195,12 @@ export function createDrawings({ store, bus, host, config }) {
       }
       return;
     }
+    // F6 (D6): position collects THREE clicks — entry (time+price), then the
+    // stop price, then the take_profit price; the third finalizes the POST.
+    if (kind === "position") {
+      collectPosition({ time: param.time, price: price });
+      return;
+    }
     // trendline | fib | rect: first click sets the anchor, second finalizes.
     if (pendingAnchor === null) {
       pendingAnchor = { time: param.time, price: price };
@@ -199,13 +210,57 @@ export function createDrawings({ store, bus, host, config }) {
     pendingAnchor = null;
   }
 
+  // F6 (D6): the 3-click position collector. click 1 sets entry (time+price);
+  // click 2 sets stop; click 3 sets take_profit and finalizes via createDrawing.
+  // A tool change / symbol switch drops a half-collected box (stale-anchor reset).
+  function collectPosition(point) {
+    if (pendingPosition === null) {
+      pendingPosition = { entry: point };
+      return;
+    }
+    if (pendingPosition.stop === undefined) {
+      pendingPosition.stop = point.price;
+      return;
+    }
+    pendingPosition.take_profit = point.price;
+    const points = pendingPosition;
+    pendingPosition = null;
+    createDrawing("position", points, defaultPositionStyle(points));
+  }
+
+  // F6 (D5/R15): copy a setup's levels VERBATIM into a position row — the client
+  // never recomputes SMC levels; it only re-derives R:R while the user drags.
+  function seedFromSetup(setup) {
+    if (!setup) return;
+    const points = {
+      entry: { time: setup.time, price: setup.entry },
+      stop: setup.stop,
+      take_profit: setup.take_profit,
+    };
+    createDrawing("position", points, defaultPositionStyle(points));
+  }
+
+  // The most-recent setup for the active key (v1 simplification, R12) — the
+  // setups cache is populated verbatim from the SMC payload (single source).
+  function seedMostRecent() {
+    seedFromSetup(setups[setups.length - 1]);
+  }
+
+  bus.on("smc:loaded", function (p) {
+    setups = (p && p.payload && p.payload.setups) || [];
+  });
+
+  const seedButton = document.getElementById("position-seed");
+  if (seedButton) seedButton.addEventListener("click", seedMostRecent);
+
   // Tool selection now lives in controllers/draw-toolbar.js (F5 S2): it writes
   // ``store.tool`` (the SAME command the legacy buttons emitted). A tool change
-  // only needs to drop a half-collected two-point anchor.
+  // only needs to drop a half-collected anchor or position draft.
   store.subscribe(function () {
     if (state.tool !== pendingAnchorKind) {
       pendingAnchorKind = state.tool;
       pendingAnchor = null;
+      pendingPosition = null;
     }
   });
 
@@ -231,6 +286,7 @@ export function createDrawings({ store, bus, host, config }) {
     // store.set (not a raw write) so the toolbar's subscriber clears aria-pressed.
     store.set({ tool: null });
     pendingAnchor = null;
+    pendingPosition = null;
     selectedId = null; // R14: a symbol switch clears selection with the drawings
     currentDrawings = [];
     drawGen++;

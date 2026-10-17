@@ -20,6 +20,8 @@ const TOOL_LABELS = {
   fib: "Fibonacci retracement",
   rect: "Rectangle",
   text: "Text",
+  measure: "Measure",
+  position: "Position",
 };
 
 export function createDrawToolbar({ store }) {

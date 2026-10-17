@@ -12,22 +12,42 @@ import { fileURLToPath } from "node:url";
 import * as core from "../../web/market/templates/market/tool-icons-core.js";
 import { DRAWING_KINDS } from "../../web/market/templates/market/drawing-core.js";
 
-test("TOOL_GROUPS: 5 kinds grouped 2/1/1/1 (Lines/Fib/Shapes/Text)", () => {
+test("TOOL_GROUPS: F6 groups the 7 instruments 2/1/1/1/1/1", () => {
   const labels = core.TOOL_GROUPS.map((g) => g.label);
-  assert.deepStrictEqual(labels, ["Lines", "Fib", "Shapes", "Text"]);
+  assert.deepStrictEqual(labels, ["Lines", "Fib", "Shapes", "Text", "Measure", "Positions"]);
   assert.deepStrictEqual(
     core.TOOL_GROUPS.map((g) => g.kinds.length),
-    [2, 1, 1, 1],
+    [2, 1, 1, 1, 1, 1],
   );
   assert.deepStrictEqual(core.TOOL_GROUPS[0].kinds, ["hline", "trendline"]);
   assert.deepStrictEqual(core.TOOL_GROUPS[3].kinds, ["text"]);
+  assert.deepStrictEqual(core.TOOL_GROUPS[4], { label: "Measure", kinds: ["measure"] });
+  assert.deepStrictEqual(core.TOOL_GROUPS[5], { label: "Positions", kinds: ["position"] });
 });
 
-test("TOOL_GROUPS covers exactly the drawing kinds (no gap, no duplicate)", () => {
+test("TOOL_GROUPS covers the drawing kinds + measure (no gap, no duplicate)", () => {
   const grouped = core.TOOL_GROUPS.flatMap((g) => g.kinds);
-  assert.strictEqual(grouped.length, 5);
-  assert.deepStrictEqual([...grouped].sort(), [...DRAWING_KINDS].sort());
-  assert.strictEqual(new Set(grouped).size, 5);
+  assert.strictEqual(grouped.length, 7);
+  // Every persisted drawing kind is grouped (no gap)...
+  DRAWING_KINDS.forEach((kind) => assert.ok(grouped.includes(kind), kind));
+  // ...plus the ephemeral ``measure`` tool and the ``position`` group.
+  assert.ok(grouped.includes("measure"));
+  assert.ok(grouped.includes("position"));
+  assert.strictEqual(new Set(grouped).size, grouped.length); // no duplicate
+});
+
+test("F6 icons: measure + position yield valid, CSP-clean inline SVGs (R1)", () => {
+  ["measure", "position"].forEach((kind) => {
+    const svg = core.iconFor(kind);
+    assert.strictEqual(typeof svg, "string", kind);
+    assert.match(svg, /^<svg\b/, kind);
+    assert.match(svg, /<\/svg>$/, kind);
+    assert.match(svg, /viewBox=/, kind);
+    assert.match(svg, /currentColor/, kind);
+    assert.doesNotMatch(svg, /\son[a-z]+\s*=/i, kind); // no inline handler (CSP)
+    assert.doesNotMatch(svg, /<script/i, kind);
+  });
+  assert.notStrictEqual(core.iconFor("measure"), core.iconFor("position"));
 });
 
 test("TREE_GROUPS: the object-tree group vocab (drawings + indicators)", () => {

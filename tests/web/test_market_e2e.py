@@ -1024,12 +1024,13 @@ def test_draw_toolbar_renders_groups_and_sets_store(browser_page):
     toolbar = page.locator('.draw-tools[role="toolbar"]')
     assert toolbar.count() == 1
     assert toolbar.get_attribute("aria-orientation") == "vertical"
-    assert page.locator('.draw-tools [role="group"]').count() == 4
-    assert page.locator(".draw-tool").count() == 5
+    # F6: the F5 four groups plus Measure + Positions.
+    assert page.locator('.draw-tools [role="group"]').count() == 6
+    assert page.locator(".draw-tool").count() == 7
     # The legacy flat text buttons are gone (labels H-line/Trend/Box no longer exist).
     assert page.locator(".drawings .draw-tool").count() == 0
     # Icons injected by JS (no inline handler); each button names itself.
-    assert page.locator(".draw-tools .draw-tool svg").count() == 5
+    assert page.locator(".draw-tools .draw-tool svg").count() == 7
     assert (
         page.locator('.draw-tool[data-kind="fib"]').get_attribute("aria-label")
         == "Fibonacci retracement"
@@ -3446,3 +3447,219 @@ def test_system_theme_follows_emulated_color_scheme(seeded_5m_candles, browser_p
         )
         == "#ffffff"
     )
+
+
+# --- F6 measure + position instruments (issue #119) --------------------------
+#
+# DOM + captured-network assertions only (never pixels, #149); readiness-gated
+# via ``_wait_ready``. The measure readout is observed through its
+# ``#measure-readout`` aria-live DOM node (R18: no seam key); the position via
+# ``window.marketChart.drawings`` + the captured POST/PUT.
+
+
+@p
+def test_measure_drag_writes_readout_and_no_post(seeded_5m_candles, browser_page):
+    # R1/R5: a drag with the measure tool active reports the span in the DOM
+    # readout and issues NO POST/PUT (ephemeral; no persistence anywhere).
+    page, base_url = browser_page
+    writes = []
+    page.on(
+        "request",
+        lambda r: (
+            writes.append(r.url)
+            if r.method in ("POST", "PUT") and "/market/api/drawings" in r.url
+            else None
+        ),
+    )
+    page.goto(f"{base_url}/market/")
+    _wait_ready(page)
+    page.select_option("#interval", "5m")
+    page.wait_for_function(
+        "() => window.marketChart && window.marketChart.candleSeries &&"
+        " window.marketChart.candleSeries.data().length > 0",
+        timeout=10000,
+    )
+    page.locator('.draw-tool[data-kind="measure"]').click()
+    canvas = page.locator("#chart canvas").first
+    canvas.scroll_into_view_if_needed()
+    box = canvas.bounding_box()
+    x = box["x"] + box["width"] / 2
+    page.mouse.move(x, box["y"] + box["height"] * 0.4)
+    page.mouse.down()
+    page.mouse.move(x + 60, box["y"] + box["height"] * 0.6, steps=8)
+    page.mouse.up()
+    page.wait_for_function(
+        "() => { const n = document.getElementById('measure-readout');"
+        " return n && n.textContent.trim().length > 0; }",
+        timeout=10000,
+    )
+    assert page.locator("#measure-readout").get_attribute("aria-live") == "polite"
+    assert writes == [], f"measure issued a write: {writes}"
+    assert page.evaluate("() => window.marketChart.drawings.length") == 0
+
+
+@p
+def test_measure_replaced_and_cleared_on_tool_change(seeded_5m_candles, browser_page):
+    # R1/R4: a new measure replaces the old; changing the tool clears the readout.
+    page, base_url = browser_page
+    page.goto(f"{base_url}/market/")
+    _wait_ready(page)
+    page.select_option("#interval", "5m")
+    page.wait_for_function(
+        "() => window.marketChart && window.marketChart.candleSeries &&"
+        " window.marketChart.candleSeries.data().length > 0",
+        timeout=10000,
+    )
+    page.locator('.draw-tool[data-kind="measure"]').click()
+    canvas = page.locator("#chart canvas").first
+    canvas.scroll_into_view_if_needed()
+    box = canvas.bounding_box()
+
+    def drag(dx):
+        page.mouse.move(box["x"] + box["width"] / 2, box["y"] + box["height"] * 0.5)
+        page.mouse.down()
+        page.mouse.move(
+            box["x"] + box["width"] / 2 + dx,
+            box["y"] + box["height"] * 0.6,
+            steps=6,
+        )
+        page.mouse.up()
+
+    drag(50)
+    page.wait_for_function(
+        "() => { const n = document.getElementById('measure-readout');"
+        " return n && n.textContent.trim().length > 0; }",
+        timeout=10000,
+    )
+    first = page.locator("#measure-readout").text_content()
+    drag(90)
+    page.wait_for_function(
+        "(prev) => { const n = document.getElementById('measure-readout');"
+        " return n && n.textContent.trim() !== prev.trim(); }",
+        arg=first,
+        timeout=10000,
+    )
+    # Switch to another tool -> the measure clears (R4).
+    page.locator('.draw-tool[data-kind="hline"]').click()
+    page.wait_for_function(
+        "() => document.getElementById('measure-readout').textContent.trim() === ''",
+        timeout=5000,
+    )
+
+
+@p
+def test_position_three_click_persists_and_drag_one_put(
+    seeded_5m_candles, browser_page
+):
+    # R5/R10: three clicks (entry, stop, take_profit) finalize ONE position POST;
+    # dragging a level issues exactly ONE PUT and shifts only that price. The
+    # exchange socket is mocked (no live frames) so the seeded 5m range — and the
+    # clicked entry column — stay put for a deterministic handle drag (#149).
+    page, base_url = browser_page
+    page.route_web_socket("wss://fapi.bitunix.com/**", lambda ws: None)
+    posts = []
+    puts = []
+    page.on(
+        "request",
+        lambda r: (
+            posts.append(r)
+            if r.method == "POST" and "/market/api/drawings" in r.url
+            else puts.append(r)
+            if r.method == "PUT" and "/market/api/drawings" in r.url
+            else None
+        ),
+    )
+    page.goto(f"{base_url}/market/")
+    _wait_ready(page)
+    page.select_option("#interval", "5m")
+    page.wait_for_function(
+        "() => window.marketChart && window.marketChart.candleSeries &&"
+        " window.marketChart.candleSeries.data().length > 0",
+        timeout=10000,
+    )
+    # Let the history fetch settle so the visible range stops moving under the
+    # cursor (a late async load would otherwise remap the clicked entry column).
+    page.wait_for_timeout(1200)
+    page.locator('.draw-tool[data-kind="position"]').click()
+    canvas = page.locator("#chart canvas").first
+    canvas.scroll_into_view_if_needed()
+    box = canvas.bounding_box()
+    cx = box["x"] + box["width"] / 2
+    # Three clicks at distinct x + price y (entry, stop below, take_profit above);
+    # a short pause between clicks avoids Playwright coalescing them into a dblclick.
+    for dx, frac in ((-80, 0.5), (0, 0.68), (80, 0.32)):
+        page.mouse.click(cx + dx, box["y"] + box["height"] * frac)
+        page.wait_for_timeout(500)
+    page.wait_for_function(
+        "() => window.marketChart.drawings && window.marketChart.drawings.length === 1",
+        timeout=10000,
+    )
+    assert len(posts) == 1, [r.url for r in posts]
+    body = json.loads(posts[0].post_data or "{}")
+    assert body["kind"] == "position"
+    assert set(body["points"]) == {"entry", "stop", "take_profit"}
+
+    # Deselect the tool (re-click cancels), then drag the stop level -> one PUT.
+    page.locator('.draw-tool[data-kind="position"]').click()
+    stop_before = page.evaluate("() => window.marketChart.drawings[0].points.stop")
+    # The stop handle sits on the box's right edge (BOX_WIDTH=120), i.e. at
+    # entry_x + 120 with the stop price's y — both read from the live mapping.
+    entry_x = page.evaluate(
+        "(t) => window.marketChart.chart.timeScale().timeToCoordinate(t)",
+        page.evaluate("() => window.marketChart.drawings[0].points.entry.time"),
+    )
+    stop_y = page.evaluate(
+        "(p) => window.marketChart.candleSeries.priceToCoordinate(p)", stop_before
+    )
+    assert entry_x is not None and stop_y is not None
+    start_x = box["x"] + entry_x + 120
+    start_y = box["y"] + stop_y
+    page.mouse.move(start_x, start_y)
+    page.mouse.down()
+    page.mouse.move(start_x, start_y - 40, steps=8)
+    page.mouse.up()
+    page.wait_for_function(
+        "(before) => window.marketChart.drawings[0].points.stop !== before",
+        arg=stop_before,
+        timeout=5000,
+    )
+    assert len(puts) == 1, [r.url for r in puts]
+
+
+@p
+def test_position_seed_copies_smc_setup_verbatim(seeded_5m_candles, browser_page):
+    # R15: the explicit seed copies a setup's entry/stop/take_profit VERBATIM from
+    # the fetched SMC payload (no JS recompute) into the created position POST.
+    page, base_url = browser_page
+    posts = []
+    page.on(
+        "request",
+        lambda r: (
+            posts.append(r)
+            if r.method == "POST" and "/market/api/drawings" in r.url
+            else None
+        ),
+    )
+    page.goto(f"{base_url}/market/")
+    _wait_ready(page)
+    page.select_option("#interval", "5m")
+    page.wait_for_function(
+        "() => window.marketChart.smc && window.marketChart.smc.interval === '5m'",
+        timeout=10000,
+    )
+    setups = page.evaluate("() => window.marketChart.smc.setups")
+    if not setups:
+        pytest.skip("no setup computed for the seeded window")
+    expected = setups[-1]
+    page.locator("#position-seed").click()
+    page.wait_for_function(
+        "() => window.marketChart.drawings && window.marketChart.drawings.length >= 1",
+        timeout=10000,
+    )
+    assert len(posts) == 1, [r.url for r in posts]
+    body = json.loads(posts[0].post_data or "{}")
+    assert body["kind"] == "position"
+    assert body["points"]["stop"] == expected["stop"]
+    assert body["points"]["take_profit"] == expected["take_profit"]
+    assert body["points"]["entry"]["price"] == expected["entry"]
+    assert body["points"]["entry"]["time"] == expected["time"]

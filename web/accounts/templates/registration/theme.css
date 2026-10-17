@@ -157,6 +157,10 @@ code{font-family:var(--mono); background:var(--surface); padding:1px 5px; border
 .smc label{display:flex; align-items:center; gap:var(--sp-2); cursor:pointer}
 .smc input[type=checkbox]{accent-color:var(--accent)}
 
+/* F6 measure readout (D8): a monospace live region mirroring #rsi. Tokens only. */
+#measure-readout{font-family:var(--mono); font-size:var(--fs-3); color:var(--text);
+  margin:0 0 var(--sp-2); white-space:nowrap; overflow:hidden; text-overflow:ellipsis}
+
 /* drawings vertical icon toolbar (F5 S2) */
 .draw-tools{display:flex; flex-direction:column; gap:var(--sp-2);
   margin:0; border:1px solid var(--border); border-radius:var(--r); padding:var(--sp-2)}
