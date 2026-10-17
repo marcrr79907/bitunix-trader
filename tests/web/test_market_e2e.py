@@ -1345,6 +1345,102 @@ def test_drag_persists_single_put_and_moves_points(
 
 
 @p
+def test_drag_undo_issues_second_put_with_prior_points(
+    seeded_5m_candles, interaction_drawing, browser_page
+):
+    # F7 R2/R3 (S2): a drag records exactly ONE entry; Ctrl+Z replays the move
+    # through drawings.js — a SECOND PUT carrying the PRE-drag points. DOM+network
+    # only (no pixels), readiness-gated (DEBT-8, #149).
+    page, base_url = browser_page
+    puts = []
+    page.on(
+        "request",
+        lambda r: (
+            puts.append(r)
+            if r.method == "PUT" and "/market/api/drawings/" in r.url
+            else None
+        ),
+    )
+    page.goto(f"{base_url}/market/")
+    _wait_ready(page)
+    page.wait_for_function(
+        "() => window.marketChart.drawings && window.marketChart.drawings.length === 1",
+        timeout=10000,
+    )
+    chart, box = _select_hline(page)
+    y = _hline_y(page, 100.0)
+    start_x = box["x"] + box["width"] / 2
+    start_y = box["y"] + y
+    page.mouse.move(start_x, start_y)
+    page.mouse.down()
+    page.mouse.move(start_x, start_y - 40, steps=8)
+    page.mouse.up()
+    page.wait_for_function(
+        "() => window.marketChart.drawings[0].points.price !== 100.0",
+        timeout=5000,
+    )
+    assert len(puts) == 1, [r.url for r in puts]  # one gesture = one PUT
+    page.keyboard.press("Control+z")
+    page.wait_for_function(
+        "() => window.marketChart.drawings[0].points.price === 100.0",
+        timeout=5000,
+    )
+    assert len(puts) == 2, [r.url for r in puts]  # undo replays a second PUT
+    assert json.loads(puts[1].post_data or "{}")["points"]["price"] == 100.0
+
+
+@p
+def test_create_undo_deletes_via_tool(seeded_5m_candles, browser_page):
+    # F7 R3 (S2): a tool create records {op:create}; Ctrl+Z DELETEs the new row.
+    # The duplicate path is equivalent (replayOps: duplicate ≡ create), so this
+    # covers the create/duplicate undo matrix end-to-end.
+    page, base_url = browser_page
+    posts, deletes = [], []
+    page.on(
+        "request",
+        lambda r: (
+            posts.append(r)
+            if r.method == "POST" and "/market/api/drawings" in r.url
+            else None
+        ),
+    )
+    page.on(
+        "request",
+        lambda r: (
+            deletes.append(r)
+            if r.method == "DELETE" and "/market/api/drawings/" in r.url
+            else None
+        ),
+    )
+    page.goto(f"{base_url}/market/")
+    _wait_ready(page)
+    page.select_option("#interval", "5m")
+    page.wait_for_function(
+        "() => window.marketChart && window.marketChart.candleSeries &&"
+        " window.marketChart.candleSeries.data().length > 0",
+        timeout=10000,
+    )
+    page.locator('.draw-tool[data-kind="hline"]').click()
+    canvas = page.locator("#chart canvas").first
+    canvas.scroll_into_view_if_needed()
+    box = canvas.bounding_box()
+    page.mouse.click(box["x"] + box["width"] / 2, box["y"] + box["height"] / 2)
+    page.wait_for_function(
+        "() => window.marketChart.drawings && window.marketChart.drawings.length === 1",
+        timeout=10000,
+    )
+    assert len(posts) == 1, [r.url for r in posts]
+    created_id = page.evaluate("() => window.marketChart.drawings[0].id")
+    page.keyboard.press("Control+z")
+    page.wait_for_function(
+        "() => window.marketChart.drawings.length === 0",
+        timeout=5000,
+    )
+    assert len(deletes) == 1, [r.url for r in deletes]
+    assert deletes[0].url.endswith(f"/{created_id}")
+
+
+@p
 def test_drag_put_returns_200_and_persists_across_reload(
     seeded_5m_candles, interaction_drawing, browser_page
 ):

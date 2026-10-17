@@ -59,6 +59,7 @@ MODULE_ALLOWLIST = frozenset(
         "position-core",
         "position-draft-core",
         "readout-coalesce-core",
+        "history-core",
         "chart-store",
         "chart-bus",
         "chart-host",
@@ -81,6 +82,7 @@ CONTROLLER_ALLOWLIST: frozenset[str] = frozenset(
         "preference",
         "measure",
         "position-seed",
+        "undo",
     }
 )
 

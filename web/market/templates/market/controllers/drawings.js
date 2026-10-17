@@ -126,6 +126,19 @@ export function createDrawings({ store, bus, host, config }) {
     if (p && p.id !== undefined) deleteDrawing(p.id);
   });
 
+  // F7 (D6): duplicate/restore reuse the ONE create path (#68) — never a new
+  // endpoint. Duplicate clones kind/points/style verbatim (Q4: no offset); undo
+  // of a delete re-POSTs the committed ``before`` row (minting a NEW id).
+  function clone(v) { return v === undefined ? undefined : JSON.parse(JSON.stringify(v)); }
+  function recreate(row) {
+    if (row && row.kind) createDrawing(row.kind, clone(row.points), clone(row.style));
+  }
+  bus.on("drawing:duplicate", function (p) {
+    const row = p && currentDrawings.find(function (d) { return d.id === p.id; });
+    recreate(row);
+  });
+  bus.on("drawing:restore", function (p) { recreate(p && p.row); });
+
   // One write per gesture (D7/R2): PUT only the changed field(s). A failed save
   // is silent — the in-session shape is unaffected.
   function persistDrawing(id, body) {
@@ -155,6 +168,10 @@ export function createDrawings({ store, bus, host, config }) {
         if (!row) return;
         currentDrawings.push(row);
         attachAllDrawings();
+        // F7: the create completion signal — undo records the op (or patches the
+        // re-minted id during a restore replay). Published AFTER attach so a
+        // listener reading the seam sees the row.
+        bus.emit("drawing:created", { id: row.id, kind: row.kind, points: row.points, style: row.style });
       })
       .catch(function () { /* in-session create failed; nothing to do */ });
   }

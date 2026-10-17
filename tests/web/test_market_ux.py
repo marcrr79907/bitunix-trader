@@ -143,7 +143,7 @@ def test_controller_allowlist_routes_serve_javascript(logged_in_client):
     # ``market/controllers/`` as JS (a missing route = import 404 = blank chart).
     from market import views
 
-    assert len(views.CONTROLLER_ALLOWLIST) == 13
+    assert len(views.CONTROLLER_ALLOWLIST) == 14
     for name in views.CONTROLLER_ALLOWLIST:
         response = logged_in_client.get(f"/market/controllers/{name}.js")
         assert response.status_code == 200, name
