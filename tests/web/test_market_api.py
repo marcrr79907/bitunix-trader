@@ -1754,6 +1754,127 @@ def test_drawings_put_stale_interval_key_still_ignored():
     assert response.json()["visible"] is False
 
 
+# --- F9 S2: eight new drawing kinds (R1/R4/R5) ------------------------------
+
+_P1 = {"time": 1, "price": 1.0}
+_P2 = {"time": 2, "price": 2.0}
+_P3 = {"time": 3, "price": 3.0}
+
+# One canonical valid ``points`` object per F9 kind (R5 schema table).
+_F9_VALID_POINTS = {
+    "ray": {"p1": _P1, "p2": _P2},
+    "vline": {"time": 1700000000},
+    "channel": {"p1": _P1, "p2": _P2, "p3": _P3},
+    "price": {"price": 50000.0},
+    "callout": {"p1": _P1, "p2": _P2, "text": "note"},
+    "fib_ext": {"p1": _P1, "p2": _P2, "p3": _P3},
+    "fib_time": {"p1": _P1, "p2": _P2},
+    "fib_zone": {"p1": _P1, "p2": _P2},
+}
+
+# Malformed variants per kind: (kind, points) — every one MUST 400 with no write.
+_F9_INVALID_POINTS = [
+    ("ray", {"p1": _P1}),  # one anchor
+    ("ray", {"p1": _P1, "p2": _P2, "p3": _P3}),  # extra key
+    ("ray", {"p1": {"time": "x", "price": 1.0}, "p2": _P2}),  # non-int time
+    ("ray", {"p1": {"time": 1, "price": "x"}, "p2": _P2}),  # non-num price
+    ("ray", {"p1": {"time": 1, "price": True}, "p2": _P2}),  # bool price
+    ("vline", {"time": 1, "price": 1.0}),  # vline carries no price key
+    ("vline", {"time": "x"}),  # non-int time
+    ("vline", {}),  # missing time
+    ("channel", {"p1": _P1, "p2": _P2}),  # two anchors
+    ("channel", {"p1": _P1, "p2": _P2, "p3": _P3, "p4": _P1}),  # four anchors
+    ("channel", {"p1": _P1, "p2": _P2, "p3": {"time": 3}}),  # p3 missing price
+    ("price", {"time": 1, "price": 1.0}),  # price carries price only
+    ("price", {"price": "x"}),  # non-num price
+    ("price", {"price": True}),  # bool price
+    ("price", {}),  # missing price
+    ("callout", {"p1": _P1, "p2": _P2}),  # missing text
+    ("callout", {"p1": _P1, "p2": _P2, "text": "  "}),  # blank text
+    ("callout", {"p1": _P1, "p2": _P2, "text": 1}),  # non-str text
+    ("fib_ext", {"p1": _P1, "p2": _P2}),  # two anchors
+    ("fib_ext", {"p1": _P1, "p2": _P2, "p3": _P3, "p4": _P1}),  # extra key
+    ("fib_time", {"p1": _P1}),  # one anchor
+    ("fib_time", {"p1": _P1, "p2": _P2, "p3": _P3}),  # three anchors
+    ("fib_zone", {"p1": _P1}),  # one anchor
+    ("fib_zone", {"p1": _P1, "p2": {"time": 2}}),  # p2 missing price
+]
+
+
+@pytest.mark.parametrize("kind", sorted(_F9_VALID_POINTS))
+def test_drawings_f9_kind_post_get_put_round_trip(kind):
+    points = _F9_VALID_POINTS[kind]
+    created = _post_drawing(USER, _drawing_body(kind=kind, points=points))
+
+    assert created.status_code == 201, created.json()
+    body = created.json()
+    assert body["kind"] == kind
+    assert body["points"] == points
+    assert isinstance(body["id"], int)
+
+    listed = USER.get(f"{DRAWINGS_URL}?symbol=BTCUSDT").json()["drawings"]
+    assert listed[0]["kind"] == kind
+    assert listed[0]["points"] == points
+
+    moved = _put_drawing(USER, body["id"], {"points": points})
+    assert moved.status_code == 200
+    assert moved.json()["points"] == points
+
+
+@pytest.mark.parametrize(("kind", "points"), _F9_INVALID_POINTS)
+def test_drawings_f9_invalid_points_is_400_and_writes_nothing(kind, points):
+    from trading.models import Drawing
+
+    response = _post_drawing(USER, _drawing_body(kind=kind, points=points))
+
+    assert response.status_code == 400, (kind, response.json())
+    assert "error" in response.json()
+    assert Drawing.objects.count() == 0
+
+
+@pytest.mark.parametrize("kind", sorted(_F9_VALID_POINTS))
+def test_parse_drawing_accepts_each_f9_kind(kind):
+    from market.quotes import parse_drawing
+
+    points = _F9_VALID_POINTS[kind]
+    out = parse_drawing(kind, points, {})
+    assert out[0] == points
+
+
+def test_f9_kinds_are_members_of_drawing_kinds():
+    # R1: DRAWING_KINDS (quotes.py) auto-includes the eight F9 kinds.
+    from market.quotes import DRAWING_KINDS
+
+    assert set(_F9_VALID_POINTS) <= DRAWING_KINDS
+
+
+def test_drawings_f9_interval_key_ignored_not_400():
+    # R4: an incoming ``interval`` is accepted and ignored for a new kind too.
+    response = _post_drawing(
+        USER, _drawing_body(kind="ray", points=_F9_VALID_POINTS["ray"], interval="7m")
+    )
+    assert response.status_code == 201
+
+
+def test_drawings_f9_isolation_b_put_of_a_id_is_404():
+    from django.contrib.auth import get_user_model
+
+    created = _post_drawing(
+        USER, _drawing_body(kind="fib_ext", points=_F9_VALID_POINTS["fib_ext"])
+    ).json()
+
+    b_client = Client()
+    b = get_user_model().objects.create_user(
+        email="f9b@example.com", password="pw-123456"
+    )
+    b_client.force_login(b)
+
+    response = _put_drawing(
+        b_client, created["id"], {"points": _F9_VALID_POINTS["fib_ext"]}
+    )
+    assert response.status_code == 404
+
+
 # --- parse_drawing: pure validation seam (R4/R5) ----------------------------
 
 
