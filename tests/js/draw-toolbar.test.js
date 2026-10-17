@@ -29,11 +29,11 @@ function makeEl(tag) {
   return el;
 }
 
-function installDom(mount) {
+function installDom(mount, chart) {
   const prev = globalThis.document;
   globalThis.document = {
     activeElement: null,
-    getElementById: () => mount,
+    getElementById: (id) => (id === "chart" ? chart : mount),
     createElement: makeEl,
   };
   return () => { globalThis.document = prev; };
@@ -162,3 +162,55 @@ test("roving tabindex: exactly one 0, the rest -1; ArrowDown moves focus (R3)", 
     assert.strictEqual(globalThis.document.activeElement, btns[0]);
   } finally { restore(); }
 });
+
+test("a tool letter fires inside #chart (R3, F7)", () => {
+  const mount = makeEl("div");
+  const chart = makeEl("section");
+  const store = makeStore({ tool: null });
+  const restore = installDom(mount, chart);
+  try {
+    createDrawToolbar({ store });
+    chart.keydown("H"); // TOOL_KEYS.hline
+    assert.strictEqual(store.get().tool, "hline", "the letter activates the tool");
+    const t = keyEventish("T");
+    (chart._listeners.keydown || []).forEach((fn) => fn(t));
+    assert.strictEqual(store.get().tool, "trendline");
+    assert.strictEqual(t._pd, true, "the letter is consumed (preventDefault)");
+  } finally { restore(); }
+});
+
+test("a tool letter outside #chart does nothing (chart-scoped only, R3)", () => {
+  const mount = makeEl("div");
+  const chart = makeEl("section");
+  const store = makeStore({ tool: null });
+  const restore = installDom(mount, chart);
+  try {
+    createDrawToolbar({ store });
+    // The toolbar button's keydown handler only moves roving focus (Arrow/Home/
+    // End); a letter must NOT activate a tool there (letters are #chart-scoped).
+    const btn = buttonsOf(mount)[0];
+    const e = keyEventish("H");
+    (btn._listeners.keydown || []).forEach((fn) => fn(e));
+    assert.strictEqual(store.get().tool, null, "the toolbar button never activates on a letter");
+    assert.notStrictEqual(e._pd, true, "the letter is not consumed outside #chart");
+  } finally { restore(); }
+});
+
+test("a letter typed in a text field inside #chart is ignored (R3)", () => {
+  const mount = makeEl("div");
+  const chart = makeEl("section");
+  const store = makeStore({ tool: null });
+  const restore = installDom(mount, chart);
+  try {
+    createDrawToolbar({ store });
+    const e = keyEventish("H");
+    e.target = { tagName: "INPUT" };
+    (chart._listeners.keydown || []).forEach((fn) => fn(e));
+    assert.strictEqual(store.get().tool, null, "an input keeps native typing");
+    assert.notStrictEqual(e._pd, true);
+  } finally { restore(); }
+});
+
+function keyEventish(key) {
+  return { key, _pd: false, preventDefault() { this._pd = true; } };
+}

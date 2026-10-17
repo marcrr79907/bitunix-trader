@@ -173,7 +173,7 @@ export function createDrawings({ store, bus, host, config }) {
         // listener reading the seam sees the row.
         bus.emit("drawing:created", { id: row.id, kind: row.kind, points: row.points, style: row.style });
       })
-      .catch(function () { /* in-session create failed; nothing to do */ });
+      .catch(function () { bus.emit("drawing:create-failed", {}); });
   }
 
   function deleteDrawing(id) {

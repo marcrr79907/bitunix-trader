@@ -113,5 +113,24 @@ export function createDrawToolbar({ store }) {
   sync();
   store.subscribe(sync);
 
+  // F7 (R3): the per-tool letters fire ONLY while focus is inside ``#chart`` —
+  // never globally (the object tree owns v/l/s). A letter toggles its tool
+  // through the same ``activate`` command; a text field keeps native typing.
+  const LETTERS = {};
+  Object.keys(TOOL_KEYS).forEach(function (kind) { LETTERS[TOOL_KEYS[kind].toLowerCase()] = kind; });
+  const chartEl = document.getElementById("chart");
+  if (chartEl) {
+    chartEl.addEventListener("keydown", function (e) {
+      if (e.metaKey || e.ctrlKey || e.altKey) return;
+      const t = e.target;
+      if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA"
+          || t.tagName === "SELECT" || t.isContentEditable)) return;
+      const kind = LETTERS[(e.key || "").toLowerCase()];
+      if (!kind) return;
+      activate(kind);
+      e.preventDefault();
+    });
+  }
+
   return {};
 }

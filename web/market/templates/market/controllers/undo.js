@@ -59,11 +59,20 @@ export function createUndo({ store, bus, host, config }) {
 
   // Record ONLY at the gesture boundary (persist:true, D3); a flag-only change
   // (visible/locked) is out of scope (D2). ``before`` is the committed cache.
+  // The cache is updated on EVERY real change (including a replay's), so an undo
+  // leaves ``committed`` at the REVERTED value — a following gesture records the
+  // right ``before`` (#200). Only the op push is suppressed during a replay.
   bus.on("drawing:changed", function (p) {
-    if (!p || p.persist !== true || replaying) return;
-    if (!p.points && !p.style) return;
+    if (!p || p.persist !== true) return;
     const c = committed[p.id];
     if (!c) return;
+    if (!p.points && !p.style) return;
+    if (replaying) {
+      // A replay's own change: sync the cache to the reverted state, no op push.
+      if (p.points) c.points = copy(p.points);
+      if (p.style) c.style = copy(p.style);
+      return;
+    }
     const before = {};
     const after = {};
     if (p.points) { before.points = copy(c.points); after.points = copy(p.points); }
@@ -93,6 +102,12 @@ export function createUndo({ store, bus, host, config }) {
       op: "create", id: p.id,
       after: { kind: p.kind, points: copy(p.points), style: copy(p.style) },
     });
+  });
+
+  // A restore whose POST failed (#201): clear the guard so undo is not wedged
+  // for the rest of the session. ``drawings.js`` emits this from the catch.
+  bus.on("drawing:create-failed", function () {
+    replaying = null;
   });
 
   function replay(entry, dir) {

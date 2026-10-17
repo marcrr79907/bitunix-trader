@@ -221,6 +221,46 @@ test("a restore's async drawing:created patches the re-minted id onto the entry"
   } finally { f.restore(); }
 });
 
+test("a second drag after an undo records the correct before (no stale cache, #200)", () => {
+  const f = undoFixture();
+  try {
+    commitRow(f.bus, { id: 1, kind: "hline", points: { price: 100 }, style: {} });
+    f.bus.emit("drawing:changed", { id: 1, points: { price: 130 }, persist: true });
+    f.emitted.length = 0;
+    f.doc.fire("keydown", keyEvent("z", { ctrlKey: true })); // undo -> PUT before (price 100)
+    assert.deepStrictEqual(f.emitted[0].p.points, { price: 100 });
+    // The undo reverted to 100, so the cache must now hold 100. Drag again to 140.
+    f.emitted.length = 0;
+    f.bus.emit("drawing:changed", { id: 1, points: { price: 140 }, persist: true });
+    f.emitted.length = 0;
+    f.doc.fire("keydown", keyEvent("z", { ctrlKey: true })); // undo -> PUT the true before (100)
+    assert.deepStrictEqual(f.emitted[0].p, { id: 1, persist: true, points: { price: 100 } },
+      "the second undo restores the reverted value, not the stale post-drag value");
+  } finally { f.restore(); }
+});
+
+test("a failed restore clears the replaying guard (undo is not wedged, #201)", () => {
+  const f = undoFixture();
+  try {
+    commitRow(f.bus, { id: 1, kind: "hline", points: { price: 100 }, style: {} });
+    f.bus.emit("drawing:created", {
+      id: 5, kind: "rect", points: { p1: { time: 1, price: 2 } }, style: {},
+    });
+    f.doc.fire("keydown", keyEvent("z", { ctrlKey: true })); // undo create -> DELETE 5
+    f.emitted.length = 0;
+    f.doc.fire("keydown", keyEvent("z", { ctrlKey: true, shiftKey: true })); // redo -> restore (async)
+    // The POST fails: drawings.js signals it (drawing:created never arrives).
+    f.bus.emit("drawing:create-failed", {});
+    f.emitted.length = 0;
+    // The guard must be clear, so a genuine gesture is still recorded and undoable.
+    f.bus.emit("drawing:changed", { id: 1, points: { price: 140 }, persist: true });
+    f.emitted.length = 0;
+    f.doc.fire("keydown", keyEvent("z", { ctrlKey: true })); // undo the drag -> PUT before (100)
+    assert.deepStrictEqual(f.emitted[0], { name: "drawing:changed", p: { id: 1, persist: true, points: { price: 100 } } },
+      "a failed restore must not wedge the replaying guard");
+  } finally { f.restore(); }
+});
+
 test("Ctrl+Y redoes (Windows); a bare key is ignored; preventDefault only on a hit", () => {
   const f = undoFixture();
   try {
