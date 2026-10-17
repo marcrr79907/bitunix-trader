@@ -3457,6 +3457,16 @@ def test_system_theme_follows_emulated_color_scheme(seeded_5m_candles, browser_p
 # ``window.marketChart.drawings`` + the captured POST/PUT.
 
 
+# A MEASURED readout: the node seeds with an en dash (U+2013) placeholder, so a
+# ``trim().length > 0`` gate passes before any drag (vacuous, #189). A real
+# measurement carries a signed percent ("+1.23%") and a price/time figure.
+_MEASURED_JS = (
+    "() => { const n = document.getElementById('measure-readout');"
+    " const t = n ? n.textContent.trim() : '';"
+    " return /%/.test(t) && /\\d/.test(t); }"
+)
+
+
 @p
 def test_measure_drag_writes_readout_and_no_post(seeded_5m_candles, browser_page):
     # R1/R5: a drag with the measure tool active reports the span in the DOM
@@ -3488,12 +3498,12 @@ def test_measure_drag_writes_readout_and_no_post(seeded_5m_candles, browser_page
     page.mouse.down()
     page.mouse.move(x + 60, box["y"] + box["height"] * 0.6, steps=8)
     page.mouse.up()
-    page.wait_for_function(
-        "() => { const n = document.getElementById('measure-readout');"
-        " return n && n.textContent.trim().length > 0; }",
-        timeout=10000,
-    )
+    # #189: wait for a MEASURED readout (a real price/% figure), not just a
+    # non-empty node — the placeholder en dash would otherwise pass vacuously.
+    page.wait_for_function(_MEASURED_JS, timeout=10000)
     assert page.locator("#measure-readout").get_attribute("aria-live") == "polite"
+    measured = page.locator("#measure-readout").text_content()
+    assert "%" in measured, measured  # a real measurement carries a percent
     assert writes == [], f"measure issued a write: {writes}"
     assert page.evaluate("() => window.marketChart.drawings.length") == 0
 
@@ -3526,16 +3536,13 @@ def test_measure_replaced_and_cleared_on_tool_change(seeded_5m_candles, browser_
         page.mouse.up()
 
     drag(50)
-    page.wait_for_function(
-        "() => { const n = document.getElementById('measure-readout');"
-        " return n && n.textContent.trim().length > 0; }",
-        timeout=10000,
-    )
+    page.wait_for_function(_MEASURED_JS, timeout=10000)
     first = page.locator("#measure-readout").text_content()
     drag(90)
     page.wait_for_function(
         "(prev) => { const n = document.getElementById('measure-readout');"
-        " return n && n.textContent.trim() !== prev.trim(); }",
+        " if (!n || !/%/.test(n.textContent)) return false;"
+        " return n.textContent.trim() !== prev.trim(); }",
         arg=first,
         timeout=10000,
     )
@@ -3627,6 +3634,58 @@ def test_position_three_click_persists_and_drag_one_put(
 
 
 @p
+def test_position_escape_cancels_mid_draft(seeded_5m_candles, browser_page):
+    # R6 (design-system): Escape cancels a pending position draft — no POST — and
+    # a subsequent three-click draft still finalizes exactly one position.
+    page, base_url = browser_page
+    page.route_web_socket("wss://fapi.bitunix.com/**", lambda ws: None)
+    posts = []
+    page.on(
+        "request",
+        lambda r: (
+            posts.append(r)
+            if r.method == "POST" and "/market/api/drawings" in r.url
+            else None
+        ),
+    )
+    page.goto(f"{base_url}/market/")
+    _wait_ready(page)
+    page.select_option("#interval", "5m")
+    page.wait_for_function(
+        "() => window.marketChart && window.marketChart.candleSeries &&"
+        " window.marketChart.candleSeries.data().length > 0",
+        timeout=10000,
+    )
+    page.wait_for_timeout(1200)
+    page.locator('.draw-tool[data-kind="position"]').click()
+    canvas = page.locator("#chart canvas").first
+    canvas.scroll_into_view_if_needed()
+    box = canvas.bounding_box()
+    cx = box["x"] + box["width"] / 2
+    # Two clicks (entry + stop) leave a half-collected draft, then Escape.
+    for dx, frac in ((-80, 0.5), (0, 0.68)):
+        page.mouse.click(cx + dx, box["y"] + box["height"] * frac)
+        page.wait_for_timeout(500)
+    page.locator("#chart").focus()  # the keydown listener lives on the #chart container
+    page.keyboard.press("Escape")
+    page.wait_for_timeout(300)
+    # No draft was persisted, and the abandoned draft is gone: a fresh 3-click
+    # sequence must start at entry, not resume the dead draft's take_profit.
+    assert posts == [], [r.url for r in posts]
+    for dx, frac in ((-80, 0.5), (0, 0.68), (80, 0.32)):
+        page.mouse.click(cx + dx, box["y"] + box["height"] * frac)
+        page.wait_for_timeout(500)
+    page.wait_for_function(
+        "() => window.marketChart.drawings && window.marketChart.drawings.length === 1",
+        timeout=10000,
+    )
+    assert len(posts) == 1, [r.url for r in posts]
+    body = json.loads(posts[0].post_data or "{}")
+    assert body["kind"] == "position"
+    assert set(body["points"]) == {"entry", "stop", "take_profit"}
+
+
+@p
 def test_position_seed_copies_smc_setup_verbatim(seeded_5m_candles, browser_page):
     # R15: the explicit seed copies a setup's entry/stop/take_profit VERBATIM from
     # the fetched SMC payload (no JS recompute) into the created position POST.
@@ -3663,3 +3722,36 @@ def test_position_seed_copies_smc_setup_verbatim(seeded_5m_candles, browser_page
     assert body["points"]["take_profit"] == expected["take_profit"]
     assert body["points"]["entry"]["price"] == expected["entry"]
     assert body["points"]["entry"]["time"] == expected["time"]
+
+
+@p
+def test_position_readout_reports_rr_after_seed(seeded_5m_candles, browser_page):
+    # R6 (design-system): the selected position's R:R lives in the aria-live
+    # ``#position-readout`` DOM node, not only on the canvas. Selecting the tree
+    # row for the seeded position shows "R:R <n>"; deselecting clears it.
+    page, base_url = browser_page
+    page.route_web_socket("wss://fapi.bitunix.com/**", lambda ws: None)
+    page.goto(f"{base_url}/market/")
+    _wait_ready(page)
+    page.select_option("#interval", "5m")
+    page.wait_for_function(
+        "() => window.marketChart.smc && window.marketChart.smc.interval === '5m'",
+        timeout=10000,
+    )
+    if not page.evaluate("() => window.marketChart.smc.setups"):
+        pytest.skip("no setup computed for the seeded window")
+    page.locator("#position-seed").click()
+    page.wait_for_function(
+        "() => window.marketChart.drawings && window.marketChart.drawings.length >= 1",
+        timeout=10000,
+    )
+    assert page.locator("#position-readout").get_attribute("aria-live") == "polite"
+    # Select the position row in the object tree -> the R:R is announced.
+    page.locator("#object-tree li.tree-row[data-id]").first.click()
+    page.wait_for_function(
+        "() => { const n = document.getElementById('position-readout');"
+        " return n && /^R:R \\d/.test(n.textContent.trim()); }",
+        timeout=10000,
+    )
+    rr = page.locator("#position-readout").text_content().strip()
+    assert rr.startswith("R:R "), rr

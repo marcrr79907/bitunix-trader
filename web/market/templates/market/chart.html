@@ -59,6 +59,7 @@
     <h2 id="measure-heading">Measure</h2>
     <p id="measure-readout" aria-live="polite">–</p>
     <button type="button" id="position-seed">Position from setup</button>
+    <p id="position-readout" aria-live="polite"></p>
     <h2 id="objects-heading">Objects</h2>
     <div id="object-tree" aria-labelledby="objects-heading"></div>
   </aside>
@@ -120,6 +121,7 @@
 <link rel="modulepreload" href="{% url 'market_chart_module_js' name='chart-host-candles' %}">
 <link rel="modulepreload" href="{% url 'market_chart_module_js' name='measure-core' %}">
 <link rel="modulepreload" href="{% url 'market_chart_module_js' name='position-core' %}">
+<link rel="modulepreload" href="{% url 'market_chart_module_js' name='position-draft-core' %}">
 <link rel="modulepreload" href="{% url 'market_chart_module_js' name='main' %}">
 <link rel="modulepreload" href="{% url 'market_controller_js' name='indicators' %}">
 <link rel="modulepreload" href="{% url 'market_controller_js' name='history' %}">

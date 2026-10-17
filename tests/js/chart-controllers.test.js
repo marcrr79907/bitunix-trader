@@ -323,10 +323,10 @@ function makeStore(initial) {
   };
 }
 
-// A host stub: the chart maps time<->px, the series maps price<->px and records
-// every primitive attach/detach + each requestUpdate (so we can assert #68).
-function makeHost() {
-  const series = {
+// A series stub: maps price<->px and records every primitive attach/detach +
+// each requestUpdate (so we can assert #68). One per chart build.
+function makeSeries(chart) {
+  return {
     _prim: null,
     attaches: 0,
     updates: 0,
@@ -335,7 +335,7 @@ function makeHost() {
       this.attaches += 1;
       const seriesRef = this;
       prim.attached({
-        chart: chartRef,
+        chart: chart,
         series: this,
         requestUpdate() { seriesRef.updates += 1; },
       });
@@ -346,9 +346,21 @@ function makeHost() {
     setData() { throw new Error("measure must never call setData"); },
     update() { throw new Error("measure must never call update"); },
   };
+}
+
+// A host stub: the chart maps time<->px; ``swap()`` models a chart REBUILD
+// (buildChart recreates the candle series) so a controller's rebuild behaviour
+// is testable (#188). ``_series`` always resolves to the current series.
+function makeHost() {
   const chart = { timeScale() { return { timeToCoordinate: (t) => t, coordinateToTime: (x) => x }; } };
-  const chartRef = chart;
-  return { getChart: () => chart, getCandleSeries: () => series, _series: series };
+  let series = makeSeries(chart);
+  const host = {
+    getChart: () => chart,
+    getCandleSeries: () => series,
+    swap() { series = makeSeries(chart); return series; },
+  };
+  Object.defineProperty(host, "_series", { get: () => series });
+  return host;
 }
 
 function measureFixture(tool = "measure") {
@@ -437,5 +449,34 @@ test("no pointerdown starts a measurement when the tool is not measure (R1)", ()
     f.chartEl.fire("pointerdown", ev(10, 100));
     f.chartEl.fire("pointermove", ev(50, 120));
     assert.strictEqual(f.host._series.attaches, 0, "the gesture is guarded on state.tool");
+  } finally { f.restore(); }
+});
+
+test("measure re-attaches to the NEW series after a rebuild (#188)", () => {
+  // An interval-only switch rebuilds the chart but does not clear the measure;
+  // attach() (called on every buildChart) MUST move the primitive to the new
+  // series, never leave it on the destroyed one.
+  const f = measureFixture();
+  try {
+    f.chartEl.fire("pointerdown", ev(10, 100));
+    f.chartEl.fire("pointermove", ev(50, 120));
+    const prim = f.host._series._prim;
+    assert.ok(prim, "a primitive is attached while measuring");
+    const oldSeries = f.host._series;
+    const newSeries = f.host.swap(); // buildChart recreates the candle series
+    f.m.attach(); // main calls attach() after every build
+    assert.strictEqual(oldSeries._prim, null, "detached from the destroyed series");
+    assert.strictEqual(newSeries._prim, prim, "attached to the NEW series");
+    assert.notStrictEqual(f.readout.textContent, "", "the readout survives the rebuild");
+  } finally { f.restore(); }
+});
+
+test("measure attach() is a no-op with no active measurement (#188/R1)", () => {
+  // Triangulation: a rebuild with nothing measured attaches nothing.
+  const f = measureFixture();
+  try {
+    f.host.swap();
+    f.m.attach();
+    assert.strictEqual(f.host._series.attaches, 0, "no phantom primitive on rebuild");
   } finally { f.restore(); }
 });
