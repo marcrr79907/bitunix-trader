@@ -229,6 +229,16 @@ code{font-family:var(--mono); background:var(--surface); padding:1px 5px; border
 .add-item:hover{border-color:var(--accent); color:var(--accent)}
 dialog{background:var(--surface); color:var(--text); border:1px solid var(--border); border-radius:var(--r)}
 dialog form{display:flex; flex-direction:column; gap:var(--sp-2)}
+/* F7 context menu: JS-built role=menu (tokens only, R10/design-system). Sits
+   above the chart via z-index; a right-click near the edge is clamped in JS. */
+.chart-context-menu{position:fixed; z-index:20; min-width:160px; padding:var(--sp-1);
+  background:var(--surface); border:1px solid var(--border); border-radius:var(--r);
+  display:flex; flex-direction:column; gap:var(--sp-1)}
+.chart-context-menu [role="menuitem"]{padding:var(--sp-1) var(--sp-2);
+  background:var(--surface); border:1px solid transparent; color:var(--text);
+  border-radius:var(--r); font-size:var(--fs-3); text-align:left; cursor:pointer}
+.chart-context-menu [role="menuitem"]:hover,
+.chart-context-menu [role="menuitem"]:focus-visible{border-color:var(--accent); color:var(--accent)}
 
 @media (max-width:820px){
   .market-layout{grid-template-columns:1fr; height:auto}
