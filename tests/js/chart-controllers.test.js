@@ -5,6 +5,8 @@
 // unit-tested here, mirroring the Slice 1/2 core-test discipline.
 import test from "node:test";
 import assert from "node:assert";
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import {
   buildIndicators,
   settingsFromFields,
@@ -893,6 +895,82 @@ test("clearForSwitch closes an open menu (R4)", () => {
     assert.ok(menuNode(f.body));
     f.cm.clearForSwitch();
     assert.strictEqual(menuNode(f.body), null);
+  } finally { f.restore(); }
+});
+
+// --- F7 UI #204: keyboard-open path (Shift+F10 / ContextMenu) ----------------
+
+function keyOpen(key, opts) {
+  let prevented = false;
+  return Object.assign(
+    { key, shiftKey: false, preventDefault() { prevented = true; }, _prevented: () => prevented },
+    opts,
+  );
+}
+
+test("#chart advertises a menu popup (aria-haspopup, F7 UI #204)", () => {
+  const html = readFileSync(
+    fileURLToPath(new URL("../../web/market/templates/market/chart.html", import.meta.url)),
+    "utf8",
+  );
+  assert.match(html, /id="chart"[^>]*aria-haspopup="menu"/, "chart.html #chart carries aria-haspopup");
+});
+
+test("Shift+F10 on #chart opens the menu at the selected drawing (F7 UI #204)", () => {
+  const f = menuFixture([HLINE_ROW]);
+  try {
+    f.chart.getBoundingClientRect = () => ({ left: 40, top: 20 });
+    f.bus.emit("drawing:selected", { id: 7 });
+    const e = keyOpen("F10", { shiftKey: true });
+    f.chart.fire("keydown", e);
+    assert.strictEqual(e._prevented(), true, "the native key is consumed");
+    const menu = menuNode(f.body);
+    assert.ok(menu, "Shift+F10 opens the menu");
+    assert.deepStrictEqual(menu.children.map((c) => c.textContent), ["Delete", "Duplicate"]);
+    // hline handle at price 100 -> local (0,100); rect (40,20) -> client (40,120).
+    assert.strictEqual(menu.style.left, "40px");
+    assert.strictEqual(menu.style.top, "120px");
+  } finally { f.restore(); }
+});
+
+test("ContextMenu key with nothing selected opens at the chart rect+8 (F7 UI #204)", () => {
+  const f = menuFixture([]);
+  try {
+    f.chart.getBoundingClientRect = () => ({ left: 40, top: 20 });
+    const e = keyOpen("ContextMenu");
+    f.chart.fire("keydown", e);
+    assert.strictEqual(e._prevented(), true);
+    const menu = menuNode(f.body);
+    assert.ok(menu);
+    assert.deepStrictEqual(menu.children.map((c) => c.textContent), ["Add indicator"]);
+    assert.strictEqual(menu.style.left, "48px");
+    assert.strictEqual(menu.style.top, "28px");
+  } finally { f.restore(); }
+});
+
+test("a bare F10 (no Shift) does not open the menu (F7 UI #204)", () => {
+  const f = menuFixture([HLINE_ROW]);
+  try {
+    const e = keyOpen("F10");
+    f.chart.fire("keydown", e);
+    assert.strictEqual(menuNode(f.body), null);
+    assert.notStrictEqual(e._prevented(), true);
+  } finally { f.restore(); }
+});
+
+test("an item without a shortcut omits aria-keyshortcuts (F7 UI #206)", () => {
+  // The model yields keyshortcut:"" for Duplicate/Add indicator; writing it
+  // verbatim leaves an empty (misleading) attribute. Omit it entirely.
+  const f = menuFixture([HLINE_ROW]);
+  try {
+    f.chart.fire("contextmenu", ctxEv(300, 100));
+    const items = menuNode(f.body).children;
+    assert.strictEqual(items[0].getAttribute("aria-keyshortcuts"), "Delete");
+    assert.strictEqual(
+      items[1].hasAttribute("aria-keyshortcuts"),
+      false,
+      "an empty shortcut must not be written",
+    );
   } finally { f.restore(); }
 });
 

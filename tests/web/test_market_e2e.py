@@ -1035,6 +1035,9 @@ def test_draw_toolbar_renders_groups_and_sets_store(browser_page):
         page.locator('.draw-tool[data-kind="fib"]').get_attribute("aria-label")
         == "Fibonacci retracement"
     )
+    # F7 UI #206: the advertised letter is surfaced visually on every button.
+    assert page.locator(".draw-tools .draw-tool .tool-key").count() == 7
+    assert page.locator('.draw-tool[data-kind="fib"] .tool-key').text_content() == "F"
 
     # No tool active at boot: nothing pressed.
     assert page.locator('.draw-tools .draw-tool[aria-pressed="true"]').count() == 0
@@ -3926,6 +3929,35 @@ def test_context_menu_on_drawing_shows_delete_and_duplicate(
 
 
 @p
+def test_context_menu_opens_by_keyboard_at_selection(
+    seeded_5m_candles, interaction_drawing, browser_page
+):
+    # F7 UI #204: with a drawing selected (via the tree row -> drawing:selected),
+    # Shift+F10 opens the menu anchored to the chart, not the viewport corner.
+    # #chart advertises aria-haspopup.
+    page, base_url = browser_page
+    page.goto(f"{base_url}/market/")
+    _wait_ready(page)
+    page.wait_for_function(
+        "() => window.marketChart.drawings && window.marketChart.drawings.length === 1",
+        timeout=10000,
+    )
+    assert page.locator("#chart").get_attribute("aria-haspopup") == "menu"
+    page.locator("#object-tree .tree-row[data-id] .tree-row-name").first.click()
+    page.locator("#chart").focus()
+    page.keyboard.press("Shift+F10")
+    page.wait_for_selector('div[role="menu"]', timeout=5000)
+    labels = page.locator('div[role="menu"] [role="menuitem"]').all_text_contents()
+    assert labels == ["Delete", "Duplicate"], labels
+    # Anchored to the chart, not pinned at the viewport origin (the #204 symptom).
+    left = page.evaluate(
+        "() => parseInt(getComputedStyle("
+        "document.querySelector('div[role=menu]')).left, 10)"
+    )
+    assert left > 0, "the menu is not stuck at the top-left corner"
+
+
+@p
 def test_context_menu_duplicate_then_undo_deletes(
     seeded_5m_candles, interaction_drawing, browser_page
 ):
@@ -4019,6 +4051,36 @@ def test_context_menu_delete_then_undo_reposts(
     assert len(posts) == 1, [r.url for r in posts]
     restored_id = page.evaluate("() => window.marketChart.drawings[0].id")
     assert restored_id != original_id, "a restored row carries a NEW id"
+
+
+@p
+def test_undo_announces_and_advertises_shortcut(
+    seeded_5m_candles, interaction_drawing, browser_page
+):
+    # F7 UI #205: an undo writes "Undo" to the polite #history-status region and
+    # the region advertises the shortcuts; a static hint is discoverable.
+    page, base_url = browser_page
+    page.goto(f"{base_url}/market/")
+    _wait_ready(page)
+    page.wait_for_function(
+        "() => window.marketChart.drawings && window.marketChart.drawings.length === 1",
+        timeout=10000,
+    )
+    assert (
+        page.locator("#history-status").get_attribute("aria-keyshortcuts")
+        == "Control+Z Control+Shift+Z"
+    )
+    assert page.locator("#history-hint").count() == 1
+    _select_hline(page)
+    page.keyboard.press("Delete")
+    page.wait_for_function(
+        "() => window.marketChart.drawings.length === 0", timeout=5000
+    )
+    page.keyboard.press("Control+z")
+    page.wait_for_function(
+        "() => document.getElementById('history-status').textContent === 'Undo'",
+        timeout=5000,
+    )
 
 
 @p

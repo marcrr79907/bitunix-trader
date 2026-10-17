@@ -7,7 +7,7 @@
 {% block content %}
 <div class="market-layout">
   <button type="button" class="panel-toggle" aria-expanded="true" aria-controls="panel">Panel</button>
-  <section id="chart" tabindex="0" aria-label="Candlestick chart"></section>
+  <section id="chart" tabindex="0" aria-label="Candlestick chart" aria-haspopup="menu"></section>
   <aside class="panel" id="panel">
     <h1>Market</h1>
     <h2>Pairs</h2>
@@ -56,6 +56,8 @@
     </fieldset>
     <h2 id="drawings-heading">Drawings</h2>
     <div id="draw-tools" aria-labelledby="drawings-heading"></div>
+    <p id="history-hint" class="history-hint">Undo Ctrl+Z · Redo Ctrl+Shift+Z</p>
+    <p id="history-status" class="visually-hidden" aria-live="polite" aria-keyshortcuts="Control+Z Control+Shift+Z"></p>
     <h2 id="measure-heading">Measure</h2>
     <p id="measure-readout" aria-live="polite">–</p>
     <h2 id="position-heading">Position</h2>

@@ -7,6 +7,8 @@
 // drawing-interaction-controller.test.js (no jsdom, framework-free).
 import test from "node:test";
 import assert from "node:assert";
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import { createBus } from "../../web/market/templates/market/chart-bus.js";
 import {
   createUndo,
@@ -76,9 +78,12 @@ test("replayOps: a null/unknown entry replays nothing", () => {
 
 function makeDoc() {
   const listeners = {};
+  const els = {};
   return {
     addEventListener(type, fn) { (listeners[type] = listeners[type] || []).push(fn); },
     fire(type, ev) { (listeners[type] || []).forEach((fn) => fn(ev)); },
+    getElementById(id) { return els[id] || null; },
+    setEl(id, el) { els[id] = el; },
   };
 }
 
@@ -96,6 +101,8 @@ function keyEvent(k, opts) {
 
 function undoFixture() {
   const doc = makeDoc();
+  const status = { textContent: "" };
+  doc.setEl("history-status", status); // present before createUndo (the readout pattern)
   const prevDoc = globalThis.document;
   globalThis.document = doc;
   const bus = createBus();
@@ -106,7 +113,7 @@ function undoFixture() {
   const store = makeStore({ symbol: "BTCUSDT", interval: "1m", tool: null });
   const undo = createUndo({ store, bus, host: {}, config: {} });
   return {
-    doc, bus, emitted, undo,
+    doc, bus, emitted, undo, status,
     restore() { if (prevDoc === undefined) delete globalThis.document; else globalThis.document = prevDoc; },
   };
 }
@@ -334,4 +341,61 @@ test("clearForSwitch empties the stack and the committed cache", () => {
     f.doc.fire("keydown", keyEvent("z", { ctrlKey: true }));
     assert.deepStrictEqual(f.emitted, []);
   } finally { f.restore(); }
+});
+
+// --- F7 UI #205: aria-live announcement + discoverable shortcuts -------------
+
+function historyFixture() {
+  return undoFixture();
+}
+
+test("the announcement region is created before any undo/redo fires", () => {
+  // The controller reads #history-status at construction (like the other
+  // aria-live readouts); an element absent at build time is never announced.
+  const f = historyFixture();
+  assert.strictEqual(f.status.textContent, "", "idle region starts empty");
+});
+
+test("an undo writes 'Undo' to the aria-live region (F7 UI #205)", () => {
+  const f = historyFixture();
+  try {
+    commitRow(f.bus, { id: 1, kind: "hline", points: { price: 100 }, style: {} });
+    f.bus.emit("drawing:changed", { id: 1, points: { price: 130 }, persist: true });
+    f.emitted.length = 0;
+    f.doc.fire("keydown", keyEvent("z", { ctrlKey: true }));
+    assert.strictEqual(f.status.textContent, "Undo");
+  } finally { f.restore(); }
+});
+
+test("a redo writes 'Redo' to the aria-live region (F7 UI #205)", () => {
+  const f = historyFixture();
+  try {
+    commitRow(f.bus, { id: 1, kind: "hline", points: { price: 100 }, style: {} });
+    f.bus.emit("drawing:changed", { id: 1, points: { price: 130 }, persist: true });
+    f.doc.fire("keydown", keyEvent("z", { ctrlKey: true })); // undo
+    f.doc.fire("keydown", keyEvent("z", { ctrlKey: true, shiftKey: true })); // redo
+    assert.strictEqual(f.status.textContent, "Redo");
+  } finally { f.restore(); }
+});
+
+test("an undo with nothing on the stack never writes the region", () => {
+  const f = historyFixture();
+  try {
+    f.doc.fire("keydown", keyEvent("z", { ctrlKey: true }));
+    assert.strictEqual(f.status.textContent, "", "no op -> no announcement");
+  } finally { f.restore(); }
+});
+
+test("the announcement region and hint advertise undo/redo (F7 UI #205)", () => {
+  const html = readFileSync(
+    fileURLToPath(new URL("../../web/market/templates/market/chart.html", import.meta.url)),
+    "utf8",
+  );
+  assert.match(
+    html,
+    /id="history-status"[^>]*aria-keyshortcuts="Control\+Z Control\+Shift\+Z"/,
+    "the live region advertises both shortcuts",
+  );
+  assert.match(html, /id="history-status"[^>]*aria-live="polite"/);
+  assert.match(html, /id="history-hint"/, "a static, discoverable hint exists");
 });

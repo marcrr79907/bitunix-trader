@@ -145,6 +145,26 @@ test("each tool button carries an aria-keyshortcuts value (R1 delta, F7)", () =>
   } finally { restore(); }
 });
 
+test("each tool button shows its letter visibly in a .tool-key span (F7 UI #206)", () => {
+  // The aria-keyshortcuts letter is only honest if sighted users can see it too;
+  // a muted <span class="tool-key"> surfaces it on every button.
+  const mount = makeEl("div");
+  const restore = installDom(mount);
+  try {
+    createDrawToolbar({ store: makeStore({ tool: null }) });
+    const btns = buttonsOf(mount);
+    for (const b of btns) {
+      const key = toolKeyOf(b);
+      assert.ok(key, `${b.dataset.kind} has a .tool-key span`);
+      assert.strictEqual(key.textContent, TOOL_KEYS[b.dataset.kind], b.dataset.kind);
+    }
+  } finally { restore(); }
+});
+
+function toolKeyOf(btn) {
+  return (btn.children || []).find((c) => c.className === "tool-key") || null;
+}
+
 test("roving tabindex: exactly one 0, the rest -1; ArrowDown moves focus (R3)", () => {
   const mount = makeEl("div");
   const restore = installDom(mount);
