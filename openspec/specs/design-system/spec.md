@@ -127,13 +127,24 @@ live in a DOM node with `aria-live="polite"` — the canvas-drawn `R:R` text is
 supplementary, the DOM node is the accessible source — and their writes MUST be
 coalesced to at most ONE per animation frame (via the pure
 `readout-coalesce-core.js`) rather than one per pointer-move, never dropping the
-final value; and `Escape` MUST cancel a measure or a pending position draft.
+final value; and `Escape` MUST cancel a measure or a pending position draft. The
+F7 context menu MUST be keyboard-navigable: it MUST be a DOM `role="menu"` of
+`role="menuitem"` items with ArrowUp/Down/Home/End roving focus, Enter/Space
+activation, each item carrying an accessible name and, when it has one, an
+`aria-keyshortcuts` advertising its binding (an empty shortcut MUST be omitted),
+and `Escape` closing it and returning focus to `#chart`. The F7 undo/redo MUST
+announce each operation ("Undo"/"Redo") in a polite `aria-live` region
+(`#history-status`), and the F5 tool buttons MUST surface their advertised
+shortcut letter visibly (`.tool-key`), so the `aria-keyshortcuts` is honest to
+sighted users.
 (Previously: AA contrast was required against the dark theme only.)
 (Previously: focus state covered nav links and form controls only; no focusable
 chart canvas, dialog, or toolbar/tree contract.)
 (Previously: the rule was silent on measure/position; the position R:R `aria-live`
 node and Escape-cancels-draft behavior were verify CRITICALs C1/C2, remediated in
 the F6 S4/UI slices — the rule now matches the delivered behavior.)
+(Previously: the rule was silent on the F7 context menu, undo announcement, and
+the visible tool shortcut letter.)
 
 #### Scenario: Visible focus
 - GIVEN a keyboard user
@@ -174,6 +185,26 @@ the F6 S4/UI slices — the rule now matches the delivered behavior.)
 - GIVEN an in-progress measurement or a pending position draft
 - WHEN `Escape` is pressed
 - THEN the draft is cancelled and no drawing is written (measure: `chart-controllers.test.js`; position: `drawings.js` keydown handler + `position-draft-core` `cancel`)
+
+#### Scenario: Context menu is keyboard-navigable with focus return
+- GIVEN the F7 context menu open
+- WHEN `ArrowDown`/`End`/`Enter`/`Escape` are pressed
+- THEN focus roves across items, Enter activates the focused item, and `Escape` closes the menu and returns focus to `#chart`
+
+#### Scenario: Menu items advertise accessible names and shortcuts
+- GIVEN an open context menu on a drawing row
+- WHEN its items are inspected
+- THEN each carries an accessible name and its `aria-keyshortcuts` when it has one (an empty shortcut is omitted)
+
+#### Scenario: Undo and redo are announced
+- GIVEN an undo or a redo run
+- WHEN it completes
+- THEN the polite `#history-status` region carries "Undo" (or "Redo")
+
+#### Scenario: Tool shortcut letters are visible
+- GIVEN the rendered draw toolbar
+- WHEN a tool button is inspected
+- THEN it shows a visible `.tool-key` letter alongside its `aria-keyshortcuts`
 
 #### Scenario: AA holds in the light theme
 - GIVEN the light token set applied via `[data-theme="light"]`
@@ -236,8 +267,12 @@ for `script-src`). The pre-existing inline `onclick` in `invite_create.html`
 MUST be removed (its behavior moved to same-origin JavaScript). The F5 toolbar and
 tree icons MUST be injected by same-origin JS (JS-built inline SVG from
 `tool-icons-core.js`) carrying no event attributes; no `onclick`/`on*` attribute
-MAY appear in the SVG or markup.
+MAY appear in the SVG or markup. The F7 context menu MUST be JS-built DOM (a
+`role="menu"` node created by `controllers/context-menu.js`) and its
+`contextmenu` listener MUST be registered via `addEventListener`; NO inline
+`oncontextmenu` attribute or inline `<script>` MAY be added.
 (Previously: the rule was silent on how icons are produced.)
+(Previously: the rule was silent on the F7 context menu.)
 
 #### Scenario: CSP header unchanged
 - GIVEN a rendered page
@@ -248,6 +283,11 @@ MAY appear in the SVG or markup.
 - GIVEN the templates and the toolbar/tree markup
 - WHEN scanned
 - THEN no inline event handler or inline `<script>` is present, and the injected SVG carries no `on*` attribute
+
+#### Scenario: Menu is CSP-clean
+- GIVEN the rendered market page
+- WHEN the markup and scripts are scanned
+- THEN no inline `oncontextmenu`/`<script>` exists, the `contextmenu` listener is attached with `addEventListener`, and the CSP equals the prior value
 
 ### Requirement: R10 — Toolbar and tree tokens
 

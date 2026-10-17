@@ -20,7 +20,12 @@ and `Positions` groups) — vocabulary from `tool-icons-core.js`. Each tool MUST
 a native `<button type="button">` with an accessible `aria-label` and a
 `data-kind` matching its group kind — a persisted drawing kind ∈ `DRAWING_KINDS`
 (`drawing-core.js:13`) for the drawing tools, or `"measure"` for the ephemeral
-measure tool (the ONLY `data-kind` that is not a `DRAWING_KINDS` member).
+measure tool (the ONLY `data-kind` that is not a `DRAWING_KINDS` member). Each
+tool button MUST additionally carry an `aria-keyshortcuts` attribute advertising
+its per-tool shortcut letter (`TOOL_KEYS`: `H`/`T`/`F`/`R`/`X`/`M`/`P`) and a
+VISIBLE `<span class="tool-key">` showing that letter, so the attribute is honest
+to sighted users; the letter MUST NOT be a global binding — it MUST fire only when
+focus is inside `#chart` (the object tree owns `v`/`l`/`s`; see R3).
 `tool-icons-core.js` `TOOL_GROUPS` MUST
 group the seven instruments as `2/1/1/1/1/1` (`Lines`=`hline,trendline`, `Fib`,
 `Shapes`, `Text`, `Measure`=`["measure"]`, `Positions`=`["position"]`), with a
@@ -32,12 +37,20 @@ JS-built inline SVG strings carrying NO `on*` attribute. Activating a tool MUST 
 writes `store.tool="position"` through the existing command, and `measure` is a
 tool value with no drawing kind. A singleton group (one tool) MAY be rendered.
 (Previously: groups were lines/fib/shapes/text only; five kinds.)
+(Previously: tool buttons carried no `aria-keyshortcuts` and per-tool letter
+firing was not scoped.)
 
 #### Scenario: Toolbar and groups render
 
 - GIVEN the rendered `/market/` page
 - WHEN the toolbar DOM is inspected
 - THEN exactly one `role="toolbar"` with a vertical orientation and an accessible name exists, containing `role="group"` parents each with an accessible name, and no `.draw-tool` legacy text button remains
+
+#### Scenario: Buttons advertise per-tool shortcuts
+
+- GIVEN the rendered toolbar
+- WHEN a tool button is inspected
+- THEN it carries an `aria-keyshortcuts` value, an accessible name, and a visible `<span class="tool-key">` with the same letter
 
 #### Scenario: Tool activation sets store and command
 
@@ -86,8 +99,15 @@ toolbar. State MUST NOT rely on color alone (design-system R6).
 
 Tool buttons MUST be keyboard-focusable with a single roving `tabindex="0"`
 (all others `-1`). Up/Down MUST move focus between tool buttons; Home/End MUST
-jump to first/last. Enter/Space MUST activate the focused tool natively.
-Behavior MUST mirror the interval-chip pattern (`toolbar.js:63-71`).
+jump to first/last. Enter/Space MUST activate the focused tool natively. A
+per-tool **letter** shortcut (`H`/`T`/`F`/`R`/`X`/`M`/`P`, the inverse of
+`TOOL_KEYS`) MUST activate its tool ONLY while focus is inside `#chart`
+(`draw-toolbar.js` binds the letter `keydown` on the `#chart` element); when
+focus is elsewhere in the page the letter MUST NOT fire, so the object tree's
+`v`/`l`/`s` (`object-tree.js:137-142,201-205`) are never stolen. The letter router
+MUST ignore modifiers (`meta`/`ctrl`/`alt`) and MUST not fire for a focused text
+input/textarea/select/contenteditable. Behavior MUST mirror the interval-chip
+pattern (`toolbar.js:63-71`).
 
 #### Scenario: Arrows move focus
 
@@ -115,6 +135,18 @@ Behavior MUST mirror the interval-chip pattern (`toolbar.js:63-71`).
 > store.tool…` and the E2E click case); only the explicit Enter-keystroke case is
 > missing. Add a `draw-toolbar.test.js` case pressing `Enter` if a future change
 > replaces the native `<button>` with a custom element.
+
+#### Scenario: Letter firing is chart-scoped only
+
+- GIVEN the page loaded
+- WHEN a tool letter is pressed while focus is OUTSIDE `#chart` (e.g. a tree row)
+- THEN no tool activates (the tree owns `v`/`l`/`s`)
+
+#### Scenario: Letter fires inside the chart
+
+- GIVEN focus inside `#chart`
+- WHEN the `hline` letter (`h`) is pressed
+- THEN the `hline` tool activates (its `store.tool` is set) — the letter router is `#chart`-scoped (`draw-toolbar.js`)
 
 ### Requirement: R4 — Icons from the pure core (CSP-clean)
 

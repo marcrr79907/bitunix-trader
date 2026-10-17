@@ -114,8 +114,26 @@ return the updated row `{id,kind,points,style,visible,locked}` (200). A
 non-boolean flag MUST yield 400 before any write. `DELETE /market/api/drawings/<id>`
 MUST be login-required and CSRF-protected, delete through
 `Drawing.for_user(request.user)`, and be idempotent (a miss → 404 with no error
-leak). Every read/write MUST route through `for_user`.
+leak). Every read/write MUST route through `for_user`. A **duplicate** MUST be a
+plain create: the client MUST reuse `POST /market/api/drawings` with the source
+row's `kind`, cloned `points` (verbatim, no required offset), and its `style` —
+minting a NEW id — triggered by the thin `drawing:duplicate` bus command handled in
+`controllers/drawings.js`, and MUST NOT introduce a server endpoint or bus event
+beyond the existing set.
 (Previously: no `visible`/`locked`; partial PUT set was `{points?,style?}`.)
+(Previously: no duplicate operation was defined; POST/list/PUT/DELETE unchanged.)
+
+#### Scenario: Duplicate clones via the existing POST
+
+- GIVEN A's committed `trendline` `d`
+- WHEN duplicate runs
+- THEN a `POST /market/api/drawings` with `kind`/`points`/`style` cloned from `d` is captured and the response carries a NEW `id` (distinct from `d.id`)
+
+#### Scenario: Duplicate uses no new endpoint
+
+- GIVEN a duplicate in flight
+- WHEN the network is inspected
+- THEN only the pre-existing drawings endpoint is hit (no duplicate-specific route)
 
 #### Scenario: GET with no drawings returns empty list
 
