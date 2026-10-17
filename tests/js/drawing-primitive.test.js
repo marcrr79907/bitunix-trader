@@ -249,3 +249,54 @@ test("autoscaleInfo of a price drawing includes its price (R6)", () => {
     priceRange: { minValue: 50, maxValue: 50 },
   });
 });
+
+// F9 #216: an off-bar anchor / off-scale level MUST skip the leg, never coerce
+// null to pixel 0 (the F6 positionBox lesson).
+test("fib_ext skips the body when an x anchor is off-bar (#216)", () => {
+  const ctx = recordingCtx();
+  const offX = { x: () => null, y: (p) => p, right: 1000 };
+  renderShape(ctx, { width: 300, height: 300 }, { ...F9_ROWS.fib_ext, style: {} }, offX, false);
+  assert.strictEqual(ctx.calls.filter((c) => c === "stroke").length, 0,
+    "no level line drawn with a null x anchor");
+});
+
+test("fib_zone skips a band whose level is off-scale, not y=0 (#216)", () => {
+  const ctx = recordingCtx();
+  // y() returns null for the second level -> the band MUST be skipped.
+  let n = 0;
+  const offY = { x: (t) => t, y: () => (n++ % 2 === 0 ? 10 : null), right: 1000 };
+  renderShape(ctx, { width: 300, height: 300 }, { ...F9_ROWS.fib_zone, style: {} }, offY, false);
+  assert.strictEqual(ctx.calls.filter((c) => c === "fillRect").length, 0,
+    "no band painted from a null level");
+});
+
+test("fib_zone skips the body when an x anchor is off-bar (#216)", () => {
+  const ctx = recordingCtx();
+  const offX = { x: () => null, y: (p) => p, right: 1000 };
+  renderShape(ctx, { width: 300, height: 300 }, { ...F9_ROWS.fib_zone, style: {} }, offX, false);
+  assert.strictEqual(ctx.calls.filter((c) => c === "fillRect").length, 0);
+});
+
+// F9 #217 (market-chart R20 / #68): an F9 primitive renders through
+// requestUpdate ONLY — it must never call setData/update on the series. A
+// throwing stub proves the option-only contract that F6 had for measure.
+test("an F9 primitive never calls setData/update (option-only, #68/#217)", () => {
+  for (const kind of Object.keys(F9_ROWS)) {
+    const ctx = recordingCtx();
+    let updates = 0;
+    const chart = { timeScale: () => ({ timeToCoordinate: (t) => t, coordinateToTime: (x) => x }) };
+    const series = {
+      priceToCoordinate: (p) => p,
+      coordinateToPrice: (y) => y,
+      setData() { throw new Error(`${kind} must never call setData`); },
+      update() { throw new Error(`${kind} must never call update`); },
+    };
+    const prim = makeDrawingPrimitive({ ...F9_ROWS[kind], style: {} }, {});
+    prim.attached({ chart, series, requestUpdate() { updates += 1; } });
+    // Render the pane view (the only write path) and force a redraw.
+    const views = prim.paneViews();
+    views[0].renderer().draw({ useMediaCoordinateSpace: (fn) => fn({ context: ctx, mediaSize: { width: 300, height: 300 } }) });
+    prim.requestUpdate();
+    assert.strictEqual(updates, 1, `${kind} redraws via requestUpdate only`);
+  }
+});
