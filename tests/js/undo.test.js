@@ -182,7 +182,7 @@ test("a replay never re-records itself (replaying guard)", () => {
   } finally { f.restore(); }
 });
 
-test("undo of a delete re-POSTs; redo DELETEs", () => {
+test("undo of a delete re-POSTs; redo DELETEs the re-minted id", () => {
   const f = undoFixture();
   try {
     commitRow(f.bus, { id: 5, kind: "hline", points: { price: 42 }, style: { color: "#111" } });
@@ -195,8 +195,12 @@ test("undo of a delete re-POSTs; redo DELETEs", () => {
       p: { row: { kind: "hline", points: { price: 42 }, style: { color: "#111" } } },
     });
     f.emitted.length = 0;
-    f.doc.fire("keydown", keyEvent("z", { ctrlKey: true, shiftKey: true })); // redo -> delete
-    assert.deepStrictEqual(f.emitted, [{ name: "drawing:delete", p: { id: 5 } }]);
+    // The restore POST resolves with a NEW id; the entry is patched (#209: a redo
+    // is blocked until then, so this signal is required before redoing).
+    f.bus.emit("drawing:created", { id: 9, kind: "hline", points: { price: 42 }, style: { color: "#111" } });
+    f.emitted.length = 0;
+    f.doc.fire("keydown", keyEvent("z", { ctrlKey: true, shiftKey: true })); // redo -> delete the re-minted id
+    assert.deepStrictEqual(f.emitted, [{ name: "drawing:delete", p: { id: 9 } }]);
   } finally { f.restore(); }
 });
 
@@ -265,6 +269,32 @@ test("a failed restore clears the replaying guard (undo is not wedged, #201)", (
     f.doc.fire("keydown", keyEvent("z", { ctrlKey: true })); // undo the drag -> PUT before (100)
     assert.deepStrictEqual(f.emitted[0], { name: "drawing:changed", p: { id: 1, persist: true, points: { price: 100 } } },
       "a failed restore must not wedge the replaying guard");
+  } finally { f.restore(); }
+});
+
+test("a second Ctrl+Z during an in-flight restore is ignored (#209)", () => {
+  const f = undoFixture();
+  try {
+    f.bus.emit("drawing:created", {
+      id: 5, kind: "rect", points: { p1: { time: 1, price: 2 } }, style: {},
+    });
+    f.doc.fire("keydown", keyEvent("z", { ctrlKey: true })); // undo create -> DELETE 5
+    f.emitted.length = 0;
+    f.doc.fire("keydown", keyEvent("z", { ctrlKey: true, shiftKey: true })); // redo -> restore (async, guard set)
+    assert.strictEqual(f.emitted.length, 1);
+    assert.strictEqual(f.emitted[0].name, "drawing:restore");
+    f.emitted.length = 0;
+    // A second Ctrl+Z while the restore POST is in flight must be a no-op: it
+    // must NOT mutate the stack or overwrite the guard with another entry.
+    f.doc.fire("keydown", keyEvent("z", { ctrlKey: true }));
+    assert.deepStrictEqual(f.emitted, [], "a second undo during a replay is ignored");
+    // The restore completes with a NEW id; the guard patches the SAME entry, so a
+    // later undo DELETEs the re-minted id (not a wrong row).
+    f.bus.emit("drawing:created", { id: 9, kind: "rect", points: { p1: { time: 1, price: 2 } }, style: {} });
+    f.emitted.length = 0;
+    f.doc.fire("keydown", keyEvent("z", { ctrlKey: true })); // undo -> DELETE 9
+    assert.deepStrictEqual(f.emitted, [{ name: "drawing:delete", p: { id: 9 } }],
+      "the guard still targets the re-minted id after the ignored press");
   } finally { f.restore(); }
 });
 
