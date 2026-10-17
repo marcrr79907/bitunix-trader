@@ -89,7 +89,10 @@ export function createDrawingInteraction({ store, bus, host, config }) {
 
   // Any selection source (pointer, tree, keyboard) announces on the bus, so the
   // readout follows the ONE announcement rather than a second selection copy.
+  // Mirror the announcement into ``selectedId`` so a tree-select keeps the
+  // pointer hit-test in sync (a later canvas miss must clear it, not early-return).
   bus.on("drawing:selected", function (p) {
+    selectedId = p ? p.id : null;
     writePositionReadout(p ? p.id : null, null);
   });
 
