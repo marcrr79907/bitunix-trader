@@ -180,9 +180,10 @@ export function createDrawingInteraction({ store, bus, host, config }) {
     const row = rowById(drag.id);
     if (!row) return;
     const points = applyDrag(row, drag.target, dx, dy, map());
-    // F6 (R6): refresh the R:R readout live for a dragged position.
-    if (drag.id === readoutId) writePositionReadout(readoutId, points);
     // D6: live render via the primitive requestUpdate in drawings.js, no PUT.
+    // The emitted ``drawing:changed`` (persist !== true) drives the coalesced
+    // R:R readout refresh (#192) — no direct write here (would churn the
+    // aria-live region per frame and bypass the coalescer).
     bus.emit("drawing:changed", { id: drag.id, points: points, persist: false });
   }
 
