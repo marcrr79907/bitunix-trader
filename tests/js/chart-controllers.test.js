@@ -481,6 +481,81 @@ test("measure attach() is a no-op with no active measurement (#188/R1)", () => {
   } finally { f.restore(); }
 });
 
+// F6 UI #192: the aria-live readout MUST NOT be rewritten on every pointermove.
+// N moves inside one animation frame coalesce to a SINGLE DOM write; the final
+// write on pointerup still happens. rAF is shimmed so a frame is flushed on cue.
+function withRaf(fn) {
+  const prev = globalThis.requestAnimationFrame;
+  const queued = [];
+  globalThis.requestAnimationFrame = (cb) => { queued.push(cb); return queued.length; };
+  try {
+    return fn(() => { const q = queued.splice(0); q.forEach((cb) => cb()); });
+  } finally {
+    if (prev === undefined) delete globalThis.requestAnimationFrame;
+    else globalThis.requestAnimationFrame = prev;
+  }
+}
+
+function countingEl(tag) {
+  const el = makeEl(tag);
+  let text = "";
+  let writes = 0;
+  Object.defineProperty(el, "textContent", {
+    get: () => text,
+    set: (v) => { text = v; writes += 1; },
+  });
+  Object.defineProperty(el, "writes", { get: () => writes });
+  return el;
+}
+
+test("measure: N pointermoves in one frame write the live region once (#192)", () => {
+  const prevDoc = globalThis.document;
+  const chartEl = makeEl("section");
+  const readout = countingEl("p");
+  globalThis.document = {
+    getElementById: (id) => (id === "chart" ? chartEl : id === "measure-readout" ? readout : null),
+  };
+  try {
+    withRaf((flush) => {
+      const store = makeStore({ tool: "measure", interval: "1m", symbol: "BTCUSDT" });
+      const host = makeHost();
+      const m = createMeasure({ store, bus: { on() {}, emit() {} }, host, config: {} });
+      m.attach();
+      chartEl.fire("pointerdown", ev(10, 100));
+      const base = readout.writes; // the pointerdown write is immediate (first point)
+      for (let i = 0; i < 20; i++) chartEl.fire("pointermove", ev(10 + i, 100 + i));
+      assert.strictEqual(readout.writes, base, "no per-move DOM write before the frame");
+      flush();
+      assert.strictEqual(readout.writes, base + 1, "20 moves coalesce to one write");
+      assert.match(readout.textContent, /\d/, "the coalesced write carries a real figure");
+    });
+  } finally { globalThis.document = prevDoc; }
+});
+
+test("measure: pointerup flushes the final readout write immediately (#192)", () => {
+  const prevDoc = globalThis.document;
+  const chartEl = makeEl("section");
+  const readout = countingEl("p");
+  globalThis.document = {
+    getElementById: (id) => (id === "chart" ? chartEl : id === "measure-readout" ? readout : null),
+  };
+  try {
+    withRaf(() => {
+      const store = makeStore({ tool: "measure", interval: "1m", symbol: "BTCUSDT" });
+      const host = makeHost();
+      const m = createMeasure({ store, bus: { on() {}, emit() {} }, host, config: {} });
+      m.attach();
+      chartEl.fire("pointerdown", ev(10, 100));
+      chartEl.fire("pointermove", ev(60, 140));
+      const before = readout.writes;
+      chartEl.fire("pointerup", ev(60, 140)); // no frame flushed first
+      assert.strictEqual(readout.writes, before + 1, "pointerup writes the final value");
+      assert.match(readout.textContent, /\d/);
+    });
+  } finally { globalThis.document = prevDoc; }
+});
+
+
 // F6 UI #193 (R9): the measure stroke reads the shell --accent token, not a
 // literal, so the light theme stays on-palette. Drive the primitive's renderer
 // directly with a token shim + a recording ctx.

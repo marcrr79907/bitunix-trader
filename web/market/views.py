@@ -58,6 +58,7 @@ MODULE_ALLOWLIST = frozenset(
         "measure-core",
         "position-core",
         "position-draft-core",
+        "readout-coalesce-core",
         "chart-store",
         "chart-bus",
         "chart-host",

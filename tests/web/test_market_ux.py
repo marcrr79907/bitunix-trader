@@ -184,6 +184,7 @@ def test_market_page_preloads_f6_modules(logged_in_client):
     for name in (
         "/market/measure-core.js",
         "/market/position-core.js",
+        "/market/readout-coalesce-core.js",
         "/market/controllers/measure.js",
     ):
         assert f'href="{name}"' in body, name
