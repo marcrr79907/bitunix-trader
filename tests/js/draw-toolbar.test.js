@@ -49,8 +49,11 @@ function makeStore(initial) {
   };
 }
 
-const { createDrawToolbar } = await import(
+const { createDrawToolbar, TOOL_KEYS } = await import(
   "../../web/market/templates/market/controllers/draw-toolbar.js"
+);
+const { TOOL_GROUPS } = await import(
+  "../../web/market/templates/market/tool-icons-core.js"
 );
 
 function buttonsOf(mount) {
@@ -111,6 +114,34 @@ test("an external store.tool change syncs aria-pressed (R2 cancel path)", () => 
     assert.strictEqual(rect.getAttribute("aria-pressed"), "true");
     store.set({ tool: null }); // e.g. clearForSwitch
     assert.strictEqual(buttonsOf(mount).every((b) => b.getAttribute("aria-pressed") === "false"), true);
+  } finally { restore(); }
+});
+
+test("TOOL_KEYS advertises one letter per kind (R1 delta, F7)", () => {
+  // Every grouped kind has a documented shortcut letter — the aria-keyshortcuts
+  // vocabulary the buttons advertise. No global router (D8).
+  const kinds = TOOL_GROUPS.flatMap((g) => g.kinds);
+  assert.deepStrictEqual(Object.keys(TOOL_KEYS).sort(), kinds.slice().sort());
+  for (const kind of kinds) {
+    assert.strictEqual(typeof TOOL_KEYS[kind], "string");
+    assert.ok(TOOL_KEYS[kind].length >= 1, kind);
+  }
+});
+
+test("each tool button carries an aria-keyshortcuts value (R1 delta, F7)", () => {
+  const mount = makeEl("div");
+  const restore = installDom(mount);
+  try {
+    createDrawToolbar({ store: makeStore({ tool: null }) });
+    const btns = buttonsOf(mount);
+    assert.strictEqual(btns.length, 7);
+    for (const b of btns) {
+      assert.strictEqual(
+        b.getAttribute("aria-keyshortcuts"),
+        TOOL_KEYS[b.dataset.kind],
+        b.dataset.kind,
+      );
+    }
   } finally { restore(); }
 });
 

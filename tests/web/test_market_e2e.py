@@ -3851,3 +3851,190 @@ def test_position_readout_reports_rr_after_seed(seeded_5m_candles, browser_page)
     )
     rr = page.locator("#position-readout").text_content().strip()
     assert rr.startswith("R:R "), rr
+
+
+# --- F7 S3: context menu over the chart (design §c / R1-R4) -------------------
+#
+# The menu is a JS-built DOM ``role="menu"`` over ``#chart``; a Duplicate/Delete
+# activation reuses the drawings bus commands (POST/DELETE), so undo of each is
+# asserted via CAPTURED network verbs and the DOM (never pixels, #149). Undo is
+# the S2 Ctrl/Cmd+Z router; the menu adds NO seam key (R18/R20).
+
+
+def _open_row_menu(page):
+    """Right-click the seeded hline and wait for the role=menu to appear."""
+    chart, box = _select_hline(page)  # selects the 5m key + clicks the hline
+    y = _hline_y(page, 100.0)
+    assert y is not None, "no price coordinate for the seeded hline"
+    page.mouse.click(
+        box["x"] + box["width"] / 2,
+        box["y"] + y,
+        button="right",
+    )
+    page.wait_for_selector('div[role="menu"]', timeout=5000)
+    return chart, box
+
+
+@p
+def test_context_menu_on_drawing_shows_delete_and_duplicate(
+    seeded_5m_candles, interaction_drawing, browser_page
+):
+    # R1/R2: a right-click on a drawing opens a JS-built role=menu whose items
+    # are Delete then Duplicate (DOM only, readiness-gated).
+    page, base_url = browser_page
+    page.goto(f"{base_url}/market/")
+    _wait_ready(page)
+    page.wait_for_function(
+        "() => window.marketChart.drawings && window.marketChart.drawings.length === 1",
+        timeout=10000,
+    )
+    _open_row_menu(page)
+    menu = page.locator('div[role="menu"]')
+    labels = menu.locator('[role="menuitem"]').all_text_contents()
+    assert labels == ["Delete", "Duplicate"], labels
+    # The controller binds the listener with addEventListener, never inline.
+    assert page.evaluate(
+        "() => !document.getElementById('chart').getAttribute('oncontextmenu')"
+    )
+
+
+@p
+def test_context_menu_duplicate_then_undo_deletes(
+    seeded_5m_candles, interaction_drawing, browser_page
+):
+    # R4: Duplicate emits drawing:duplicate -> one POST (a new row); Ctrl+Z
+    # undoes the create -> one DELETE (network intercept, DOM length).
+    page, base_url = browser_page
+    posts, deletes = [], []
+    page.on(
+        "request",
+        lambda r: (
+            posts.append(r)
+            if r.method == "POST" and "/market/api/drawings" in r.url
+            else None
+        ),
+    )
+    page.on(
+        "request",
+        lambda r: (
+            deletes.append(r)
+            if r.method == "DELETE" and "/market/api/drawings/" in r.url
+            else None
+        ),
+    )
+    page.goto(f"{base_url}/market/")
+    _wait_ready(page)
+    page.wait_for_function(
+        "() => window.marketChart.drawings && window.marketChart.drawings.length === 1",
+        timeout=10000,
+    )
+    _open_row_menu(page)
+    page.locator('div[role="menu"] [role="menuitem"]', has_text="Duplicate").click()
+    page.wait_for_function(
+        "() => window.marketChart.drawings && window.marketChart.drawings.length === 2",
+        timeout=10000,
+    )
+    assert len(posts) == 1, [r.url for r in posts]
+    cloned_id = page.evaluate("() => window.marketChart.drawings[1].id")
+    page.keyboard.press("Control+z")
+    page.wait_for_function(
+        "() => window.marketChart.drawings.length === 1",
+        timeout=5000,
+    )
+    assert len(deletes) == 1, [r.url for r in deletes]
+    assert deletes[0].url.endswith(f"/{cloned_id}")
+
+
+@p
+def test_context_menu_delete_then_undo_reposts(
+    seeded_5m_candles, interaction_drawing, browser_page
+):
+    # R4: Delete emits drawing:delete -> one DELETE; Ctrl+Z re-POSTs the
+    # committed row, minting a NEW id (R3 undo-server consistency).
+    page, base_url = browser_page
+    posts, deletes = [], []
+    page.on(
+        "request",
+        lambda r: (
+            posts.append(r)
+            if r.method == "POST" and "/market/api/drawings" in r.url
+            else None
+        ),
+    )
+    page.on(
+        "request",
+        lambda r: (
+            deletes.append(r)
+            if r.method == "DELETE" and "/market/api/drawings/" in r.url
+            else None
+        ),
+    )
+    page.goto(f"{base_url}/market/")
+    _wait_ready(page)
+    page.wait_for_function(
+        "() => window.marketChart.drawings && window.marketChart.drawings.length === 1",
+        timeout=10000,
+    )
+    original_id = page.evaluate("() => window.marketChart.drawings[0].id")
+    _open_row_menu(page)
+    page.locator('div[role="menu"] [role="menuitem"]', has_text="Delete").click()
+    page.wait_for_function(
+        "() => window.marketChart.drawings.length === 0",
+        timeout=5000,
+    )
+    assert len(deletes) == 1, [r.url for r in deletes]
+    assert deletes[0].url.endswith(f"/{original_id}")
+    page.keyboard.press("Control+z")
+    page.wait_for_function(
+        "() => window.marketChart.drawings && window.marketChart.drawings.length === 1",
+        timeout=5000,
+    )
+    assert len(posts) == 1, [r.url for r in posts]
+    restored_id = page.evaluate("() => window.marketChart.drawings[0].id")
+    assert restored_id != original_id, "a restored row carries a NEW id"
+
+
+@p
+def test_context_menu_reset_scale_emits_scale_changed_no_put(
+    seeded_5m_candles, browser_page
+):
+    # R4: reset-scale reuses the F8 option-only path — the store flips to linear,
+    # scale:changed fires (select reflects it) and NO drawings PUT is issued (#68).
+    page, base_url = browser_page
+    puts = []
+    page.on(
+        "request",
+        lambda r: (
+            puts.append(r)
+            if r.method == "PUT" and "/market/api/drawings/" in r.url
+            else None
+        ),
+    )
+    page.goto(f"{base_url}/market/")
+    _wait_ready(page)
+    page.select_option("#interval", "5m")
+    page.wait_for_function(
+        "() => window.marketChart && window.marketChart.candleSeries &&"
+        " window.marketChart.candleSeries.data().length > 0",
+        timeout=10000,
+    )
+    page.select_option("#scale-mode", "log")
+    page.wait_for_function(
+        "() => document.getElementById('scale-mode').value === 'log'",
+        timeout=2000,
+    )
+    # Right-click empty space (no drawing) -> the menu offers Reset scale.
+    chart = page.locator("#chart")
+    box = chart.bounding_box()
+    page.mouse.click(
+        box["x"] + box["width"] - 8, box["y"] + box["height"] - 8, button="right"
+    )
+    page.wait_for_selector('div[role="menu"]', timeout=5000)
+    page.locator('div[role="menu"] [role="menuitem"]', has_text="Reset scale").click()
+    # scale:changed routed to the host's option-only path: the price scale is
+    # Normal (mode 0) again and no drawings PUT was issued (#68).
+    page.wait_for_function(
+        "() => window.marketChart.chart.priceScale('right').options().mode === 0",
+        timeout=2000,
+    )
+    assert puts == [], [r.url for r in puts]

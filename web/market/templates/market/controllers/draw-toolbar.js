@@ -13,6 +13,20 @@
 // (toolbar.js:63-71); Enter/Space activate the native button.
 import { TOOL_GROUPS, iconFor, groupLabel } from "../tool-icons-core.js";
 
+// F7 (R1 delta): the per-tool shortcut letter each button ADVERTISES via
+// ``aria-keyshortcuts``. Advisory only — no global letter router is bound (D8);
+// the object tree owns ``v``/``l``/``s`` (object-tree.js). A short label is the
+// accessible-name sibling of the icon.
+export const TOOL_KEYS = {
+  hline: "H",
+  trendline: "T",
+  fib: "F",
+  rect: "R",
+  text: "X",
+  measure: "M",
+  position: "P",
+};
+
 // Accessible name per kind (the SVG is aria-hidden, so the button carries it).
 const TOOL_LABELS = {
   hline: "Horizontal line",
@@ -78,6 +92,8 @@ export function createDrawToolbar({ store }) {
       btn.dataset.kind = kind;
       btn.setAttribute("aria-pressed", "false");
       btn.setAttribute("aria-label", TOOL_LABELS[kind] || kind);
+      // F7 (R1 delta): advertise the per-tool letter (no router — D8).
+      if (TOOL_KEYS[kind]) btn.setAttribute("aria-keyshortcuts", TOOL_KEYS[kind]);
       const icon = iconFor(kind);
       if (icon) btn.innerHTML = icon;
       btn.addEventListener("click", function () { activate(kind); });
