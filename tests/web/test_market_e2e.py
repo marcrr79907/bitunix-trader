@@ -1066,6 +1066,33 @@ def test_draw_toolbar_renders_groups_and_sets_store(browser_page):
 
 
 @p
+def test_tool_letter_fires_only_inside_chart(browser_page):
+    # F7 (chart-toolbar R3): a per-tool letter (advertised via aria-keyshortcuts)
+    # activates its tool ONLY while focus is inside #chart; outside it does
+    # nothing (the object tree owns v/l/s).
+    page, base_url = browser_page
+    page.goto(f"{base_url}/market/")
+    _wait_ready(page)
+
+    # Focus the chart, press the hline letter (H) -> hline becomes the active tool.
+    page.locator("#chart").focus()
+    page.keyboard.press("H")
+    page.wait_for_function(
+        "() => document.querySelector('.draw-tool[data-kind=\"hline\"]')"
+        ".getAttribute('aria-pressed') === 'true'",
+        timeout=10000,
+    )
+    # Blur #chart (focus the toolbar button) and press T: the trendline must NOT
+    # activate from outside the chart.
+    page.locator('.draw-tool[data-kind="hline"]').focus()
+    page.keyboard.press("T")
+    assert (
+        page.locator('.draw-tool[data-kind="trendline"]').get_attribute("aria-pressed")
+        != "true"
+    ), "a letter outside #chart must not activate a tool"
+
+
+@p
 def test_tree_row_delete_fires_delete(seeded_drawings, browser_page):
     # R7: the object-tree row delete -> DELETE /market/api/drawings/<id>.
     page, base_url = browser_page
