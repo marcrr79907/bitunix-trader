@@ -111,9 +111,11 @@ const calloutPath = (row, map) => ({
   a: P(row.points.p1, map), b: P(row.points.p2, map), text: row.points.text,
 });
 
+// F9 #220: p1..p3 span the drawn extent — p3 is a live handle and feeds
+// autoscale, so leaving it out of the geometry made the third click invisible.
 const fibExtPath = (row, map) => ({
   x1: map.x(row.points.p1 && row.points.p1.time),
-  x2: map.x(row.points.p2 && row.points.p2.time),
+  x2: map.x((row.points.p3 && row.points.p3.time) ?? (row.points.p2 && row.points.p2.time)),
   levels: fibExtLevels(row.points, map, FIB_EXT_RATIOS),
 });
 

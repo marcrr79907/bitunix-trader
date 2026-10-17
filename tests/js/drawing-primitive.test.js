@@ -157,6 +157,15 @@ test("position zones fall back to the literals with no DOM (R9)", () => {
 
 const MAPR = { x: (t) => t, y: (p) => p, right: 1000 };
 
+// Render one row through renderShape and return every line end point (lineTo),
+// so a test can assert the real drawn extent rather than a pure-core return.
+function renderShapeLines(row) {
+  const ctx = recordingCtx();
+  renderShape(ctx, { width: 300, height: 300 }, row, MAPR, false);
+  return ctx.lines;
+}
+
+
 // One representative row per F9 kind.
 const F9_ROWS = {
   ray: { kind: "ray", points: { p1: { time: 0, price: 0 }, p2: { time: 10, price: 10 } } },
@@ -322,4 +331,23 @@ test("ray extends to the real media right edge through the primitive map (#219)"
   assert.strictEqual(ctx.lines.length, 1, "one ray segment");
   // slope 1 through (0,0): the tip is at x=1000, y=1000 — NOT p2's x=10.
   assert.deepStrictEqual(ctx.lines[0], { x: 1000, y: 1000 });
+});
+
+// F9 #220: fib_ext's third click is a draggable handle and feeds autoscale, so
+// it MUST also bound the drawn x extent. Before the fix only p1/p2 sized the
+// levels, so dragging p3 changed nothing on screen.
+test("fib_ext uses p3 as its right x extent, so dragging p3 moves it (#220)", () => {
+  const base = {
+    id: 3, kind: "fib_ext", style: {},
+    points: { p1: { time: 0, price: 0 }, p2: { time: 10, price: 10 }, p3: { time: 20, price: 20 } },
+  };
+  const near = renderShapeLines(base);
+  assert.ok(near.length > 0, "fib_ext draws its levels");
+  assert.ok(near.every((l) => l.x === 20), `right extent is p3.time: ${JSON.stringify(near)}`);
+
+  // Drag p3 one bar to the right: the extent follows; p1 still anchors the left.
+  const dragged = { ...base, points: { ...base.points, p3: { time: 30, price: 20 } } };
+  const far = renderShapeLines(dragged);
+  assert.ok(far.every((l) => l.x === 30), `right extent follows p3: ${JSON.stringify(far)}`);
+  assert.notDeepStrictEqual(far, near, "the drawn extent actually moved");
 });
