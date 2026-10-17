@@ -321,6 +321,17 @@ def test_ui_audit_menu_never_writes_empty_keyshortcut(logged_in_client):
     assert "if (item.keyshortcut)" in js
 
 
+def test_ui_audit_menu_has_token_elevation(logged_in_client):
+    # F7 UI #207: .chart-context-menu gains an elevation shadow using tokens
+    # only (no hard-coded hex), so it reads as a raised surface over the chart.
+    import re
+
+    css = logged_in_client.get("/theme.css").content.decode()
+    menu = css[css.index(".chart-context-menu{") :].split("}")[0]
+    assert "box-shadow" in menu, "the context menu has elevation"
+    assert not re.search(r"#[0-9a-fA-F]{3,8}\b", menu), "no hard-coded hex"
+
+
 def test_csp_present_on_market_page(logged_in_client):
     response = logged_in_client.get("/market/")
     assert response.status_code == 200

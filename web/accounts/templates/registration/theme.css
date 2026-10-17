@@ -239,6 +239,7 @@ dialog form{display:flex; flex-direction:column; gap:var(--sp-2)}
    above the chart via z-index; a right-click near the edge is clamped in JS. */
 .chart-context-menu{position:fixed; z-index:20; min-width:160px; padding:var(--sp-1);
   background:var(--surface); border:1px solid var(--border); border-radius:var(--r);
+  box-shadow:0 8px 24px var(--border);
   display:flex; flex-direction:column; gap:var(--sp-1)}
 .chart-context-menu [role="menuitem"]{padding:var(--sp-1) var(--sp-2);
   background:var(--surface); border:1px solid transparent; color:var(--text);
