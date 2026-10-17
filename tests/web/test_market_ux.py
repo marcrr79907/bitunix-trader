@@ -143,7 +143,7 @@ def test_controller_allowlist_routes_serve_javascript(logged_in_client):
     # ``market/controllers/`` as JS (a missing route = import 404 = blank chart).
     from market import views
 
-    assert len(views.CONTROLLER_ALLOWLIST) == 13
+    assert len(views.CONTROLLER_ALLOWLIST) == 15
     for name in views.CONTROLLER_ALLOWLIST:
         response = logged_in_client.get(f"/market/controllers/{name}.js")
         assert response.status_code == 200, name
@@ -298,6 +298,38 @@ def test_f6_position_readout_mirrors_measure_readout_style(logged_in_client):
         position_rule = css[css.index("#position-readout") :]
         assert token in measure_rule.split("}")[0], token
         assert token in position_rule.split("}")[0], token
+
+
+def test_ui_audit_undo_hint_uses_tokens(logged_in_client):
+    # F7 UI audit (#205): the static discoverable undo/redo hint is muted/small,
+    # token-only (no hard-coded hex).
+    import re
+
+    css = logged_in_client.get("/theme.css").content.decode()
+    hint = css[css.index(".history-hint") :].split("}")[0]
+    assert "var(--muted)" in hint and "var(--fs-3)" in hint
+    assert not re.search(r"#[0-9a-fA-F]{3,8}\b", hint), "no hard-coded hex in the hint"
+
+
+def test_ui_audit_menu_never_writes_empty_keyshortcut(logged_in_client):
+    # F7 UI #206: the served context-menu controller must guard the
+    # aria-keyshortcuts attribute — an empty value is a misleading attribute.
+    js = logged_in_client.get("/market/controllers/context-menu.js").content.decode()
+    assert 'aria-keyshortcuts", item.keyshortcut || ""' not in js, (
+        "an empty aria-keyshortcuts must not be written"
+    )
+    assert "if (item.keyshortcut)" in js
+
+
+def test_ui_audit_menu_has_token_elevation(logged_in_client):
+    # F7 UI #207: .chart-context-menu gains an elevation shadow using tokens
+    # only (no hard-coded hex), so it reads as a raised surface over the chart.
+    import re
+
+    css = logged_in_client.get("/theme.css").content.decode()
+    menu = css[css.index(".chart-context-menu{") :].split("}")[0]
+    assert "box-shadow" in menu, "the context menu has elevation"
+    assert not re.search(r"#[0-9a-fA-F]{3,8}\b", menu), "no hard-coded hex"
 
 
 def test_csp_present_on_market_page(logged_in_client):

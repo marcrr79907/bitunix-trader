@@ -13,6 +13,20 @@
 // (toolbar.js:63-71); Enter/Space activate the native button.
 import { TOOL_GROUPS, iconFor, groupLabel } from "../tool-icons-core.js";
 
+// F7 (R1 delta): the per-tool shortcut letter each button ADVERTISES via
+// ``aria-keyshortcuts``. Advisory only — no global letter router is bound (D8);
+// the object tree owns ``v``/``l``/``s`` (object-tree.js). A short label is the
+// accessible-name sibling of the icon.
+export const TOOL_KEYS = {
+  hline: "H",
+  trendline: "T",
+  fib: "F",
+  rect: "R",
+  text: "X",
+  measure: "M",
+  position: "P",
+};
+
 // Accessible name per kind (the SVG is aria-hidden, so the button carries it).
 const TOOL_LABELS = {
   hline: "Horizontal line",
@@ -78,8 +92,18 @@ export function createDrawToolbar({ store }) {
       btn.dataset.kind = kind;
       btn.setAttribute("aria-pressed", "false");
       btn.setAttribute("aria-label", TOOL_LABELS[kind] || kind);
+      // F7 (R1 delta): advertise the per-tool letter (no router — D8).
+      if (TOOL_KEYS[kind]) btn.setAttribute("aria-keyshortcuts", TOOL_KEYS[kind]);
       const icon = iconFor(kind);
       if (icon) btn.innerHTML = icon;
+      // F7 UI #206: the aria-keyshortcuts letter is only honest if a sighted
+      // user can see it too — surface it as a muted key affordance.
+      if (TOOL_KEYS[kind]) {
+        const key = document.createElement("span");
+        key.className = "tool-key";
+        key.textContent = TOOL_KEYS[kind];
+        btn.appendChild(key);
+      }
       btn.addEventListener("click", function () { activate(kind); });
       btn.addEventListener("keydown", function (e) {
         if (e.key !== "ArrowDown" && e.key !== "ArrowUp"
@@ -96,6 +120,25 @@ export function createDrawToolbar({ store }) {
   mount.appendChild(toolbar);
   sync();
   store.subscribe(sync);
+
+  // F7 (R3): the per-tool letters fire ONLY while focus is inside ``#chart`` —
+  // never globally (the object tree owns v/l/s). A letter toggles its tool
+  // through the same ``activate`` command; a text field keeps native typing.
+  const LETTERS = {};
+  Object.keys(TOOL_KEYS).forEach(function (kind) { LETTERS[TOOL_KEYS[kind].toLowerCase()] = kind; });
+  const chartEl = document.getElementById("chart");
+  if (chartEl) {
+    chartEl.addEventListener("keydown", function (e) {
+      if (e.metaKey || e.ctrlKey || e.altKey) return;
+      const t = e.target;
+      if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA"
+          || t.tagName === "SELECT" || t.isContentEditable)) return;
+      const kind = LETTERS[(e.key || "").toLowerCase()];
+      if (!kind) return;
+      activate(kind);
+      e.preventDefault();
+    });
+  }
 
   return {};
 }

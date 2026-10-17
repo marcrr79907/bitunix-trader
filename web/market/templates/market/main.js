@@ -17,7 +17,9 @@ import {
 import { createHistory } from "./controllers/history.js";
 import { createStream } from "./controllers/stream.js";
 import { createDrawings } from "./controllers/drawings.js";
+import { createUndo } from "./controllers/undo.js";
 import { createDrawingInteraction } from "./controllers/drawing-interaction.js";
+import { createContextMenu } from "./controllers/context-menu.js";
 import { createSmc, readSmc } from "./controllers/smc.js";
 import { createToolbar } from "./controllers/toolbar.js";
 import { createDrawToolbar } from "./controllers/draw-toolbar.js";
@@ -71,7 +73,13 @@ export function boot(config) {
   const history = createHistory({ store, bus, host, config });
   const stream = createStream({ store, bus, host, config });
   const drawings = createDrawings({ store, bus, host, config });
+  // F7 (S2): undo/redo records the persist:true gesture boundary and replays
+  // through the drawings bus commands; it owns the document Ctrl/Cmd+Z router.
+  const undo = createUndo({ store, bus, host, config });
   const drawingInteraction = createDrawingInteraction({ store, bus, host, config });
+  // F7 (S3): the right-click menu over the chart; it reuses the interaction's
+  // pure hit-test and the drawings bus commands (no new write path, #68).
+  const contextMenu = createContextMenu({ store, bus, host, config });
   const measure = createMeasure({ store, bus, host, config });
   // F6 UI #194: the "Position from setup" button state + setups cache. It seeds
   // a position through drawings.js (single source for the POST).
@@ -119,6 +127,8 @@ export function boot(config) {
     // The #chart container survives a rebuild; bind() is idempotent (first build
     // binds, later builds are no-ops). Drawings re-attach above.
     drawingInteraction.attach();
+    // F7 (S3): the context menu binds its own #chart contextmenu listener once.
+    contextMenu.attach();
     // F6 (D1/D4): the measure controller owns its own #chart listeners (guarded
     // on state.tool==="measure"); bind() is idempotent like the interaction.
     measure.attach();
@@ -159,12 +169,16 @@ export function boot(config) {
     // refetch (buildChart re-attaches them). SMC is per (symbol, interval), so
     // it always clears. The bumps invalidate in-flight fetches.
     if (symbolChanged) drawings.clearForSwitch();
+    // R14: the undo stack is symbol-scoped (a gone id must not replay).
+    if (symbolChanged) undo.clearForSwitch();
     smc.clearForSwitch();
     // F6 (R4): a symbol switch clears an ephemeral measurement (no persistence).
     if (symbolChanged) measure.clearForSwitch();
     // R14: a symbol switch clears selection with the drawings; an interval-only
     // switch keeps it (the drawings stay attached, #68).
     if (symbolChanged) drawingInteraction.clearForSwitch();
+    // F7 (S3): a symbol switch closes any open context menu (a gone id).
+    if (symbolChanged) contextMenu.clearForSwitch();
     host.setLastBucket(0);
     stream.subscribe({ symbol: symbol, interval: interval });
     // Load THIS chart's layout first (R4), then build + attach its drawings

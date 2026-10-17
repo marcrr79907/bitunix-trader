@@ -5,6 +5,8 @@
 // unit-tested here, mirroring the Slice 1/2 core-test discipline.
 import test from "node:test";
 import assert from "node:assert";
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import {
   buildIndicators,
   settingsFromFields,
@@ -18,6 +20,7 @@ import {
   prevClose,
 } from "../../web/market/templates/market/controllers/legend.js";
 import { resolveToggles } from "../../web/market/templates/market/controllers/smc.js";
+import { createBus } from "../../web/market/templates/market/chart-bus.js";
 
 test("buildIndicators: token-only entries when no params", () => {
   assert.deepStrictEqual(buildIndicators(["sma", "rsi"], {}), [
@@ -285,7 +288,101 @@ test("resolveToggles: a null/garbage payload degrades to all ON", () => {
   assert.deepStrictEqual(resolveToggles("nope"), allOn);
 });
 
-// --- measure controller (F6 S3 / R1-R4) --------------------------------------
+// --- drawings duplicate/restore (F7 S2 / design D6) --------------------------
+//
+// duplicate/restore MUST reuse the ONE create path (a POST), never a new
+// endpoint (#68). A DOM-free shim (null dialogs) + a fetch stub captures the
+// POST body; ``drawing:created`` is emitted after the attach (the undo signal).
+const { createDrawings } = await import(
+  "../../web/market/templates/market/controllers/drawings.js"
+);
+
+function drawingsFixture(seedRows) {
+  const prevDoc = globalThis.document;
+  const prevWin = globalThis.window;
+  const prevFetch = globalThis.fetch;
+  const posts = [];
+  globalThis.document = {
+    getElementById: () => null,
+    querySelector: () => null,
+    documentElement: { style: {} },
+  };
+  globalThis.window = { marketChart: { drawings: [] } };
+  globalThis.fetch = (url, opts) => {
+    const method = (opts && opts.method) || "GET";
+    if (method === "GET") {
+      return Promise.resolve({ ok: true, json: () => Promise.resolve({ drawings: seedRows || [] }) });
+    }
+    const body = JSON.parse((opts && opts.body) || "{}");
+    posts.push({ url, method, body });
+    return Promise.resolve({
+      ok: true,
+      json: () => Promise.resolve({ id: 900 + posts.length, kind: body.kind, points: body.points, style: body.style }),
+    });
+  };
+  const bus = createBus();
+  const created = [];
+  bus.on("drawing:created", (p) => created.push(p));
+  const store = makeStore({ symbol: "BTCUSDT", interval: "1m", tool: null });
+  const host = { getCandleSeries: () => null };
+  const d = createDrawings({ store, bus, host, config: { urls: { drawings: "/market/api/drawings" } } });
+  return {
+    d, bus, posts, created, store,
+    load: () => d.refreshDrawings(),
+    restore() {
+      if (prevDoc === undefined) delete globalThis.document; else globalThis.document = prevDoc;
+      if (prevWin === undefined) delete globalThis.window; else globalThis.window = prevWin;
+      if (prevFetch === undefined) delete globalThis.fetch; else globalThis.fetch = prevFetch;
+    },
+  };
+}
+
+test("drawing:duplicate clones kind/points/style into ONE POST, no offset (D6/Q4)", async () => {
+  const f = drawingsFixture([{ id: 7, kind: "hline", points: { price: 100 }, style: { color: "#111" } }]);
+  try {
+    await f.load();
+    f.bus.emit("drawing:duplicate", { id: 7 });
+    assert.strictEqual(f.posts.length, 1, "duplicate is one POST");
+    assert.strictEqual(f.posts[0].method, "POST");
+    assert.deepStrictEqual(f.posts[0].body.points, { price: 100 });
+    assert.strictEqual(f.posts[0].body.kind, "hline");
+    assert.deepStrictEqual(f.posts[0].body.style, { color: "#111" });
+  } finally { f.restore(); }
+});
+
+test("drawing:restore re-POSTs the committed before row (undo of a delete)", async () => {
+  const f = drawingsFixture([]);
+  try {
+    f.bus.emit("drawing:restore", { row: { kind: "trendline", points: { p1: 1, p2: 2 }, style: {} } });
+    // The POST is issued synchronously on the emit; the response resolves async.
+    await Promise.resolve();
+    assert.strictEqual(f.posts.length, 1);
+    assert.strictEqual(f.posts[0].method, "POST");
+    assert.strictEqual(f.posts[0].body.kind, "trendline");
+    assert.deepStrictEqual(f.posts[0].body.points, { p1: 1, p2: 2 });
+  } finally { f.restore(); }
+});
+
+test("drawing:created is emitted after a create (the undo signal)", async () => {
+  const f = drawingsFixture([]);
+  try {
+    f.bus.emit("drawing:restore", { row: { kind: "hline", points: { price: 5 }, style: {} } });
+    for (let i = 0; i < 5; i += 1) await Promise.resolve();
+    assert.strictEqual(f.created.length, 1, "create completion is published");
+    assert.strictEqual(f.created[0].kind, "hline");
+    assert.strictEqual(f.created[0].id, 901);
+  } finally { f.restore(); }
+});
+
+test("a duplicate of an unknown id POSTs nothing", async () => {
+  const f = drawingsFixture([{ id: 7, kind: "hline", points: {}, style: {} }]);
+  try {
+    await f.load();
+    f.bus.emit("drawing:duplicate", { id: 404 });
+    assert.deepStrictEqual(f.posts, []);
+  } finally { f.restore(); }
+});
+
 //
 // The controller's chart peers need a browser (E2E), but its gesture +
 // ephemeral-readout contract is DOM + a stubbed host/series: it owns the
@@ -565,6 +662,317 @@ function renderMeasurePrim(ctx) {
       useMediaCoordinateSpace: (cb) => cb({ context: ctx, mediaSize: { width: 300, height: 300 } }),
     });
 }
+
+// --- F7 S3: context menu controller (design §c / R1-R5) ----------------------
+//
+// The controller owns the ``#chart`` contextmenu listener, the hit-test (the
+// pure grabHandle/pointerRows/localPoint reused verbatim), the JS-built
+// role="menu" DOM and the ACTION dispatch. A hand-rolled DOM shim (no jsdom)
+// keeps it framework-free; the bus is real so the emitted commands are asserted.
+const { createContextMenu } = await import(
+  "../../web/market/templates/market/controllers/context-menu.js"
+);
+
+function menuEl(tag) {
+  const el = {
+    tagName: tag,
+    children: [],
+    attrs: {},
+    style: {},
+    dataset: {},
+    _listeners: {},
+    textContent: "",
+    parentNode: null,
+    setAttribute(k, v) { this.attrs[k] = String(v); },
+    getAttribute(k) { return this.attrs[k]; },
+    hasAttribute(k) { return k in this.attrs; },
+    appendChild(c) { c.parentNode = this; this.children.push(c); return c; },
+    remove() {
+      if (!this.parentNode) return;
+      const i = this.parentNode.children.indexOf(this);
+      if (i !== -1) this.parentNode.children.splice(i, 1);
+      this.parentNode = null;
+    },
+    contains(node) {
+      if (node === this) return true;
+      return this.children.some((c) => c.contains(node));
+    },
+    addEventListener(type, fn) { (this._listeners[type] = this._listeners[type] || []).push(fn); },
+    focus() { globalThis.document.activeElement = this; },
+    getBoundingClientRect() { return { left: 0, top: 0, width: 800, height: 600 }; },
+    fire(type, ev) { (this._listeners[type] || []).forEach((fn) => fn(ev || {})); },
+  };
+  return el;
+}
+
+function menuFixture(rows) {
+  const prevDoc = globalThis.document;
+  const body = menuEl("body");
+  const chart = menuEl("section");
+  const docListeners = {};
+  globalThis.document = {
+    activeElement: null,
+    body,
+    getElementById: (id) => (id === "chart" ? chart : null),
+    createElement: menuEl,
+    addEventListener(type, fn) { (docListeners[type] = docListeners[type] || []).push(fn); },
+    removeEventListener() {},
+    fireDoc(type, ev) { (docListeners[type] || []).forEach((fn) => fn(ev || {})); },
+  };
+  const store = makeStore({ scaleMode: "linear", indicators: ["sma"], tool: null });
+  const host = makeHost();
+  const bus = createBus();
+  const emitted = [];
+  ["drawing:delete", "drawing:duplicate", "scale:changed", "indicator:changed", "drawing:selected"]
+    .forEach((e) => bus.on(e, (p) => emitted.push({ event: e, payload: p })));
+  const cm = createContextMenu({ store, bus, host, config: {} });
+  cm.attach();
+  if (rows) bus.emit("drawings:changed", { rows });
+  return {
+    cm, store, host, bus, emitted, body, chart,
+    restore() { globalThis.document = prevDoc; },
+  };
+}
+
+function menuNode(body) {
+  return body.children.find((c) => c.getAttribute("role") === "menu") || null;
+}
+
+function ctxEv(x, y) {
+  let prevented = false;
+  return { clientX: x, clientY: y, button: 2, preventDefault() { prevented = true; }, _prevented: () => prevented };
+}
+
+const HLINE_ROW = { id: 7, kind: "hline", points: { price: 100 }, style: {} };
+
+test("contextmenu on a drawing row opens a role=menu with Delete then Duplicate (R2/R4)", () => {
+  const f = menuFixture([HLINE_ROW]);
+  try {
+    const ev = ctxEv(300, 100);
+    f.chart.fire("contextmenu", ev);
+    assert.strictEqual(ev._prevented(), true, "default context menu prevented");
+    const menu = menuNode(f.body);
+    assert.ok(menu, "a role=menu node is appended");
+    assert.strictEqual(menu.getAttribute("aria-label") != null, true);
+    const labels = menu.children.map((c) => c.textContent);
+    assert.deepStrictEqual(labels, ["Delete", "Duplicate"]);
+    assert.strictEqual(menu.children.every((c) => c.getAttribute("role") === "menuitem"), true);
+    assert.strictEqual(menu.children[0].getAttribute("aria-keyshortcuts"), "Delete");
+    // The hit resolved the row: selection is announced on the bus.
+    const sel = f.emitted.find((e) => e.event === "drawing:selected");
+    assert.deepStrictEqual(sel.payload, { id: 7 });
+  } finally { f.restore(); }
+});
+
+test("contextmenu on an empty chart offers Add indicator (R1)", () => {
+  const f = menuFixture([]);
+  try {
+    f.chart.fire("contextmenu", ctxEv(300, 400));
+    const menu = menuNode(f.body);
+    assert.ok(menu);
+    assert.deepStrictEqual(menu.children.map((c) => c.textContent), ["Add indicator"]);
+    const sel = f.emitted.find((e) => e.event === "drawing:selected");
+    assert.deepStrictEqual(sel.payload, { id: null });
+  } finally { f.restore(); }
+});
+
+test("reset-scale appears non-linear and is absent linear (R1)", () => {
+  const f = menuFixture([]);
+  try {
+    f.store.set({ scaleMode: "log" });
+    f.chart.fire("contextmenu", ctxEv(300, 400));
+    assert.deepStrictEqual(
+      menuNode(f.body).children.map((c) => c.textContent),
+      ["Reset scale", "Add indicator"],
+    );
+    // Close, then flip linear: no reset-scale.
+    globalThis.document.fireDoc("pointerdown", { target: menuEl("div") });
+    f.store.set({ scaleMode: "linear" });
+    f.chart.fire("contextmenu", ctxEv(300, 400));
+    assert.deepStrictEqual(
+      menuNode(f.body).children.map((c) => c.textContent),
+      ["Add indicator"],
+    );
+  } finally { f.restore(); }
+});
+
+test("Delete item emits drawing:delete with the hit id (R4)", () => {
+  const f = menuFixture([HLINE_ROW]);
+  try {
+    f.chart.fire("contextmenu", ctxEv(300, 100));
+    menuNode(f.body).children[0].fire("click");
+    const del = f.emitted.find((e) => e.event === "drawing:delete");
+    assert.deepStrictEqual(del.payload, { id: 7 });
+    assert.strictEqual(menuNode(f.body), null, "menu closes after activation");
+    assert.strictEqual(globalThis.document.activeElement, f.chart, "focus returns to #chart");
+  } finally { f.restore(); }
+});
+
+test("Duplicate item emits drawing:duplicate with the hit id (R4)", () => {
+  const f = menuFixture([HLINE_ROW]);
+  try {
+    f.chart.fire("contextmenu", ctxEv(300, 100));
+    menuNode(f.body).children[1].fire("click");
+    const dup = f.emitted.find((e) => e.event === "drawing:duplicate");
+    assert.deepStrictEqual(dup.payload, { id: 7 });
+  } finally { f.restore(); }
+});
+
+test("reset-scale item sets linear + emits scale:changed, never a PUT (R4/#68)", () => {
+  const f = menuFixture([]);
+  try {
+    f.store.set({ scaleMode: "percentage" });
+    f.chart.fire("contextmenu", ctxEv(300, 400));
+    menuNode(f.body).children[0].fire("click");
+    assert.strictEqual(f.store.get().scaleMode, "linear");
+    const ev = f.emitted.find((e) => e.event === "scale:changed");
+    assert.deepStrictEqual(ev.payload, { mode: "linear" });
+  } finally { f.restore(); }
+});
+
+test("add-indicator reuses the F5 seam: store membership + indicator:changed (R4)", () => {
+  const f = menuFixture([]);
+  try {
+    f.chart.fire("contextmenu", ctxEv(300, 400));
+    menuNode(f.body).children[0].fire("click");
+    assert.deepStrictEqual(f.store.get().indicators, ["sma", "ema"]);
+    assert.ok(f.emitted.some((e) => e.event === "indicator:changed"));
+  } finally { f.restore(); }
+});
+
+test("Escape closes the menu and returns focus to #chart (R3)", () => {
+  const f = menuFixture([HLINE_ROW]);
+  try {
+    f.chart.fire("contextmenu", ctxEv(300, 100));
+    const menu = menuNode(f.body);
+    menu.fire("keydown", { key: "Escape", preventDefault() {} });
+    assert.strictEqual(menuNode(f.body), null);
+    assert.strictEqual(globalThis.document.activeElement, f.chart);
+  } finally { f.restore(); }
+});
+
+test("outside pointerdown closes the menu (R3)", () => {
+  const f = menuFixture([HLINE_ROW]);
+  try {
+    f.chart.fire("contextmenu", ctxEv(300, 100));
+    assert.ok(menuNode(f.body));
+    globalThis.document.fireDoc("pointerdown", { target: menuEl("span") });
+    assert.strictEqual(menuNode(f.body), null);
+  } finally { f.restore(); }
+});
+
+test("ArrowDown then End then Home rove focus across items (R3)", () => {
+  const f = menuFixture([HLINE_ROW]);
+  try {
+    f.store.set({ scaleMode: "log" }); // 3 items: delete, duplicate, reset-scale
+    f.chart.fire("contextmenu", ctxEv(300, 100));
+    const menu = menuNode(f.body);
+    const items = menu.children;
+    assert.strictEqual(globalThis.document.activeElement, items[0], "first item focused on open");
+    assert.strictEqual(items[0].getAttribute("tabindex"), "0");
+    menu.fire("keydown", { key: "ArrowDown", preventDefault() {} });
+    assert.strictEqual(globalThis.document.activeElement, items[1]);
+    menu.fire("keydown", { key: "End", preventDefault() {} });
+    assert.strictEqual(globalThis.document.activeElement, items[2]);
+    menu.fire("keydown", { key: "Home", preventDefault() {} });
+    assert.strictEqual(globalThis.document.activeElement, items[0]);
+  } finally { f.restore(); }
+});
+
+test("the contextmenu listener binds exactly once across attach() calls (R2)", () => {
+  const f = menuFixture([]);
+  try {
+    f.cm.attach();
+    f.cm.attach();
+    assert.strictEqual(f.chart._listeners.contextmenu.length, 1);
+  } finally { f.restore(); }
+});
+
+test("clearForSwitch closes an open menu (R4)", () => {
+  const f = menuFixture([HLINE_ROW]);
+  try {
+    f.chart.fire("contextmenu", ctxEv(300, 100));
+    assert.ok(menuNode(f.body));
+    f.cm.clearForSwitch();
+    assert.strictEqual(menuNode(f.body), null);
+  } finally { f.restore(); }
+});
+
+// --- F7 UI #204: keyboard-open path (Shift+F10 / ContextMenu) ----------------
+
+function keyOpen(key, opts) {
+  let prevented = false;
+  return Object.assign(
+    { key, shiftKey: false, preventDefault() { prevented = true; }, _prevented: () => prevented },
+    opts,
+  );
+}
+
+test("#chart advertises a menu popup (aria-haspopup, F7 UI #204)", () => {
+  const html = readFileSync(
+    fileURLToPath(new URL("../../web/market/templates/market/chart.html", import.meta.url)),
+    "utf8",
+  );
+  assert.match(html, /id="chart"[^>]*aria-haspopup="menu"/, "chart.html #chart carries aria-haspopup");
+});
+
+test("Shift+F10 on #chart opens the menu at the selected drawing (F7 UI #204)", () => {
+  const f = menuFixture([HLINE_ROW]);
+  try {
+    f.chart.getBoundingClientRect = () => ({ left: 40, top: 20 });
+    f.bus.emit("drawing:selected", { id: 7 });
+    const e = keyOpen("F10", { shiftKey: true });
+    f.chart.fire("keydown", e);
+    assert.strictEqual(e._prevented(), true, "the native key is consumed");
+    const menu = menuNode(f.body);
+    assert.ok(menu, "Shift+F10 opens the menu");
+    assert.deepStrictEqual(menu.children.map((c) => c.textContent), ["Delete", "Duplicate"]);
+    // hline handle at price 100 -> local (0,100); rect (40,20) -> client (40,120).
+    assert.strictEqual(menu.style.left, "40px");
+    assert.strictEqual(menu.style.top, "120px");
+  } finally { f.restore(); }
+});
+
+test("ContextMenu key with nothing selected opens at the chart rect+8 (F7 UI #204)", () => {
+  const f = menuFixture([]);
+  try {
+    f.chart.getBoundingClientRect = () => ({ left: 40, top: 20 });
+    const e = keyOpen("ContextMenu");
+    f.chart.fire("keydown", e);
+    assert.strictEqual(e._prevented(), true);
+    const menu = menuNode(f.body);
+    assert.ok(menu);
+    assert.deepStrictEqual(menu.children.map((c) => c.textContent), ["Add indicator"]);
+    assert.strictEqual(menu.style.left, "48px");
+    assert.strictEqual(menu.style.top, "28px");
+  } finally { f.restore(); }
+});
+
+test("a bare F10 (no Shift) does not open the menu (F7 UI #204)", () => {
+  const f = menuFixture([HLINE_ROW]);
+  try {
+    const e = keyOpen("F10");
+    f.chart.fire("keydown", e);
+    assert.strictEqual(menuNode(f.body), null);
+    assert.notStrictEqual(e._prevented(), true);
+  } finally { f.restore(); }
+});
+
+test("an item without a shortcut omits aria-keyshortcuts (F7 UI #206)", () => {
+  // The model yields keyshortcut:"" for Duplicate/Add indicator; writing it
+  // verbatim leaves an empty (misleading) attribute. Omit it entirely.
+  const f = menuFixture([HLINE_ROW]);
+  try {
+    f.chart.fire("contextmenu", ctxEv(300, 100));
+    const items = menuNode(f.body).children;
+    assert.strictEqual(items[0].getAttribute("aria-keyshortcuts"), "Delete");
+    assert.strictEqual(
+      items[1].hasAttribute("aria-keyshortcuts"),
+      false,
+      "an empty shortcut must not be written",
+    );
+  } finally { f.restore(); }
+});
 
 test("measure stroke paints with the resolved --accent token, not a literal (R9)", () => {
   const f = measureFixture();
