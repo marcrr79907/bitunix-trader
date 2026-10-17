@@ -59,11 +59,19 @@ function positionBox(points, map) {
   var yStop = map.y(lv.stop);
   var yTp = map.y(lv.takeProfit);
   var rr = riskReward(lv.entry, lv.stop, lv.takeProfit).rr;
+  // An off-scale level (null y) MUST degrade the band to null, never coerce to 0
+  // via Math.min/Math.max (R6 "degrade gracefully").
+  var band = function (a, b) {
+    if (a === null || a === undefined || b === null || b === undefined) {
+      return { top: null, bottom: null };
+    }
+    return { top: Math.min(a, b), bottom: Math.max(a, b) };
+  };
   return {
     left: left,
     right: left + BOX_WIDTH,
-    riskBand: { top: Math.min(yEntry, yStop), bottom: Math.max(yEntry, yStop) },
-    rewardBand: { top: Math.min(yEntry, yTp), bottom: Math.max(yEntry, yTp) },
+    riskBand: band(yEntry, yStop),
+    rewardBand: band(yEntry, yTp),
     levels: [
       { id: "entry", price: lv.entry, y: yEntry, label: "Entry" },
       { id: "stop", price: lv.stop, y: yStop, label: "SL" },

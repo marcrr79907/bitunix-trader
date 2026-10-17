@@ -102,6 +102,15 @@ test("positionBox is null when the entry x is off-bar", () => {
   assert.strictEqual(positionBox(LONG, { x: () => null, y: (p) => p }), null);
 });
 
+test("positionBox degrades a band to null (not y=0) when a level is off-scale", () => {
+  // R6 "degrade gracefully": Math.min(y, null) coerce null->0 would paint the
+  // box down to y=0; an off-scale level MUST null the whole band instead.
+  const box = positionBox(LONG, { x: (t) => t, y: (p) => (p === 90 ? null : p) });
+  assert.deepStrictEqual(box.riskBand, { top: null, bottom: null });
+  // The reward band is untouched (both y present).
+  assert.deepStrictEqual(box.rewardBand, { top: 100, bottom: 120 });
+});
+
 test("positionHandles returns 4 handles (entry anchor + 3 levels)", () => {
   assert.deepStrictEqual(positionHandles(LONG, MAP), [
     { id: "entry", x: 10, y: 100 },
