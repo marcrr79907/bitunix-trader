@@ -151,3 +151,101 @@ test("position zones fall back to the literals with no DOM (R9)", () => {
   assert.ok(ctx.fills.includes("#ef5350"), `risk fallback: ${ctx.fills}`);
   assert.ok(ctx.fills.includes("#26a69a"), `reward fallback: ${ctx.fills}`);
 });
+
+// --- F9 kinds render dispatch (F9 S3 R6) -------------------------------------
+
+const MAPR = { x: (t) => t, y: (p) => p, right: 1000 };
+
+// One representative row per F9 kind.
+const F9_ROWS = {
+  ray: { kind: "ray", points: { p1: { time: 0, price: 0 }, p2: { time: 10, price: 10 } } },
+  vline: { kind: "vline", points: { time: 42 } },
+  channel: {
+    kind: "channel",
+    points: { p1: { time: 0, price: 0 }, p2: { time: 10, price: 10 }, p3: { time: 0, price: 20 } },
+  },
+  price: { kind: "price", points: { price: 50 } },
+  callout: {
+    kind: "callout",
+    points: { p1: { time: 0, price: 0 }, p2: { time: 10, price: 10 }, text: "OB" },
+  },
+  fib_ext: {
+    kind: "fib_ext",
+    points: { p1: { time: 0, price: 0 }, p2: { time: 10, price: 10 }, p3: { time: 20, price: 20 } },
+  },
+  fib_time: { kind: "fib_time", points: { p1: { time: 0 }, p2: { time: 10 } } },
+  fib_zone: {
+    kind: "fib_zone",
+    points: { p1: { time: 0, price: 0 }, p2: { time: 10, price: 10 } },
+  },
+};
+
+test("renderShape dispatches each F9 kind to renderTool without throwing (R6)", () => {
+  for (const kind of Object.keys(F9_ROWS)) {
+    const ctx = recordingCtx();
+    const row = { ...F9_ROWS[kind], style: { color: "#2962ff", lineWidth: 1 } };
+    assert.doesNotThrow(
+      () => renderShape(ctx, { width: 300, height: 300 }, row, MAPR, false),
+      kind,
+    );
+    const draws = ctx.calls.filter((c) => c === "stroke" || c === "fillRect" || c === "fillText");
+    assert.ok(draws.length > 0, `${kind} draws something`);
+  }
+});
+
+test("renderShape honours the hidden rule for F9 kinds too (R6)", () => {
+  for (const kind of Object.keys(F9_ROWS)) {
+    const ctx = recordingCtx();
+    const row = { ...F9_ROWS[kind], visible: false, style: {} };
+    renderShape(ctx, { width: 300, height: 300 }, row, MAPR, false);
+    assert.deepStrictEqual(ctx.calls, ["save", "restore"], kind);
+  }
+});
+
+test("price/ray/vline/channel are distinguished by shape (strokes) (R6)", () => {
+  for (const kind of ["ray", "vline", "channel", "price"]) {
+    const ctx = recordingCtx();
+    renderShape(ctx, { width: 300, height: 300 }, { ...F9_ROWS[kind], style: {} }, MAPR, false);
+    assert.ok(ctx.calls.filter((c) => c === "stroke").length > 0, kind);
+  }
+});
+
+test("price draws a right-axis price label, not colour alone (R6/design-system)", () => {
+  const ctx = recordingCtx();
+  renderShape(ctx, { width: 300, height: 300 }, { ...F9_ROWS.price, style: {} }, MAPR, false);
+  assert.ok(ctx.calls.includes("fillText"), "price carries a text label");
+});
+
+test("fib_ext/fib_time/fib_zone show ratio labels (R6/design-system)", () => {
+  for (const kind of ["fib_ext", "fib_time", "fib_zone"]) {
+    const ctx = recordingCtx();
+    renderShape(ctx, { width: 300, height: 300 }, { ...F9_ROWS[kind], style: {} }, MAPR, false);
+    assert.ok(ctx.calls.includes("fillText"), `${kind} shows ratio labels`);
+  }
+});
+
+test("callout draws its text balloon (R6/design-system)", () => {
+  const ctx = recordingCtx();
+  renderShape(ctx, { width: 300, height: 300 }, { ...F9_ROWS.callout, style: {} }, MAPR, false);
+  assert.ok(ctx.calls.includes("fillText"), "callout shows its text");
+});
+
+test("autoscaleInfo of a channel/fib_ext includes p3 (R6)", () => {
+  const channel = { kind: "channel", points: {
+    p1: { time: 0, price: 0 }, p2: { time: 10, price: 10 }, p3: { time: 20, price: 99 } } };
+  assert.deepStrictEqual(makeDrawingPrimitive(channel, {}).autoscaleInfo(), {
+    priceRange: { minValue: 0, maxValue: 99 },
+  });
+  const fibExt = { kind: "fib_ext", points: {
+    p1: { time: 0, price: 5 }, p2: { time: 10, price: 10 }, p3: { time: 20, price: 42 } } };
+  assert.deepStrictEqual(makeDrawingPrimitive(fibExt, {}).autoscaleInfo(), {
+    priceRange: { minValue: 5, maxValue: 42 },
+  });
+});
+
+test("autoscaleInfo of a price drawing includes its price (R6)", () => {
+  const prim = makeDrawingPrimitive({ kind: "price", points: { price: 50 } }, {});
+  assert.deepStrictEqual(prim.autoscaleInfo(), {
+    priceRange: { minValue: 50, maxValue: 50 },
+  });
+});

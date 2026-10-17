@@ -7,6 +7,7 @@
 // primitive reads ``isSelected`` LIVE on every render, so a selection change
 // needs no re-attach (R6/#68: redraw via ``requestUpdate`` only).
 import * as Draw from "./drawing-core.js";
+import * as Tools from "./drawing-tools-core.js";
 import { handlesFor, HANDLE_RADIUS } from "./drawing-interaction-core.js";
 import { positionBox } from "./position-core.js";
 import { token } from "./theme-core.js";
@@ -22,6 +23,9 @@ function priceRangeFor(row) {
     const p = row.points[k];
     if (p && typeof p.price === "number") prices.push(p.price);
   });
+  // F9 S3 (R6): a channel/fib_ext's ``p3`` anchor must be in range too.
+  const p3 = row.points.p3;
+  if (p3 && typeof p3.price === "number") prices.push(p3.price);
   if (!prices.length) return null;
   return {
     priceRange: {
@@ -81,9 +85,69 @@ function renderShape(ctx, size, row, map, selected) {
     }
   } else if (kind === "position") {
     renderPosition(ctx, row, map);
+  } else if (Tools.NEW_KINDS.indexOf(kind) !== -1) {
+    // F9 S3 (R6): ONE guard — the eight new kinds draw via their descriptors.
+    renderTool(ctx, size, row, map);
   }
   if (selected) drawHandles(ctx, row, map);
   ctx.restore();
+}
+
+// F9 S3 (R6): the canvas switch for the eight new kinds. Geometry comes from
+// drawing-tools-core.toolPath (pure); nothing here is colour-only — ratio/price
+// labels carry the meaning (design-system R6). Off-bar legs are skipped, never
+// thrown. Canvas access lives here, not in the pure core.
+function renderTool(ctx, size, row, map) {
+  const kind = row.kind;
+  const p = Tools.toolPath(kind, row, map);
+  if (!p) return;
+  ctx.font = "11px sans-serif";
+  if (kind === "ray") {
+    if (p.a && p.b) {
+      ctx.beginPath(); ctx.moveTo(p.a.x, p.a.y); ctx.lineTo(p.b.x, p.b.y); ctx.stroke();
+    }
+  } else if (kind === "vline") {
+    if (p.x !== null && p.x !== undefined) {
+      ctx.beginPath(); ctx.moveTo(p.x, 0); ctx.lineTo(p.x, size.height); ctx.stroke();
+    }
+  } else if (kind === "channel") {
+    [[p.a, p.b], [p.c, p.d]].forEach(function (seg) {
+      if (seg[0] && seg[1]) {
+        ctx.beginPath(); ctx.moveTo(seg[0].x, seg[0].y); ctx.lineTo(seg[1].x, seg[1].y); ctx.stroke();
+      }
+    });
+  } else if (kind === "price") {
+    if (p.y !== null && p.y !== undefined) {
+      ctx.beginPath(); ctx.moveTo(0, p.y); ctx.lineTo(size.width, p.y); ctx.stroke();
+      ctx.fillText(String(p.price), 2, p.y - 2); // right-axis tag: not colour-only
+    }
+  } else if (kind === "callout") {
+    if (p.a && p.b) {
+      ctx.beginPath(); ctx.moveTo(p.a.x, p.a.y); ctx.lineTo(p.b.x, p.b.y); ctx.stroke();
+      ctx.fillText(String(p.text == null ? "" : p.text), p.b.x + 4, p.b.y - 4);
+    }
+  } else if (kind === "fib_ext") {
+    (p.levels || []).forEach(function (l) {
+      if (l.y === null || l.y === undefined) return;
+      ctx.beginPath(); ctx.moveTo(p.x1, l.y); ctx.lineTo(p.x2, l.y); ctx.stroke();
+      ctx.fillText(l.ratio + "  " + l.price, p.x1, l.y - 2);
+    });
+  } else if (kind === "fib_time") {
+    ((p && p.levels) || []).forEach(function (l) {
+      if (l.x === null || l.x === undefined) return;
+      ctx.beginPath(); ctx.moveTo(l.x, 0); ctx.lineTo(l.x, size.height); ctx.stroke();
+      ctx.fillText(String(l.ratio), l.x + 2, 12);
+    });
+  } else if (kind === "fib_zone") {
+    (p.bands || []).forEach(function (b) {
+      const top = Math.min(b.yLo, b.yHi);
+      ctx.globalAlpha = 0.15;
+      ctx.fillRect(p.x1, top, p.x2 - p.x1, Math.abs(b.yHi - b.yLo));
+      ctx.globalAlpha = 1;
+      ctx.strokeRect(p.x1, top, p.x2 - p.x1, Math.abs(b.yHi - b.yLo));
+      ctx.fillText(b.ratioLo + "-" + b.ratioHi, p.x1 + 2, top - 2);
+    });
+  }
 }
 
 // F6 (R6): a position box — a risk zone (entry->stop) and a reward zone
