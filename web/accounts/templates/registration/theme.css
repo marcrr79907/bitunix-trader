@@ -181,6 +181,9 @@ code{font-family:var(--mono); background:var(--surface); padding:1px 5px; border
 /* Not color-only (design-system R6): the active tool gains a 2px border + a
    surface lift alongside aria-pressed. */
 .draw-tool[aria-pressed="true"]{border:2px solid var(--accent); color:var(--accent); background:var(--bg-2)}
+/* F7 UI #205: a static, discoverable undo/redo hint (muted, small) next to the
+   polite #history-status live region that announces each op. */
+.history-hint{color:var(--muted); font-size:var(--fs-3); margin:0 0 var(--sp-2)}
 
 /* object tree (F5 S3) — unified drawings + indicators. Tokens only (R10):
    no literal palette; both [data-theme] sets declare the state names. */

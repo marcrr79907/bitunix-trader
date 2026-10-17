@@ -300,6 +300,17 @@ def test_f6_position_readout_mirrors_measure_readout_style(logged_in_client):
         assert token in position_rule.split("}")[0], token
 
 
+def test_ui_audit_undo_hint_uses_tokens(logged_in_client):
+    # F7 UI audit (#205): the static discoverable undo/redo hint is muted/small,
+    # token-only (no hard-coded hex).
+    import re
+
+    css = logged_in_client.get("/theme.css").content.decode()
+    hint = css[css.index(".history-hint") :].split("}")[0]
+    assert "var(--muted)" in hint and "var(--fs-3)" in hint
+    assert not re.search(r"#[0-9a-fA-F]{3,8}\b", hint), "no hard-coded hex in the hint"
+
+
 def test_csp_present_on_market_page(logged_in_client):
     response = logged_in_client.get("/market/")
     assert response.status_code == 200

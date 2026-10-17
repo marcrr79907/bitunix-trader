@@ -4049,6 +4049,36 @@ def test_context_menu_delete_then_undo_reposts(
 
 
 @p
+def test_undo_announces_and_advertises_shortcut(
+    seeded_5m_candles, interaction_drawing, browser_page
+):
+    # F7 UI #205: an undo writes "Undo" to the polite #history-status region and
+    # the region advertises the shortcuts; a static hint is discoverable.
+    page, base_url = browser_page
+    page.goto(f"{base_url}/market/")
+    _wait_ready(page)
+    page.wait_for_function(
+        "() => window.marketChart.drawings && window.marketChart.drawings.length === 1",
+        timeout=10000,
+    )
+    assert (
+        page.locator("#history-status").get_attribute("aria-keyshortcuts")
+        == "Control+Z Control+Shift+Z"
+    )
+    assert page.locator("#history-hint").count() == 1
+    _select_hline(page)
+    page.keyboard.press("Delete")
+    page.wait_for_function(
+        "() => window.marketChart.drawings.length === 0", timeout=5000
+    )
+    page.keyboard.press("Control+z")
+    page.wait_for_function(
+        "() => document.getElementById('history-status').textContent === 'Undo'",
+        timeout=5000,
+    )
+
+
+@p
 def test_context_menu_reset_scale_emits_scale_changed_no_put(
     seeded_5m_candles, browser_page
 ):

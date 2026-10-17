@@ -47,6 +47,9 @@ export function createUndo({ store, bus, host, config }) {
   const history = createHistory({ limit: 50 });
   const committed = {}; // id -> {kind,points,style}; add/update only, never removed
   let replaying = null; // the entry a replay is emitting (re-entrancy guard)
+  // F7 UI #205: a polite announcement ("Undo"/"Redo") so a keyboard/SR user gets
+  // feedback — and knows the feature exists. One write per op, no coalescing.
+  const status = globalThis.document ? globalThis.document.getElementById("history-status") : null;
 
   // The last-committed shape per id feeds the update ``before`` snapshot and a
   // deleted row's ``before`` re-POST. Published by drawings.attachAllDrawings.
@@ -121,8 +124,19 @@ export function createUndo({ store, bus, host, config }) {
     if (!waits) replaying = null;
   }
 
-  function undo() { const entry = history.undo(); if (entry) replay(entry, "undo"); }
-  function redo() { const entry = history.redo(); if (entry) replay(entry, "redo"); }
+  function undo() {
+    const entry = history.undo();
+    if (!entry) return;
+    replay(entry, "undo");
+    if (status) status.textContent = "Undo";
+  }
+
+  function redo() {
+    const entry = history.redo();
+    if (!entry) return;
+    replay(entry, "redo");
+    if (status) status.textContent = "Redo";
+  }
 
   // Router (R5): Ctrl/Cmd+Z undoes; Ctrl/Cmd+Shift+Z or Ctrl/Cmd+Y redoes. A
   // focused text field keeps its native edit behaviour; Escape/Delete are owned
