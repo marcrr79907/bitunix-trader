@@ -18,6 +18,7 @@ import {
   prevClose,
 } from "../../web/market/templates/market/controllers/legend.js";
 import { resolveToggles } from "../../web/market/templates/market/controllers/smc.js";
+import { createBus } from "../../web/market/templates/market/chart-bus.js";
 
 test("buildIndicators: token-only entries when no params", () => {
   assert.deepStrictEqual(buildIndicators(["sma", "rsi"], {}), [
@@ -285,7 +286,101 @@ test("resolveToggles: a null/garbage payload degrades to all ON", () => {
   assert.deepStrictEqual(resolveToggles("nope"), allOn);
 });
 
-// --- measure controller (F6 S3 / R1-R4) --------------------------------------
+// --- drawings duplicate/restore (F7 S2 / design D6) --------------------------
+//
+// duplicate/restore MUST reuse the ONE create path (a POST), never a new
+// endpoint (#68). A DOM-free shim (null dialogs) + a fetch stub captures the
+// POST body; ``drawing:created`` is emitted after the attach (the undo signal).
+const { createDrawings } = await import(
+  "../../web/market/templates/market/controllers/drawings.js"
+);
+
+function drawingsFixture(seedRows) {
+  const prevDoc = globalThis.document;
+  const prevWin = globalThis.window;
+  const prevFetch = globalThis.fetch;
+  const posts = [];
+  globalThis.document = {
+    getElementById: () => null,
+    querySelector: () => null,
+    documentElement: { style: {} },
+  };
+  globalThis.window = { marketChart: { drawings: [] } };
+  globalThis.fetch = (url, opts) => {
+    const method = (opts && opts.method) || "GET";
+    if (method === "GET") {
+      return Promise.resolve({ ok: true, json: () => Promise.resolve({ drawings: seedRows || [] }) });
+    }
+    const body = JSON.parse((opts && opts.body) || "{}");
+    posts.push({ url, method, body });
+    return Promise.resolve({
+      ok: true,
+      json: () => Promise.resolve({ id: 900 + posts.length, kind: body.kind, points: body.points, style: body.style }),
+    });
+  };
+  const bus = createBus();
+  const created = [];
+  bus.on("drawing:created", (p) => created.push(p));
+  const store = makeStore({ symbol: "BTCUSDT", interval: "1m", tool: null });
+  const host = { getCandleSeries: () => null };
+  const d = createDrawings({ store, bus, host, config: { urls: { drawings: "/market/api/drawings" } } });
+  return {
+    d, bus, posts, created, store,
+    load: () => d.refreshDrawings(),
+    restore() {
+      if (prevDoc === undefined) delete globalThis.document; else globalThis.document = prevDoc;
+      if (prevWin === undefined) delete globalThis.window; else globalThis.window = prevWin;
+      if (prevFetch === undefined) delete globalThis.fetch; else globalThis.fetch = prevFetch;
+    },
+  };
+}
+
+test("drawing:duplicate clones kind/points/style into ONE POST, no offset (D6/Q4)", async () => {
+  const f = drawingsFixture([{ id: 7, kind: "hline", points: { price: 100 }, style: { color: "#111" } }]);
+  try {
+    await f.load();
+    f.bus.emit("drawing:duplicate", { id: 7 });
+    assert.strictEqual(f.posts.length, 1, "duplicate is one POST");
+    assert.strictEqual(f.posts[0].method, "POST");
+    assert.deepStrictEqual(f.posts[0].body.points, { price: 100 });
+    assert.strictEqual(f.posts[0].body.kind, "hline");
+    assert.deepStrictEqual(f.posts[0].body.style, { color: "#111" });
+  } finally { f.restore(); }
+});
+
+test("drawing:restore re-POSTs the committed before row (undo of a delete)", async () => {
+  const f = drawingsFixture([]);
+  try {
+    f.bus.emit("drawing:restore", { row: { kind: "trendline", points: { p1: 1, p2: 2 }, style: {} } });
+    // The POST is issued synchronously on the emit; the response resolves async.
+    await Promise.resolve();
+    assert.strictEqual(f.posts.length, 1);
+    assert.strictEqual(f.posts[0].method, "POST");
+    assert.strictEqual(f.posts[0].body.kind, "trendline");
+    assert.deepStrictEqual(f.posts[0].body.points, { p1: 1, p2: 2 });
+  } finally { f.restore(); }
+});
+
+test("drawing:created is emitted after a create (the undo signal)", async () => {
+  const f = drawingsFixture([]);
+  try {
+    f.bus.emit("drawing:restore", { row: { kind: "hline", points: { price: 5 }, style: {} } });
+    for (let i = 0; i < 5; i += 1) await Promise.resolve();
+    assert.strictEqual(f.created.length, 1, "create completion is published");
+    assert.strictEqual(f.created[0].kind, "hline");
+    assert.strictEqual(f.created[0].id, 901);
+  } finally { f.restore(); }
+});
+
+test("a duplicate of an unknown id POSTs nothing", async () => {
+  const f = drawingsFixture([{ id: 7, kind: "hline", points: {}, style: {} }]);
+  try {
+    await f.load();
+    f.bus.emit("drawing:duplicate", { id: 404 });
+    assert.deepStrictEqual(f.posts, []);
+  } finally { f.restore(); }
+});
+
 //
 // The controller's chart peers need a browser (E2E), but its gesture +
 // ephemeral-readout contract is DOM + a stubbed host/series: it owns the
