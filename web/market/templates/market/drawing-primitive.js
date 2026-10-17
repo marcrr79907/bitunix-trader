@@ -127,6 +127,8 @@ function renderTool(ctx, size, row, map) {
       ctx.fillText(String(p.text == null ? "" : p.text), p.b.x + 4, p.b.y - 4);
     }
   } else if (kind === "fib_ext") {
+    // #216: an off-bar x anchor skips the whole body (never coerce null -> 0).
+    if (p.x1 === null || p.x1 === undefined || p.x2 === null || p.x2 === undefined) return;
     (p.levels || []).forEach(function (l) {
       if (l.y === null || l.y === undefined) return;
       ctx.beginPath(); ctx.moveTo(p.x1, l.y); ctx.lineTo(p.x2, l.y); ctx.stroke();
@@ -139,7 +141,11 @@ function renderTool(ctx, size, row, map) {
       ctx.fillText(String(l.ratio), l.x + 2, 12);
     });
   } else if (kind === "fib_zone") {
+    // #216: an off-bar x anchor or an off-scale level skips the band entirely.
+    if (p.x1 === null || p.x1 === undefined || p.x2 === null || p.x2 === undefined) return;
     (p.bands || []).forEach(function (b) {
+      if (b.yLo === null || b.yLo === undefined
+        || b.yHi === null || b.yHi === undefined) return;
       const top = Math.min(b.yLo, b.yHi);
       ctx.globalAlpha = 0.15;
       ctx.fillRect(p.x1, top, p.x2 - p.x1, Math.abs(b.yHi - b.yLo));
