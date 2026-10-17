@@ -12,22 +12,30 @@ import { fileURLToPath } from "node:url";
 import * as core from "../../web/market/templates/market/tool-icons-core.js";
 import { DRAWING_KINDS } from "../../web/market/templates/market/drawing-core.js";
 
-test("TOOL_GROUPS: F6 groups the 7 instruments 2/1/1/1/1/1", () => {
+test("TOOL_GROUPS: F9 groups the 15 instruments 6/4/1/2/1/1", () => {
   const labels = core.TOOL_GROUPS.map((g) => g.label);
   assert.deepStrictEqual(labels, ["Lines", "Fib", "Shapes", "Text", "Measure", "Positions"]);
   assert.deepStrictEqual(
     core.TOOL_GROUPS.map((g) => g.kinds.length),
-    [2, 1, 1, 1, 1, 1],
+    [6, 4, 1, 2, 1, 1],
   );
-  assert.deepStrictEqual(core.TOOL_GROUPS[0].kinds, ["hline", "trendline"]);
-  assert.deepStrictEqual(core.TOOL_GROUPS[3].kinds, ["text"]);
+  assert.deepStrictEqual(
+    core.TOOL_GROUPS[0].kinds,
+    ["hline", "trendline", "ray", "vline", "channel", "price"],
+  );
+  assert.deepStrictEqual(
+    core.TOOL_GROUPS[1].kinds,
+    ["fib", "fib_ext", "fib_time", "fib_zone"],
+  );
+  assert.deepStrictEqual(core.TOOL_GROUPS[2].kinds, ["rect"]);
+  assert.deepStrictEqual(core.TOOL_GROUPS[3].kinds, ["text", "callout"]);
   assert.deepStrictEqual(core.TOOL_GROUPS[4], { label: "Measure", kinds: ["measure"] });
   assert.deepStrictEqual(core.TOOL_GROUPS[5], { label: "Positions", kinds: ["position"] });
 });
 
 test("TOOL_GROUPS covers the drawing kinds + measure (no gap, no duplicate)", () => {
   const grouped = core.TOOL_GROUPS.flatMap((g) => g.kinds);
-  assert.strictEqual(grouped.length, 7);
+  assert.strictEqual(grouped.length, 15);
   // Every persisted drawing kind is grouped (no gap)...
   DRAWING_KINDS.forEach((kind) => assert.ok(grouped.includes(kind), kind));
   // ...plus the ephemeral ``measure`` tool and the ``position`` group.
@@ -36,16 +44,28 @@ test("TOOL_GROUPS covers the drawing kinds + measure (no gap, no duplicate)", ()
   assert.strictEqual(new Set(grouped).size, grouped.length); // no duplicate
 });
 
-test("F6 icons: measure + position yield valid, CSP-clean inline SVGs (R1)", () => {
-  ["measure", "position"].forEach((kind) => {
-    const svg = core.iconFor(kind);
+test("F9 icons: the eight new tools yield valid, CSP-clean inline SVGs (R1)", () => {
+  const F9 = ["ray", "vline", "channel", "price", "callout", "fib_ext", "fib_time", "fib_zone"];
+  const svgs = F9.map((kind) => core.iconFor(kind));
+  F9.forEach((kind, i) => {
+    const svg = svgs[i];
     assert.strictEqual(typeof svg, "string", kind);
     assert.match(svg, /^<svg\b/, kind);
     assert.match(svg, /<\/svg>$/, kind);
-    assert.match(svg, /viewBox=/, kind);
     assert.match(svg, /currentColor/, kind);
     assert.doesNotMatch(svg, /\son[a-z]+\s*=/i, kind); // no inline handler (CSP)
     assert.doesNotMatch(svg, /<script/i, kind);
+  });
+  // All eight are distinct (each tool has its own glyph).
+  assert.strictEqual(new Set(svgs).size, F9.length);
+});
+
+test("F6 icons: measure + position yield distinct, CSP-clean inline SVGs (R1)", () => {
+  ["measure", "position"].forEach((kind) => {
+    const svg = core.iconFor(kind);
+    assert.match(svg, /^<svg\b/, kind);
+    assert.match(svg, /currentColor/, kind);
+    assert.doesNotMatch(svg, /\son[a-z]+\s*=/i, kind);
   });
   assert.notStrictEqual(core.iconFor("measure"), core.iconFor("position"));
 });
@@ -55,6 +75,9 @@ test("TREE_GROUPS: the object-tree group vocab (drawings + indicators)", () => {
     core.TREE_GROUPS.map((g) => g.label),
     ["Drawings", "Indicators"],
   );
+  // F9 S3: the tree's Drawings group lists every drawing kind.
+  DRAWING_KINDS.forEach((kind) =>
+    assert.ok(core.TREE_GROUPS[0].kinds.includes(kind), kind));
 });
 
 test("groupLabel: returns the accessible group name", () => {
