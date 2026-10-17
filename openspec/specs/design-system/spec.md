@@ -118,10 +118,22 @@ MUST trap focus natively and close on `Escape`. The F5 toolbar tools and tree
 rows/controls MUST have a visible focus state and accessible names, and their
 active/selected/hidden/locked state MUST be distinguishable without color
 (shape/border/weight in addition to `aria-pressed`/`aria-selected`), mirroring
-R9's not-color-only rule.
+R9's not-color-only rule. The F6 measure tool and position box MUST follow the
+same rules: the measure tool button MUST carry a visible focus state and an
+accessible name; a Long vs Short position MUST be distinguishable WITHOUT color
+alone (a text label "LONG"/"SHORT" plus a directional arrow); the measure readout
+(`#measure-readout`) and the position R:R readout (`#position-readout`) MUST each
+live in a DOM node with `aria-live="polite"` — the canvas-drawn `R:R` text is
+supplementary, the DOM node is the accessible source — and their writes MUST be
+coalesced to at most ONE per animation frame (via the pure
+`readout-coalesce-core.js`) rather than one per pointer-move, never dropping the
+final value; and `Escape` MUST cancel a measure or a pending position draft.
 (Previously: AA contrast was required against the dark theme only.)
 (Previously: focus state covered nav links and form controls only; no focusable
 chart canvas, dialog, or toolbar/tree contract.)
+(Previously: the rule was silent on measure/position; the position R:R `aria-live`
+node and Escape-cancels-draft behavior were verify CRITICALs C1/C2, remediated in
+the F6 S4/UI slices — the rule now matches the delivered behavior.)
 
 #### Scenario: Visible focus
 - GIVEN a keyboard user
@@ -143,6 +155,26 @@ chart canvas, dialog, or toolbar/tree contract.)
 - WHEN their styles are inspected
 - THEN each differs from the inactive state by more than color (border/weight/shape) alongside `aria-pressed`/`aria-selected`
 
+#### Scenario: Long vs Short is not color-only
+- GIVEN a rendered long position and a rendered short position
+- WHEN their rendering is inspected
+- THEN each carries a text label ("LONG"/"SHORT") and a directional arrow, so they differ by more than color (`drawing-primitive.js` writes the label + ▲/▼)
+
+#### Scenario: Readouts are live DOM
+- GIVEN a completed measurement and a selected position
+- WHEN the DOM is inspected
+- THEN the measure figures live in `#measure-readout[aria-live="polite"]` and the R:R figure lives in `#position-readout[aria-live="polite"]`
+
+#### Scenario: Readout writes coalesce per frame
+- GIVEN a live drag or measure pointer-move stream
+- WHEN the readout updates
+- THEN the DOM write is coalesced to at most one per animation frame (never one per pointer-move, never dropping the final value) via `readout-coalesce-core.js`
+
+#### Scenario: Escape cancels a draft
+- GIVEN an in-progress measurement or a pending position draft
+- WHEN `Escape` is pressed
+- THEN the draft is cancelled and no drawing is written (measure: `chart-controllers.test.js`; position: `drawings.js` keydown handler + `position-draft-core` `cancel`)
+
 #### Scenario: AA holds in the light theme
 - GIVEN the light token set applied via `[data-theme="light"]`
 - WHEN shell text is measured against its background
@@ -154,8 +186,17 @@ The selected drawing's highlight and its handles MUST use the design tokens (no
 hard-coded colors) and MUST be distinguishable without relying on color alone
 (e.g. handle shape/ring in addition to stroke weight). Handles are drawn on the
 chart canvas by the primitive, not as DOM elements, so no per-pan DOM re-layout
-occurs. The properties `<dialog>` MUST be styled with the same tokens as the
+occurs. The selected position's three level handles and entry anchor MUST follow
+the same rule (canvas-drawn, not-color-only), and its risk/reward zones MUST use
+tokens. Because a canvas cannot read CSS custom properties directly, the canvas
+color reads MUST resolve theme tokens through the shared `theme-core.js` `token()`
+helper (with a fallback literal) rather than writing hard-coded palette hex — so a
+future token change flows through and the measure/position canvas colors stay
+on-palette in BOTH the dark and light theme (folding in the /impeccable HIGH #193).
+The properties `<dialog>` MUST be styled with the same tokens as the
 existing indicator-settings dialog.
+(Previously: the rule covered generic drawings; the position handle set did not
+exist; canvas colors were hard-coded literals.)
 
 #### Scenario: Selection is not color-only
 
@@ -168,6 +209,18 @@ existing indicator-settings dialog.
 - GIVEN a rendered drawing
 - WHEN the DOM is inspected
 - THEN the handles are not DOM nodes (drawn by the primitive)
+
+#### Scenario: Position handles are canvas-drawn and tokenized
+
+- GIVEN a selected position
+- WHEN its handles and zones render
+- THEN the three level handles and entry anchor are canvas-drawn (no DOM nodes) and the risk/reward zones and level strokes read their colors through `theme-core.js` `token()` (no hard-coded palette literal in the position/measure canvas paths)
+
+#### Scenario: Canvas colors follow the theme tokens
+
+- GIVEN `drawing-primitive.js` and `controllers/measure.js` canvas color paths
+- WHEN inspected
+- THEN each color resolves via `token("--…")` (e.g. `--dn`/`--up`/`--muted`/`--accent`) rather than an inline hex, so a token change (dark or light theme) flows through
 
 #### Scenario: Dialog uses tokens
 

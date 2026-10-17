@@ -15,12 +15,23 @@ dependency, `src/` untouched. New capability — no prior spec.
 
 The toolbar MUST render as a `role="toolbar"` element with
 `aria-orientation="vertical"` and an accessible `aria-label`, containing one
-`role="group"` per icon group (lines, fib, shapes, text — vocabulary from
-`tool-icons-core.js`). Each tool MUST be a native `<button type="button">` with
-an accessible `aria-label` and `data-kind` ∈ `DRAWING_KINDS`
-(`drawing-core.js:13`). Activating a tool MUST set `store.tool` and emit the SAME
-command the legacy `.draw-tool` buttons used (`drawings.js:218-232`); it MUST NOT
-introduce a new bus event. A singleton group (one tool) MAY be rendered.
+`role="group"` per icon group (lines, fib, shapes, text — plus the F6 `Measure`
+and `Positions` groups) — vocabulary from `tool-icons-core.js`. Each tool MUST be
+a native `<button type="button">` with an accessible `aria-label` and a
+`data-kind` matching its group kind — a persisted drawing kind ∈ `DRAWING_KINDS`
+(`drawing-core.js:13`) for the drawing tools, or `"measure"` for the ephemeral
+measure tool (the ONLY `data-kind` that is not a `DRAWING_KINDS` member).
+`tool-icons-core.js` `TOOL_GROUPS` MUST
+group the seven instruments as `2/1/1/1/1/1` (`Lines`=`hline,trendline`, `Fib`,
+`Shapes`, `Text`, `Measure`=`["measure"]`, `Positions`=`["position"]`), with a
+matching `TOOL_LABELS` entry in `draw-toolbar.js` for `measure`/`position` and an
+`ICON_BODIES` entry for each kind (`tool-icons-core.js`). The two new icons MUST be
+JS-built inline SVG strings carrying NO `on*` attribute. Activating a tool MUST set
+`store.tool` and emit the SAME command the legacy `.draw-tool` buttons used
+(`drawings.js`); it MUST NOT introduce a new bus event — activating `position`
+writes `store.tool="position"` through the existing command, and `measure` is a
+tool value with no drawing kind. A singleton group (one tool) MAY be rendered.
+(Previously: groups were lines/fib/shapes/text only; five kinds.)
 
 #### Scenario: Toolbar and groups render
 
@@ -34,9 +45,21 @@ introduce a new bus event. A singleton group (one tool) MAY be rendered.
 - WHEN the `hline` tool button is activated
 - THEN `store.tool === "hline"` and the same create-tool command the legacy button emitted is observed (no new bus event)
 
+#### Scenario: Measure and Positions groups render
+
+- GIVEN `tool-icons-core` includes a `Measure` group and a `Positions` group
+- WHEN the toolbar renders
+- THEN both groups appear, each with a labelled button whose `data-kind` is `measure` / `position` and which carries an icon (`tool-icons-core.test.js::TOOL_GROUPS: F6 groups the 7 instruments 2/1/1/1/1/1`)
+
+#### Scenario: Activating position writes store.tool with no new event
+
+- GIVEN the vertical toolbar
+- WHEN the `position` tool button is activated
+- THEN `store.tool === "position"` and no bus event beyond the pre-existing set is emitted (E2E `test_position_three_click_persists_and_drag_one_put`; the toolbar writes `store.tool` uniformly for every kind)
+
 #### Scenario: Singleton group allowed
 
-- GIVEN `tool-icons-core` groups 5 kinds into 2/1/1/1
+- GIVEN `tool-icons-core` groups the 7 kinds into 2/1/1/1/1/1
 - WHEN the toolbar renders
 - THEN each group renders regardless of member count and no fault occurs
 

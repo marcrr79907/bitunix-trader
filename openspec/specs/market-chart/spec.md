@@ -601,7 +601,9 @@ fragment.
 Modules MUST follow a frozen inventory: entry `chart.js` (thin: Django-injected
 `CONFIG` + imports + `boot()`), pure cores `chart-core.js`/`drawing-core.js`/
 `smc-overlay-core.js`/`legend-core.js`/`indicator-settings-core.js`/
-`chart-types-core.js`/`theme-core.js`/`tool-icons-core.js`/`chart-registry-core.js`,
+`chart-types-core.js`/`theme-core.js`/`tool-icons-core.js`/`chart-registry-core.js`/
+`add-indicator-core.js`/`measure-core.js`/`position-core.js`/`position-draft-core.js`/
+`readout-coalesce-core.js`,
 `chart-store.js` (UI/config state ONLY — MUST NOT hold candle data; its vocabulary
 is `symbol, interval, indicators, params, styles, smc, scaleMode, chartType, theme,
 tool, indicatorVisible`), `chart-bus.js`, `chart-host.js` (chart/series/panes/
@@ -611,22 +613,23 @@ the candle series, the raw `candles` array, and the incremental HA state;
 factory `createCandles(chart, chartType) -> {getCandleSeries, getCandles,
 setCandles, updateCandle, remove}`),
 `controllers/{indicators,history,stream,drawings,drawing-interaction,smc,toolbar,
-legend,draw-toolbar,object-tree,preference}.js`,
+legend,draw-toolbar,object-tree,preference,measure,position-seed}.js`,
 and `main.js` (ALL orchestration + boot/switch). No module MUST exceed ~300 lines.
 Controllers MUST import host/store/bus directly but MUST NOT import `main`;
 commands MUST travel the bus, so `main.js` has no circular imports. Every imported
 module MUST be served same-origin under `/market/` via its Django route (core →
-`MODULE_ALLOWLIST`, controller → `CONTROLLER_ALLOWLIST`). The size rule MUST be
-enforced by the committed guard `tests/web/test_module_size_guard.py`
+`MODULE_ALLOWLIST`, controller → `CONTROLLER_ALLOWLIST`); `MODULE_ALLOWLIST`
+(`views.py:44-65`) MUST include `measure-core`, `position-core`,
+`position-draft-core`, and `readout-coalesce-core`; `CONTROLLER_ALLOWLIST`
+(`views.py:66-81`) MUST include `measure` and `position-seed`. The size rule
+MUST be enforced by the committed guard `tests/web/test_module_size_guard.py`
 (`CEILING = 300`; scans `web/market/templates/market/**/*.js` via `rglob` +
 `splitlines()`). The guard's `ALLOWLIST` MUST be empty — no module is exempt.
-`chart-host.js` MUST be ≤ ~300 lines (the `REGISTRY`/`PANE_ORDER`/`SCALE_MODES`
-extraction to `chart-registry-core.js` MUST land before `setSeriesVisible` is
-added). Any module above `CEILING` MUST fail the guard.
-
-(Previously: the store vocabulary had 10 keys, the pure-core list had no
-`tool-icons-core`/`chart-registry-core`, and the controller inventory had 8
-entries; `preference.js` was not yet extracted.)
+`chart-host.js` MUST be ≤ ~300 lines. Any module above `CEILING` MUST fail the
+guard.
+(Previously: the pure-core list had no `measure-core`/`position-core`/
+`position-draft-core`/`readout-coalesce-core`; the controller inventory had 11
+entries and no `measure`/`position-seed`.)
 
 #### Scenario: Inventory and no-cycle
 
@@ -643,18 +646,19 @@ entries; `preference.js` was not yet extracted.)
 
 #### Scenario: New cores and controllers are served
 
-- GIVEN `tool-icons-core`, `chart-registry-core`, `draw-toolbar`, `object-tree`
+- GIVEN `measure-core`, `position-core`, `position-draft-core`,
+  `readout-coalesce-core`, `controllers/measure`, and `controllers/position-seed`
 - WHEN requested under `/market/` with a JS MIME type
-- THEN each is served 200 (present in the matching allowlist; missing → 404 → blank chart)
+- THEN each is served 200 (present in the matching allowlist; missing → 404 → blank chart; `test_market_ux.py::test_f6_cores_and_measure_controller_are_served`)
 
 #### Scenario: Controller allowlist count grows
 
 - GIVEN `CONTROLLER_ALLOWLIST`
 - WHEN inspected
-- THEN it holds **11** entries and `tests/web/test_market_ux.py` asserts the count
-  `== 11` and passes unedited elsewhere — the 8 prior entries plus `draw-toolbar`,
-  `object-tree`, and `preference` (the D11 contingency extraction, PR #181,
-  `0a996f4`, moved `csrfToken`/`savePreference`/`loadPreference` out of `main.js`).
+- THEN it holds **13** entries and `tests/web/test_market_ux.py` asserts the count
+  `== 13` and passes unedited elsewhere — the 11 prior entries plus `measure`
+  (F6 S3) and `position-seed` (the F6 UI slice that extracted the "Position from
+  setup" controller out of `drawings.js` to stay under the ceiling).
 
 #### Scenario: New theme core is served
 
@@ -672,10 +676,11 @@ entries; `preference.js` was not yet extracted.)
   verbatim, and the HA contract (`chart-types-core`) is untouched
 
 > **Reconciliation note (verify W1, archive 2026-10-16).** The `market-chart` R14
-> delta originally stated the controller count grew `8→10`; the delivered change
-> landed at **11** because of the `preference` extraction. The canonical clause
-> above matches reality (`views.py:65-79`, `test_market_ux.py:146`). Functional
-> invariant holds: every entry is served 200 and the import graph resolves
+> delta originally stated the controller count grew `8→10`; the delivered F5 change
+> landed at **11** because of the `preference` extraction. F6 then grew it to
+> **13** (`measure`, `position-seed`). The canonical clause above matches reality
+> (`views.py:66-81`, `test_market_ux.py:146`). Functional invariant holds: every
+> entry is served 200 and the import graph resolves
 > (`test_import_graph_routes_resolve`).
 
 ### Requirement: R15 — ESM loading and module serving
@@ -755,22 +760,32 @@ mutate `DECIMALS`.
 The refactor MUST expose `window.marketChart` with frozen keys `{chart,
 candleSeries, panes, ready, drawings, smc, smcCounts, smcToggles}` and equivalent
 update-timing, and MUST re-expose `window.SmcOverlayCore` as the sanctioned test
-seam. The toolbar, the object tree, and indicator visibility MUST NOT add a 9th
-key. `tests/web/test_market_e2e.py` MUST stay green except for the assertions that
-covered the DOM this change removes (`#drawing-list`, the indicators `fieldset`);
-each such assertion MUST be replaced by equivalent coverage, and the removal +
-replacement MUST be documented in the E2E itself
+seam. The toolbar, the object tree, indicator visibility, the F5 vertical toolbar,
+and the F6 measure/position tools MUST NOT add a 9th key; the measure readout MUST
+be asserted via its DOM node (`#measure-readout`) and the position via
+`window.marketChart.drawings` (existing) plus the captured POST/PUT, never via a
+new seam key. `tests/web/test_market_e2e.py` MUST stay green except for the
+assertions that covered the DOM this change removes (`#drawing-list`, the
+indicators `fieldset`); each such assertion MUST be replaced by equivalent
+coverage, and the removal + replacement MUST be documented in the E2E itself
 (`test_market_e2e.py:582-620`). Every removed scenario has an equivalent
 replacement EXCEPT adding-an-indicator, which became the new `chart-indicator-add`
 capability (issue #176, slice S5) — so there is no unreplaced coverage gap.
 (Previously: the clause read "green with NO assertion edits"; that was unmeetable
-by the slice that deletes the DOM — reconciled here per verify W2 / issue #177.)
+by the slice that deletes the DOM — reconciled here per verify W2 / issue #177.
+The F6 clause was added for the measure/position tools.)
 
 #### Scenario: Seam shape frozen
 
-- GIVEN a booted chart after the toolbar and tree exist
+- GIVEN a booted chart after the toolbar and tree exist with the measure and position tools
 - WHEN `window.marketChart` is read
-- THEN all eight keys exist and update as before, with no toolbar/tree/visibility key added
+- THEN all eight keys exist and update as before, with no toolbar/tree/visibility/measure/position key added
+
+#### Scenario: Measure has no seam key
+
+- GIVEN a completed measurement
+- WHEN `window.marketChart` is read
+- THEN it still has exactly 8 keys and the readout is observed through its `aria-live` DOM node (E2E `test_shell_keeps_seam_at_eight_keys`; measure asserts `drawings.length == 0`)
 
 #### Scenario: SMC core reachable
 
@@ -804,38 +819,48 @@ on a prior chart MUST be considered dead; consumers MUST re-subscribe after each
 
 The `autoSize: true` host option, the `#chart` markup change, the F8 chart-type
 and scale controls, the theme control, the F5 vertical toolbar, the object tree,
-and the indicator-visibility toggle MUST stay within R14 (host owns construction)
+the indicator-visibility toggle, and the F6 measure/position tools MUST stay
+within R14 (host owns construction)
 and MUST NOT add a `window.marketChart` key. `window.marketChart` MUST keep
 exactly its 8 frozen keys `{chart, candleSeries, panes, ready, drawings, smc,
 smcCounts, smcToggles}` and `window.SmcOverlayCore` MUST be untouched. The E2E
 seam shape and timing (R18) and the single-write-path invariants (R17) MUST be
-preserved. F8 added exactly one bus event, `scale:changed` (`{mode}`); F5 MUST add
+preserved. F8 added exactly one bus event, `scale:changed` (`{mode}`); F5 added
 exactly ONE more, `indicator:visibility` (`{token, visible}`), routed by `main` to
 the host's option-only `setSeriesVisible` (mirroring `scale:changed`,
 `main.js:179-182`). Drawing hide/lock MUST reuse the existing `drawing:changed`
 event and MUST NOT add a drawing event; the live theme flip MUST go through the
 host's option-only `setTheme` method, not a new event. The theme value MUST live
-in the store (`state.theme`) and/or `data-theme`, never in the seam.
+in the store (`state.theme`) and/or `data-theme`, never in the seam. The F6
+position tool MUST reuse the existing `drawing:changed`/`drawing:selected` events
+and the measure tool MUST add NO bus event — no `measure:*`/`position:*` event
+exists.
 (Previously: the envelope covered type/scale/theme and forbade a second event; F5
-adds exactly one, `indicator:visibility`.)
+adds exactly one, `indicator:visibility`; the F6 clause was added.)
 
 #### Scenario: Seam stays 8 keys
 
-- GIVEN a booted chart after the toolbar and tree
+- GIVEN a booted chart after the toolbar and tree with the measure and position tools
 - WHEN `window.marketChart` is read
-- THEN exactly the 8 frozen keys exist and no toolbar/tree/visibility key was added
+- THEN exactly the 8 frozen keys exist and no toolbar/tree/visibility/measure/position key was added
 
-#### Scenario: Exactly one new bus event
+#### Scenario: Exactly one new bus event (unchanged set)
 
 - GIVEN the change
 - WHEN the bus events are inspected
-- THEN the only events are the pre-existing set plus `scale:changed` plus `indicator:visibility`; no `drawing:visibility`/`drawing:lock` event was added
+- THEN the only events are the pre-existing set plus `scale:changed` plus `indicator:visibility`; the position tool reuses `drawing:changed`/`drawing:selected` and the measure tool adds none — no `measure:*`/`position:*` event exists, and no `drawing:visibility`/`drawing:lock` event was added
 
 #### Scenario: Visibility toggle is option-only
 
 - GIVEN a built chart with the `setData`/`update` spies installed
 - WHEN `indicator:visibility` fires for a token
 - THEN the host calls `setSeriesVisible` (option-only) and neither `setData` nor `update` is called
+
+#### Scenario: Measure and position render option-only
+
+- GIVEN a built chart with the `setData`/`update` spies installed
+- WHEN a measure drag runs or a position is dragged
+- THEN each renders via `requestUpdate` (primitive) and neither `setData` nor `update` is called
 
 #### Scenario: Existing E2E stays green except replaced assertions
 
