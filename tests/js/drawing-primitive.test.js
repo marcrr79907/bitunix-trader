@@ -15,6 +15,7 @@ function recordingCtx() {
   const calls = [];
   const ctx = {
     calls,
+    fills: [], // fillStyle captured at each fillRect (F6 UI #193 zone colours)
     save: () => calls.push("save"),
     restore: () => calls.push("restore"),
     beginPath: () => calls.push("beginPath"),
@@ -22,7 +23,7 @@ function recordingCtx() {
     lineTo: () => calls.push("lineTo"),
     stroke: () => calls.push("stroke"),
     strokeRect: () => calls.push("strokeRect"),
-    fillRect: () => calls.push("fillRect"),
+    fillRect: () => { calls.push("fillRect"); ctx.fills.push(ctx.fillStyle); },
     fillText: () => calls.push("fillText"),
     arc: () => calls.push("arc"),
     fill: () => calls.push("fill"),
@@ -111,4 +112,42 @@ test("autoscaleInfo of a position includes stop and take_profit (R6)", () => {
 test("autoscaleInfo of a hidden position is null (R6)", () => {
   const prim = makeDrawingPrimitive({ ...POSITION, visible: false }, {});
   assert.strictEqual(prim.autoscaleInfo(), null);
+});
+
+// --- position zone colours read shell tokens (F6 UI #193 / R9) ----------------
+
+function withTokens(values, fn) {
+  const prevDoc = globalThis.document;
+  const prevGcs = globalThis.getComputedStyle;
+  globalThis.document = { documentElement: {} };
+  globalThis.getComputedStyle = () => ({
+    getPropertyValue: (n) => values[n] || "",
+  });
+  try {
+    return fn();
+  } finally {
+    if (prevDoc === undefined) delete globalThis.document;
+    else globalThis.document = prevDoc;
+    if (prevGcs === undefined) delete globalThis.getComputedStyle;
+    else globalThis.getComputedStyle = prevGcs;
+  }
+}
+
+test("position zones paint with the resolved --dn/--up tokens, not literals (R9)", () => {
+  // Deliberately NON-standard token values so a hard-coded literal fails.
+  const ctx = recordingCtx();
+  withTokens({ "--dn": "#cf222e", "--up": "#1a7f37", "--muted": "#57606a" }, () => {
+    renderShape(ctx, { width: 300, height: 300 }, POSITION, MAP, false);
+  });
+  assert.ok(ctx.fills.includes("#cf222e"), `risk uses --dn: ${ctx.fills}`);
+  assert.ok(ctx.fills.includes("#1a7f37"), `reward uses --up: ${ctx.fills}`);
+  assert.ok(!ctx.fills.includes("#ef5350"), "risk literal must not be painted");
+  assert.ok(!ctx.fills.includes("#26a69a"), "reward literal must not be painted");
+});
+
+test("position zones fall back to the literals with no DOM (R9)", () => {
+  const ctx = recordingCtx();
+  renderShape(ctx, { width: 300, height: 300 }, POSITION, MAP, false);
+  assert.ok(ctx.fills.includes("#ef5350"), `risk fallback: ${ctx.fills}`);
+  assert.ok(ctx.fills.includes("#26a69a"), `reward fallback: ${ctx.fills}`);
 });

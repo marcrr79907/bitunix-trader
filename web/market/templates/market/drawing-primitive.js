@@ -9,6 +9,7 @@
 import * as Draw from "./drawing-core.js";
 import { handlesFor, HANDLE_RADIUS } from "./drawing-interaction-core.js";
 import { positionBox } from "./position-core.js";
+import { token } from "./theme-core.js";
 
 // Price range so a full-width ray / rect / position box is not clipped (R6).
 function priceRangeFor(row) {
@@ -42,7 +43,7 @@ function renderShape(ctx, size, row, map, selected) {
     ctx.restore();
     return;
   }
-  ctx.strokeStyle = ctx.fillStyle = row.style.color || "#2962ff";
+  ctx.strokeStyle = ctx.fillStyle = row.style.color || token("--accent", "#2962ff");
   ctx.lineWidth = (row.style.lineWidth || 1) + (selected ? 2 : 0);
   if (kind === "hline") {
     const y = map.y(row.points.price);
@@ -100,10 +101,10 @@ function renderPosition(ctx, row, map) {
     ctx.fillRect(box.left, band.top, box.right - box.left, band.bottom - band.top);
     ctx.globalAlpha = 1;
   };
-  fill(box.riskBand, "#ef5350"); // risk (entry -> stop)
-  fill(box.rewardBand, "#26a69a"); // reward (entry -> tp)
-  ctx.strokeStyle = row.style.color || "#787b86";
-  ctx.fillStyle = row.style.color || "#787b86";
+  fill(box.riskBand, token("--dn", "#ef5350")); // risk (entry -> stop)
+  fill(box.rewardBand, token("--up", "#26a69a")); // reward (entry -> tp)
+  ctx.strokeStyle = row.style.color || token("--muted", "#787b86");
+  ctx.fillStyle = row.style.color || token("--muted", "#787b86");
   ctx.font = "11px sans-serif";
   box.levels.forEach(function (l) {
     if (l.y === null || l.y === undefined) return;
@@ -124,7 +125,7 @@ function renderPosition(ctx, row, map) {
 // The per-kind handle dots for a selected shape (skip any off-bar anchor).
 function drawHandles(ctx, row, map) {
   ctx.fillStyle = "#ffffff";
-  ctx.strokeStyle = row.style.color || "#2962ff";
+  ctx.strokeStyle = row.style.color || token("--accent", "#2962ff");
   ctx.lineWidth = 1;
   handlesFor(row.kind, row.points, map).forEach(function (h) {
     ctx.beginPath();

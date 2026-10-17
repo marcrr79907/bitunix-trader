@@ -9,6 +9,7 @@
 // the pure measure-core.js; the numbers live in the ``#measure-readout``
 // aria-live DOM node (D8).
 import { measure, formatMeasure } from "../measure-core.js";
+import { token } from "../theme-core.js";
 
 export function createMeasure({ store, bus, host, config }) {
   const el = document.getElementById("chart");
@@ -64,7 +65,7 @@ export function createMeasure({ store, bus, host, config }) {
     const y2 = map.y(b.price);
     if (x1 === null || y1 === null || x2 === null || y2 === null) return;
     ctx.save();
-    ctx.strokeStyle = ctx.fillStyle = "#2962ff";
+    ctx.strokeStyle = ctx.fillStyle = token("--accent", "#2962ff");
     ctx.lineWidth = 1;
     ctx.setLineDash([4, 3]);
     ctx.beginPath();

@@ -60,6 +60,21 @@ function solidColorType() {
   return "solid";
 }
 
+// F6 UI #193 (R9): resolve a shell design token (e.g. "--up") to its computed
+// value, so canvas paint follows the light/dark palette instead of a literal.
+// Falls back to ``fallback`` when the DOM or the var is absent, so Node tests
+// without a DOM (and an unthemed shell) keep the byte-identical literal.
+export function token(name, fallback) {
+  try {
+    const v = getComputedStyle(document.documentElement)
+      .getPropertyValue(name)
+      .trim();
+    return v || fallback;
+  } catch (_e) {
+    return fallback;
+  }
+}
+
 // OS dark preference (for "system"). Reads the global like solidColorType;
 // never throws (absent matchMedia -> light).
 export function prefersDark() {

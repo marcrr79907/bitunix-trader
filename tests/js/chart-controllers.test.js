@@ -480,3 +480,41 @@ test("measure attach() is a no-op with no active measurement (#188/R1)", () => {
     assert.strictEqual(f.host._series.attaches, 0, "no phantom primitive on rebuild");
   } finally { f.restore(); }
 });
+
+// F6 UI #193 (R9): the measure stroke reads the shell --accent token, not a
+// literal, so the light theme stays on-palette. Drive the primitive's renderer
+// directly with a token shim + a recording ctx.
+function renderMeasurePrim(ctx) {
+  return (prim) =>
+    prim.paneViews()[0].renderer().draw({
+      useMediaCoordinateSpace: (cb) => cb({ context: ctx, mediaSize: { width: 300, height: 300 } }),
+    });
+}
+
+test("measure stroke paints with the resolved --accent token, not a literal (R9)", () => {
+  const f = measureFixture();
+  const prevDoc = globalThis.document;
+  const prevGcs = globalThis.getComputedStyle;
+  const strokes = [];
+  const ctx = {
+    save() {}, restore() {}, setLineDash() {}, beginPath() {}, moveTo() {}, lineTo() {},
+    stroke() { strokes.push(ctx.strokeStyle); }, fillRect() {}, fillText() {},
+    set strokeStyle(v) { this._s = v; }, get strokeStyle() { return this._s; },
+    set fillStyle(v) {},
+    font: "", lineWidth: 1, globalAlpha: 1,
+  };
+  try {
+    f.chartEl.fire("pointerdown", ev(10, 100));
+    f.chartEl.fire("pointermove", ev(50, 120));
+    // Override the token shim AFTER the fixture installed its document stub.
+    globalThis.document = { ...prevDoc, documentElement: {} };
+    globalThis.getComputedStyle = () => ({ getPropertyValue: (n) => (n === "--accent" ? "#0969da" : "") });
+    renderMeasurePrim(ctx)(f.host._series._prim);
+    assert.ok(strokes.includes("#0969da"), `measure stroke uses --accent: ${strokes}`);
+    assert.ok(!strokes.includes("#2962ff"), "measure literal must not be painted");
+  } finally {
+    if (prevDoc === undefined) delete globalThis.document; else globalThis.document = prevDoc;
+    if (prevGcs === undefined) delete globalThis.getComputedStyle; else globalThis.getComputedStyle = prevGcs;
+    f.restore();
+  }
+});
