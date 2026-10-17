@@ -3926,6 +3926,33 @@ def test_context_menu_on_drawing_shows_delete_and_duplicate(
 
 
 @p
+def test_context_menu_opens_by_keyboard_at_selection(
+    seeded_5m_candles, interaction_drawing, browser_page
+):
+    # F7 UI #204: with a drawing selected, Shift+F10 opens the menu anchored at
+    # the drawing (not the viewport corner). #chart advertises aria-haspopup.
+    page, base_url = browser_page
+    page.goto(f"{base_url}/market/")
+    _wait_ready(page)
+    page.wait_for_function(
+        "() => window.marketChart.drawings && window.marketChart.drawings.length === 1",
+        timeout=10000,
+    )
+    _select_hline(page)  # selects the seeded hline and focuses #chart
+    assert page.locator("#chart").get_attribute("aria-haspopup") == "menu"
+    page.keyboard.press("Shift+F10")
+    page.wait_for_selector('div[role="menu"]', timeout=5000)
+    labels = page.locator('div[role="menu"] [role="menuitem"]').all_text_contents()
+    assert labels == ["Delete", "Duplicate"], labels
+    # Anchored to the chart, not pinned at the viewport origin (the #204 symptom).
+    left = page.evaluate(
+        "() => parseInt(getComputedStyle("
+        "document.querySelector('div[role=menu]')).left, 10)"
+    )
+    assert left > 0, "the menu is not stuck at the top-left corner"
+
+
+@p
 def test_context_menu_duplicate_then_undo_deletes(
     seeded_5m_candles, interaction_drawing, browser_page
 ):

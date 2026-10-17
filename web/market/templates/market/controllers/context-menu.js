@@ -10,20 +10,32 @@
 // reuses the F5 ``add-indicator-core`` (single source). No setData/update.
 import { menuModel, nextIndex, clampIndex } from "../context-menu-core.js";
 import { localPoint, pointerRows } from "./drawing-interaction.js";
-import { grabHandle } from "../drawing-interaction-core.js";
+import { grabHandle, handlesFor } from "../drawing-interaction-core.js";
 import { inactiveTokens } from "../add-indicator-core.js";
 import { REGISTRY } from "../chart-registry-core.js";
 
 export function createContextMenu({ store, bus, host, config }) {
   const el = document.getElementById("chart");
   let rows = []; // the latest ``drawings:changed`` rows (shared refs)
+  let selectedId = null; // the last ``drawing:selected`` id (keyboard anchor)
   let menu = null; // the open role="menu" node, or null
   let items = []; // the item buttons (roving focus)
   let bound = false;
 
   bus.on("drawings:changed", function (p) {
     rows = (p && p.rows) || [];
+    if (selectedId !== null && !rowById(selectedId)) selectedId = null;
   });
+
+  // Mirror the selection so the keyboard-open path can anchor at it (the
+  // pointer path never needs it — the cursor is the anchor).
+  bus.on("drawing:selected", function (p) {
+    selectedId = p ? p.id : null;
+  });
+
+  function rowById(id) {
+    return rows.find(function (r) { return r.id === id; }) || null;
+  }
 
   // Data<->pixel map for the reused core (mirrors drawing-interaction.map).
   function map() {
@@ -147,11 +159,41 @@ export function createContextMenu({ store, bus, host, config }) {
       row, e.clientX, e.clientY);
   }
 
+  // F7 UI #204: the native Shift+F10 / ContextMenu key fires ``contextmenu`` with
+  // clientX/Y = 0, pinning the menu at the viewport corner. Instead anchor at the
+  // SELECTED drawing's screen point (its first handle), or the #chart rect + 8
+  // when nothing is selected / the anchor is off-bar.
+  function anchorPoint() {
+    const rect = el && el.getBoundingClientRect ? el.getBoundingClientRect() : null;
+    const left = (rect && rect.left) || 0;
+    const top = (rect && rect.top) || 0;
+    const row = selectedId === null ? null : rowById(selectedId);
+    if (row) {
+      const handles = handlesFor(row.kind, row.points, map());
+      if (handles.length) return { x: left + handles[0].x, y: top + handles[0].y };
+    }
+    return { x: left + 8, y: top + 8 };
+  }
+
+  function onChartKey(e) {
+    const shiftF10 = e.key === "F10" && e.shiftKey;
+    if (!shiftF10 && e.key !== "ContextMenu") return;
+    e.preventDefault();
+    const row = selectedId === null ? null : rowById(selectedId);
+    const hit = row ? { id: row.id } : null;
+    const at = anchorPoint();
+    open(menuModel({ hit: hit, row: row, scaleMode: store.get().scaleMode }),
+      row, at.x, at.y);
+  }
+
   // The ``#chart`` container survives a rebuild; bind ONCE. main calls attach()
   // after every buildChart (mirror drawing-interaction.attach).
   function attach() {
     if (bound) return;
-    if (el) el.addEventListener("contextmenu", onContextMenu);
+    if (el) {
+      el.addEventListener("contextmenu", onContextMenu);
+      el.addEventListener("keydown", onChartKey);
+    }
     bound = true;
   }
 
