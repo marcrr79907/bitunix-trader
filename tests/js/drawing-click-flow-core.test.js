@@ -113,6 +113,27 @@ test("reset clears an active draft (alias of cancel)", () => {
   assert.strictEqual(flow.active(), false);
 });
 
+test("an off-bar click (no time) is ignored by every time-anchored kind", () => {
+  // hline/price are price-only: they accept a click with no bar time.
+  const hline = createFlow();
+  assert.strictEqual(hline.collect("hline", at(null, 10)).status, "ready");
+  const price = createFlow();
+  assert.strictEqual(price.collect("price", at(undefined, 10)).status, "ready");
+  // Every other kind needs a bar; a click off the plotted range keeps the draft
+  // EMPTY (it must not count as a first anchor).
+  for (const kind of ["ray", "channel", "text", "callout", "fib_time", "position"]) {
+    const flow = createFlow();
+    assert.strictEqual(flow.collect(kind, at(null, 10)), null, kind);
+    assert.strictEqual(flow.collect(kind, at(undefined, 10)), null, kind);
+    assert.strictEqual(flow.active(), false, kind);
+  }
+  // A half-built draft is untouched by the ignored click.
+  const flow = createFlow();
+  flow.collect("ray", at(1, 10));
+  assert.strictEqual(flow.collect("ray", at(null, 20)), null);
+  assert.deepStrictEqual(flow.collect("ray", at(2, 20)).points, { p1: at(1, 10), p2: at(2, 20) });
+});
+
 test("collect degrades a null point and an unknown kind, never throws", () => {
   const flow = createFlow();
   assert.strictEqual(flow.collect("ray", null), null);
