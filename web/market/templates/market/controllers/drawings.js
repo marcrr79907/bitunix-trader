@@ -27,7 +27,6 @@ export function createDrawings({ store, bus, host, config }) {
   // F6 (D6): a position collects entry (time+price) -> stop price -> tp price.
   // The 3-click state machine is the pure position-draft-core (cancel-safe, R6).
   const positionDraft = createDraft();
-  let setups = []; // F6 (D5): SMC setups cached from ``smc:loaded`` (verbatim)
   let selectedId = null; // interaction selection (closure only; never a store key)
   const selection = { isSelected: function (row) { return row.id === selectedId; } };
   const enc = encodeURIComponent;
@@ -213,34 +212,18 @@ export function createDrawings({ store, bus, host, config }) {
     pendingAnchor = null;
   }
 
-  // F6 (D5/D6): persist a position's points with the derived direction colour.
+  // F6 (D6): persist a position's points with the derived direction colour.
   function finalizePosition(points) {
     createDrawing("position", points, defaultPositionStyle(points));
   }
 
-  // F6 (D5/R15): copy a setup's levels VERBATIM into a position row — the client
-  // never recomputes SMC levels; it only re-derives R:R while the user drags.
-  function seedFromSetup(setup) {
-    if (!setup) return;
-    finalizePosition({
-      entry: { time: setup.time, price: setup.entry },
-      stop: setup.stop,
-      take_profit: setup.take_profit,
-    });
+  // F6 (D5/R15): the position-seed controller (controllers/position-seed.js, F6
+  // UI #194) copies a setup's levels VERBATIM and hands the shaped points here —
+  // the client never recomputes SMC levels; it only persists the position.
+  function seedPosition(points) {
+    if (!points) return;
+    finalizePosition(points);
   }
-
-  // The most-recent setup for the active key (v1 simplification, R12) — the
-  // setups cache is populated verbatim from the SMC payload (single source).
-  function seedMostRecent() {
-    seedFromSetup(setups[setups.length - 1]);
-  }
-
-  bus.on("smc:loaded", function (p) {
-    setups = (p && p.payload && p.payload.setups) || [];
-  });
-
-  const seedButton = document.getElementById("position-seed");
-  if (seedButton) seedButton.addEventListener("click", seedMostRecent);
 
   // Tool selection now lives in controllers/draw-toolbar.js (F5 S2): it writes
   // ``store.tool`` (the SAME command the legacy buttons emitted). A tool change
@@ -294,5 +277,5 @@ export function createDrawings({ store, bus, host, config }) {
     drawGen++;
   }
 
-  return { onChartClick, attachAllDrawings, refreshDrawings, clearForSwitch };
+  return { onChartClick, attachAllDrawings, refreshDrawings, clearForSwitch, seedPosition };
 }

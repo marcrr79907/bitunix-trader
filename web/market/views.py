@@ -80,6 +80,7 @@ CONTROLLER_ALLOWLIST: frozenset[str] = frozenset(
         "object-tree",
         "preference",
         "measure",
+        "position-seed",
     }
 )
 

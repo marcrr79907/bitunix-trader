@@ -22,6 +22,7 @@ import { createSmc, readSmc } from "./controllers/smc.js";
 import { createToolbar } from "./controllers/toolbar.js";
 import { createDrawToolbar } from "./controllers/draw-toolbar.js";
 import { createMeasure } from "./controllers/measure.js";
+import { createPositionSeed } from "./controllers/position-seed.js";
 import { createObjectTree } from "./controllers/object-tree.js";
 import { createLegend } from "./controllers/legend.js";
 import { createPreference } from "./controllers/preference.js";
@@ -72,6 +73,9 @@ export function boot(config) {
   const drawings = createDrawings({ store, bus, host, config });
   const drawingInteraction = createDrawingInteraction({ store, bus, host, config });
   const measure = createMeasure({ store, bus, host, config });
+  // F6 UI #194: the "Position from setup" button state + setups cache. It seeds
+  // a position through drawings.js (single source for the POST).
+  createPositionSeed({ bus, onSeed: drawings.seedPosition });
   const smc = createSmc({ store, bus, host, config });
   // Theme (R27/CT2/CT3): the toolbar resolves + writes ``data-theme``, then
   // calls this callback (NO bus event — R20). Live flip is option-only (#68).

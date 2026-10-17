@@ -143,7 +143,7 @@ def test_controller_allowlist_routes_serve_javascript(logged_in_client):
     # ``market/controllers/`` as JS (a missing route = import 404 = blank chart).
     from market import views
 
-    assert len(views.CONTROLLER_ALLOWLIST) == 12
+    assert len(views.CONTROLLER_ALLOWLIST) == 13
     for name in views.CONTROLLER_ALLOWLIST:
         response = logged_in_client.get(f"/market/controllers/{name}.js")
         assert response.status_code == 200, name
@@ -169,6 +169,12 @@ def test_f6_cores_and_measure_controller_are_served(logged_in_client):
 
     assert "measure" in views.CONTROLLER_ALLOWLIST
     response = logged_in_client.get("/market/controllers/measure.js")
+    assert response.status_code == 200
+    assert response["Content-Type"] == "text/javascript"
+
+    # F6 UI #194: the position-seed controller is served too.
+    assert "position-seed" in views.CONTROLLER_ALLOWLIST
+    response = logged_in_client.get("/market/controllers/position-seed.js")
     assert response.status_code == 200
     assert response["Content-Type"] == "text/javascript"
 
@@ -267,6 +273,31 @@ def test_f6_position_readout_is_an_aria_live_node(logged_in_client):
     body = response.content.decode()
     assert 'id="position-readout"' in body
     assert 'aria-live="polite"' in body
+
+
+def test_f6_position_panel_has_its_own_heading(logged_in_client):
+    # F6 UI #194: the seed button + R:R readout belong to a Position group, not
+    # under the Measure heading. The Position <h2> groups them.
+    response = logged_in_client.get("/market/")
+    body = response.content.decode()
+    assert '<h2 id="position-heading">Position</h2>' in body
+    # The Position heading sits BEFORE its seed + readout, and AFTER Measure.
+    assert body.index("position-heading") < body.index('id="position-seed"')
+    assert body.index('id="position-seed"') < body.index('id="position-readout"')
+
+
+def test_f6_position_readout_mirrors_measure_readout_style(logged_in_client):
+    # F6 UI #194: #position-readout must share the mono/small token styling of
+    # #measure-readout (two readouts that should look alike instead of one
+    # inheriting the body font).
+    css = logged_in_client.get("/theme.css").content.decode()
+    assert "#measure-readout" in css
+    assert "#position-readout" in css
+    for token in ("font-family:var(--mono)", "font-size:var(--fs-3)"):
+        measure_rule = css[css.index("#measure-readout") :]
+        position_rule = css[css.index("#position-readout") :]
+        assert token in measure_rule.split("}")[0], token
+        assert token in position_rule.split("}")[0], token
 
 
 def test_csp_present_on_market_page(logged_in_client):
