@@ -124,7 +124,11 @@ export function createUndo({ store, bus, host, config }) {
     if (!waits) replaying = null;
   }
 
+  // #209: a replay in flight owns the stack (an async restore is awaiting its
+  // drawing:created to re-mint the id). A second undo/redo would mutate the
+  // stack and overwrite the guard's entry → ignore the press until it settles.
   function undo() {
+    if (replaying) return;
     const entry = history.undo();
     if (!entry) return;
     replay(entry, "undo");
@@ -132,6 +136,7 @@ export function createUndo({ store, bus, host, config }) {
   }
 
   function redo() {
+    if (replaying) return;
     const entry = history.redo();
     if (!entry) return;
     replay(entry, "redo");
