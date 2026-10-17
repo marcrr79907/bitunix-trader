@@ -16,11 +16,12 @@ function recordingCtx() {
   const ctx = {
     calls,
     fills: [], // fillStyle captured at each fillRect (F6 UI #193 zone colours)
+    lines: [], // lineTo end points ({x,y}) for geometry assertions
     save: () => calls.push("save"),
     restore: () => calls.push("restore"),
     beginPath: () => calls.push("beginPath"),
     moveTo: () => calls.push("moveTo"),
-    lineTo: () => calls.push("lineTo"),
+    lineTo: (x, y) => { calls.push("lineTo"); ctx.lines.push({ x, y }); },
     stroke: () => calls.push("stroke"),
     strokeRect: () => calls.push("strokeRect"),
     fillRect: () => { calls.push("fillRect"); ctx.fills.push(ctx.fillStyle); },
@@ -299,4 +300,26 @@ test("an F9 primitive never calls setData/update (option-only, #68/#217)", () =>
     prim.requestUpdate();
     assert.strictEqual(updates, 1, `${kind} redraws via requestUpdate only`);
   }
+});
+
+// F9 #219: the PRIMITIVE's real map (not the synthetic MAPR) must carry the
+// canvas right edge, or rayPath falls back to p1->p2 and a ray renders like a
+// trendline. Drive the real paneView/draw path with a 1000px-wide media space.
+test("ray extends to the real media right edge through the primitive map (#219)", () => {
+  const ctx = recordingCtx();
+  const row = {
+    id: 2, kind: "ray",
+    points: { p1: { time: 0, price: 0 }, p2: { time: 10, price: 10 } },
+    style: { color: "#2962ff", lineWidth: 1 },
+  };
+  const chart = { timeScale: () => ({ timeToCoordinate: (t) => t }) };
+  const series = { priceToCoordinate: (p) => p };
+  const prim = makeDrawingPrimitive(row, {});
+  prim.attached({ chart, series, requestUpdate() {} });
+  prim.paneViews()[0].renderer().draw({
+    useMediaCoordinateSpace: (fn) => fn({ context: ctx, mediaSize: { width: 1000, height: 400 } }),
+  });
+  assert.strictEqual(ctx.lines.length, 1, "one ray segment");
+  // slope 1 through (0,0): the tip is at x=1000, y=1000 — NOT p2's x=10.
+  assert.deepStrictEqual(ctx.lines[0], { x: 1000, y: 1000 });
 });
