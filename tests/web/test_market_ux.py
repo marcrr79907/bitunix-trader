@@ -179,6 +179,33 @@ def test_f6_cores_and_measure_controller_are_served(logged_in_client):
     assert response["Content-Type"] == "text/javascript"
 
 
+def test_f9_cores_are_served(logged_in_client):
+    # F9 S3 (R14): the three F9 pure cores are allowlisted and served so the
+    # chart's ESM imports (drawing-core -> drawing-tools-core, ...) never 404.
+    # ``CONTROLLER_ALLOWLIST`` stays untouched: the cores are modules, not
+    # controllers.
+    from market import views
+
+    for name in ("drawing-tools-core", "fib-tools-core", "drawing-click-flow-core"):
+        assert name in views.MODULE_ALLOWLIST, name
+        response = logged_in_client.get(f"/market/{name}.js")
+        assert response.status_code == 200, name
+        assert response["Content-Type"] == "text/javascript", name
+
+    assert len(views.CONTROLLER_ALLOWLIST) == 15
+
+
+def test_market_page_preloads_f9_cores(logged_in_client):
+    # F9 S3b: the chart shell modulepreloads the three new cores alongside the
+    # existing blocks (a missing preload is a slower, not broken, chart — but
+    # the block is part of the frozen inventory contract).
+    response = logged_in_client.get("/market/")
+    body = response.content.decode()
+
+    for name in ("drawing-tools-core", "fib-tools-core", "drawing-click-flow-core"):
+        assert f'href="/market/{name}.js"' in body, name
+
+
 def test_market_page_preloads_f6_modules(logged_in_client):
     # R14 (F6): the chart shell modulepreloads measure-core/position-core/measure
     # alongside the existing blocks (a missing preload is a slower, not broken,

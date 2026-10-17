@@ -6,7 +6,7 @@
 import * as Draw from "../drawing-core.js";
 import { makeDrawingPrimitive } from "../drawing-primitive.js";
 import { defaultPositionStyle } from "../position-core.js";
-import { createDraft } from "../position-draft-core.js";
+import { createFlow } from "../drawing-click-flow-core.js";
 
 function csrfToken() {
   const meta = document.querySelector('meta[name="csrf-token"]');
@@ -22,23 +22,21 @@ export function createDrawings({ store, bus, host, config }) {
   let currentDrawings = []; // rows loaded for the active SYMBOL
   let attached = []; // [{id, prim}] — the primitives currently on the series
   let drawGen = 0; // monotonic guard against a stale drawings fetch
-  let pendingAnchor = null; // first click of a two-point drawing
-  let pendingAnchorKind = state.tool; // tool the anchor was collected under
-  // F6 (D6): a position collects entry (time+price) -> stop price -> tp price.
-  // The 3-click state machine is the pure position-draft-core (cancel-safe, R6).
-  const positionDraft = createDraft();
+  // F9 (D6): ONE 1/2/3-click machine lives in the pure click-flow core; this
+  // controller only owns the dialog and the POST. ``flowTool`` tracks the tool
+  // the draft belongs to so a switch drops it (the core also resets on a miss).
+  const flow = createFlow();
+  let flowTool = state.tool;
+  let pendingDialog = null; // {kind, points} awaiting the #text-dialog
   let selectedId = null; // interaction selection (closure only; never a store key)
   const selection = { isSelected: function (row) { return row.id === selectedId; } };
   const enc = encodeURIComponent;
 
   // Re-attach every loaded drawing to the CURRENT candleSeries (after a rebuild
-  // and after a load). Always rebuilds the primitive list (R7). Before the first
-  // buildChart (candleSeries === null) it only publishes the seam + list.
+  // and a load); before the first buildChart it only publishes the seam + list.
   function attachAllDrawings() {
     const candleSeries = host.getCandleSeries();
-    attached.forEach(function (p) {
-      if (candleSeries) candleSeries.detachPrimitive(p.prim);
-    });
+    attached.forEach(function (p) { if (candleSeries) candleSeries.detachPrimitive(p.prim); });
     attached = [];
     if (candleSeries) {
       currentDrawings.forEach(function (row) {
@@ -55,25 +53,19 @@ export function createDrawings({ store, bus, host, config }) {
   // (called AFTER buildChart, per R7: layout -> build -> drawings -> attach).
   // Per SYMBOL (R1): an interval-only switch does NOT reload. A stale fetch
   // (drawGen moved on) discards its result.
-  function loadDrawings(symbol) {
+  async function loadDrawings(symbol) {
     const mine = ++drawGen;
-    const url = config.urls.drawings + "?symbol=" + enc(symbol);
-    return fetch(url)
-      .then(function (r) {
-        if (!r.ok) throw new Error("drawings " + r.status);
-        return r.json();
-      })
-      .then(function (body) {
-        if (mine !== drawGen) return;
-        currentDrawings = (body.drawings || []).map(Draw.fromApi).filter(Boolean);
-        attachAllDrawings();
-      })
-      .catch(function () {
-        // A failed fetch is non-fatal: the chart renders with no drawings (R7).
-        if (mine !== drawGen) return;
-        currentDrawings = [];
-        attachAllDrawings();
-      });
+    let rows = [];
+    try {
+      const r = await fetch(config.urls.drawings + "?symbol=" + enc(symbol));
+      if (!r.ok) throw new Error("drawings " + r.status);
+      rows = ((await r.json()).drawings || []).map(Draw.fromApi).filter(Boolean);
+    } catch (e) {
+      rows = []; // a failed fetch is non-fatal: render with no drawings (R7)
+    }
+    if (mine !== drawGen) return; // a stale fetch discards its result
+    currentDrawings = rows;
+    attachAllDrawings();
   }
 
   function refreshDrawings() {
@@ -117,8 +109,8 @@ export function createDrawings({ store, bus, host, config }) {
     if (p.visible !== undefined) body.visible = row.visible;
     if (p.locked !== undefined) body.locked = row.locked;
     persistDrawing(row.id, body);
-    // NO re-publish on a flag change: the tree row that emitted it already synced
-    // its own icon, and a rebuild would drop keyboard focus mid-interaction (R6).
+    // NO re-publish on a flag change: the tree row already synced its own icon,
+    // and a rebuild would drop keyboard focus mid-interaction (R6).
   });
 
   // Keyboard delete (R11): same path as the panel list button.
@@ -134,13 +126,11 @@ export function createDrawings({ store, bus, host, config }) {
     if (row && row.kind) createDrawing(row.kind, clone(row.points), clone(row.style));
   }
   bus.on("drawing:duplicate", function (p) {
-    const row = p && currentDrawings.find(function (d) { return d.id === p.id; });
-    recreate(row);
+    recreate(p && currentDrawings.find(function (d) { return d.id === p.id; }));
   });
   bus.on("drawing:restore", function (p) { recreate(p && p.row); });
 
-  // One write per gesture (D7/R2): PUT only the changed field(s). A failed save
-  // is silent — the in-session shape is unaffected.
+  // One write per gesture (D7/R2): PUT only the changed field(s); failures are silent.
   function persistDrawing(id, body) {
     fetch(config.urls.drawings + "/" + id, {
       method: "PUT",
@@ -149,118 +139,96 @@ export function createDrawings({ store, bus, host, config }) {
     }).catch(function () { /* non-fatal */ });
   }
 
-  function createDrawing(kind, points, style) {
+  async function createDrawing(kind, points, style) {
     const body = { symbol: state.symbol, kind: kind, points: points, style: style };
-    fetch(config.urls.drawings, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", "X-CSRFToken": csrfToken() },
-      body: JSON.stringify(body),
-    })
-      .then(function (r) {
-        if (!r.ok) throw new Error("drawings " + r.status);
-        return r.json();
-      })
-      .then(function (saved) {
-        const row = Draw.fromApi({
-          id: saved.id, kind: saved.kind, points: saved.points, style: saved.style,
-          visible: saved.visible, locked: saved.locked,
-        });
-        if (!row) return;
-        currentDrawings.push(row);
-        attachAllDrawings();
-        // F7: the create completion signal — undo records the op (or patches the
-        // re-minted id during a restore replay). Published AFTER attach so a
-        // listener reading the seam sees the row.
-        bus.emit("drawing:created", { id: row.id, kind: row.kind, points: row.points, style: row.style });
-      })
-      .catch(function () { bus.emit("drawing:create-failed", {}); });
+    try {
+      const r = await fetch(config.urls.drawings, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "X-CSRFToken": csrfToken() },
+        body: JSON.stringify(body),
+      });
+      if (!r.ok) throw new Error("drawings " + r.status);
+      const row = Draw.fromApi(await r.json());
+      if (!row) return;
+      currentDrawings.push(row);
+      attachAllDrawings();
+      // F7: the create signal (undo records / repatches the re-minted id),
+      // emitted AFTER attach so a listener reading the seam sees the row.
+      bus.emit("drawing:created", { id: row.id, kind: row.kind, points: row.points, style: row.style });
+    } catch (e) {
+      bus.emit("drawing:create-failed", {});
+    }
   }
 
-  function deleteDrawing(id) {
-    fetch(config.urls.drawings + "/" + id, {
-      method: "DELETE",
-      headers: { "X-CSRFToken": csrfToken() },
-    })
-      .then(function () {
-        currentDrawings = currentDrawings.filter(function (d) { return d.id !== id; });
-        attachAllDrawings();
-      })
-      .catch(function () { /* keep the row on a failed delete */ });
+  async function deleteDrawing(id) {
+    try {
+      await fetch(config.urls.drawings + "/" + id, {
+        method: "DELETE",
+        headers: { "X-CSRFToken": csrfToken() },
+      });
+      currentDrawings = currentDrawings.filter(function (d) { return d.id !== id; });
+      attachAllDrawings();
+    } catch (e) { /* keep the row on a failed delete */ }
   }
 
-  // A chart click in tool mode -> create a shape. hline needs only a price;
-  // two-point kinds collect an anchor then a second click; text opens a dialog.
+  // A chart click in tool mode -> the pure flow decides pending / ready /
+  // dialog; a ready shape is POSTed once via the ONE create path (#68).
   function onChartClick(param) {
     const candleSeries = host.getCandleSeries();
     if (!state.tool || !param || !param.point || !candleSeries) return;
+    if (state.tool === "measure") return; // ephemeral: measure owns its own listeners
     const price = candleSeries.coordinateToPrice(param.point.y);
     if (price === null || price === undefined) return;
-    const kind = state.tool;
-    if (kind === "measure") return; // ephemeral: measure owns its own listeners
-    if (kind === "hline") {
-      createDrawing("hline", { price: price }, Draw.defaultStyle("hline"));
-      return;
-    }
-    if (param.time === undefined || param.time === null) return; // off-bar anchor
-    if (kind === "text") {
-      pendingAnchor = { time: param.time, price: price };
-      if (textDialog) {
-        textDialogInput.value = "";
-        textDialog.showModal();
-      } else {
-        createDrawing("text", { time: param.time, price: price, text: "note" }, textStyle());
-        pendingAnchor = null;
-      }
-      return;
-    }
-    // F6 (D6): position collects THREE clicks — entry (time+price), then the
-    // stop price, then the take_profit price; the third finalizes the POST.
-    if (kind === "position") {
-      const points = positionDraft.collect({ time: param.time, price: price });
-      if (points) finalizePosition(points);
-      return;
-    }
-    // trendline | fib | rect: first click sets the anchor, second finalizes.
-    if (pendingAnchor === null) {
-      pendingAnchor = { time: param.time, price: price };
-      return;
-    }
-    createDrawing(kind, { p1: pendingAnchor, p2: { time: param.time, price: price } }, Draw.defaultStyle(kind));
-    pendingAnchor = null;
+    const out = flow.collect(state.tool, { time: param.time, price: price });
+    if (!out) return;
+    if (out.status === "dialog") { openTextDialog(out); return; }
+    if (out.status === "ready") createDrawing(out.kind, out.points, styleFor(out.kind, out.points));
   }
 
-  // F6 (D6): persist a position's points with the derived direction colour.
-  function finalizePosition(points) {
-    createDrawing("position", points, defaultPositionStyle(points));
+  // Per-kind style seed: position derives its direction colour, text reads the
+  // --chart-text token, everything else uses the core default.
+  function styleFor(kind, points) {
+    if (kind === "position") return defaultPositionStyle(points);
+    return kind === "text" ? textStyle() : Draw.defaultStyle(kind);
   }
 
-  // F6 (D5/R15): the position-seed controller (controllers/position-seed.js, F6
-  // UI #194) copies a setup's levels VERBATIM and hands the shaped points here —
-  // the client never recomputes SMC levels; it only persists the position.
+  // text/callout need the typed label: remember the shape and let the dialog's
+  // close handler merge the text and POST (a missing dialog degrades to "note").
+  function openTextDialog(out) {
+    if (textDialog) {
+      pendingDialog = out;
+      textDialogInput.value = "";
+      textDialog.showModal();
+      return;
+    }
+    const p = Object.assign({}, out.points, { text: "note" });
+    createDrawing(out.kind, p, styleFor(out.kind, p));
+  }
+
+  // F6 (D5/R15): position-seed copies a setup's levels VERBATIM and hands the
+  // shaped points here — the client never recomputes SMC levels, only persists.
   function seedPosition(points) {
     if (!points) return;
-    finalizePosition(points);
+    createDrawing("position", points, defaultPositionStyle(points));
   }
 
   // Tool selection now lives in controllers/draw-toolbar.js (F5 S2): it writes
   // ``store.tool`` (the SAME command the legacy buttons emitted). A tool change
-  // only needs to drop a half-collected anchor or position draft.
+  // drops a half-collected draft (the flow keys its draft by kind).
   store.subscribe(function () {
-    if (state.tool !== pendingAnchorKind) {
-      pendingAnchorKind = state.tool;
-      pendingAnchor = null;
-      positionDraft.cancel();
-    }
+    if (state.tool === flowTool) return;
+    flowTool = state.tool;
+    flow.cancel(); // a tool switch drops the half-collected draft
   });
 
-  // Escape (design-system R6): cancel a half-collected position draft (the
-  // measure cancels itself in measure.js). Bound once on the #chart container,
-  // which survives a rebuild.
+  // Escape (design-system R6): cancel a half-collected draft (the measure
+  // cancels itself in measure.js). Bound once on the #chart container, which
+  // survives a rebuild.
   const chartEl = document.getElementById("chart");
   if (chartEl) {
     chartEl.addEventListener("keydown", function (e) {
-      if (e.key === "Escape" && positionDraft.active()) {
-        positionDraft.cancel();
+      if (e.key === "Escape" && flow.active()) {
+        flow.cancel();
         e.preventDefault();
       }
     });
@@ -269,15 +237,12 @@ export function createDrawings({ store, bus, host, config }) {
   if (textDialog) {
     textDialog.addEventListener("close", function () {
       const text = (textDialogInput.value || "").trim();
-      if (textDialog.returnValue === "ok" && pendingAnchor && text) {
-        createDrawing(
-          "text",
-          { time: pendingAnchor.time, price: pendingAnchor.price, text: text },
-          textStyle(),
-        );
-      }
-      pendingAnchor = null;
+      const pending = pendingDialog;
+      pendingDialog = null;
       textDialogInput.value = "";
+      if (textDialog.returnValue !== "ok" || !pending || !text) return;
+      const points = Object.assign({}, pending.points, { text: text });
+      createDrawing(pending.kind, points, styleFor(pending.kind, pending.points));
     });
   }
 
@@ -287,9 +252,10 @@ export function createDrawings({ store, bus, host, config }) {
   function clearForSwitch() {
     // store.set (not a raw write) so the toolbar's subscriber clears aria-pressed.
     store.set({ tool: null });
-    pendingAnchor = null;
-    positionDraft.cancel();
-    selectedId = null; // R14: a symbol switch clears selection with the drawings
+    flowTool = state.tool;
+    flow.reset();
+    pendingDialog = null;
+    selectedId = null; // R14: selection clears with the drawings
     currentDrawings = [];
     drawGen++;
   }

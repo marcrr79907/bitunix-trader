@@ -15,6 +15,9 @@ import { clicksFor } from "./drawing-tools-core.js";
 // Existing kinds share the machine (D6) — the same counts the old controller used.
 const BASE_CLICKS = { hline: 1, text: 1, trendline: 2, fib: 2, rect: 2, position: 3 };
 const DIALOG_KINDS = ["text", "callout"];
+// Price-only kinds accept a click with no bar under it; everything else needs
+// a time anchor, so an off-bar click is ignored (mirrors the old controller).
+const PRICE_ONLY = ["hline", "price"];
 
 function countFor(kind) {
   return BASE_CLICKS[kind] !== undefined ? BASE_CLICKS[kind] : clicksFor(kind);
@@ -41,6 +44,9 @@ export function createFlow() {
     if (!point) return null;
     const n = countFor(k);
     if (n <= 0) return null;
+    if (PRICE_ONLY.indexOf(k) === -1 && (point.time === undefined || point.time === null)) {
+      return null; // off-bar click: not an anchor
+    }
     // A tool switch (or the first click) starts a fresh draft.
     if (k !== kind) { kind = k; clicks = []; }
     clicks.push(point);
