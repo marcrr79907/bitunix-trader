@@ -25,6 +25,16 @@ export const TOOL_KEYS = {
   text: "X",
   measure: "M",
   position: "P",
+  // F9 S3 (R1/R3): the eight new letters — non-colliding with H/T/F/R/X/M/P and
+  // the object tree's v/l/s. The #chart letter router picks them up via LETTERS.
+  ray: "A",
+  vline: "I",
+  channel: "C",
+  price: "U",
+  callout: "O",
+  fib_ext: "E",
+  fib_time: "W",
+  fib_zone: "Z",
 };
 
 // Accessible name per kind (the SVG is aria-hidden, so the button carries it).
@@ -36,6 +46,15 @@ const TOOL_LABELS = {
   text: "Text",
   measure: "Measure",
   position: "Position",
+  // F9 S3.
+  ray: "Ray",
+  vline: "Vertical line",
+  channel: "Parallel channel",
+  price: "Price line",
+  callout: "Callout",
+  fib_ext: "Fibonacci extension",
+  fib_time: "Fibonacci time zones",
+  fib_zone: "Fibonacci zone",
 };
 
 export function createDrawToolbar({ store }) {
