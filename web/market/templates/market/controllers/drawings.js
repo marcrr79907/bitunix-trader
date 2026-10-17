@@ -5,6 +5,8 @@
 // from the pure drawing-core.js; ``drawGen`` guards a stale drawings fetch.
 import * as Draw from "../drawing-core.js";
 import { makeDrawingPrimitive } from "../drawing-primitive.js";
+import { defaultPositionStyle } from "../position-core.js";
+import { createDraft } from "../position-draft-core.js";
 
 function csrfToken() {
   const meta = document.querySelector('meta[name="csrf-token"]');
@@ -22,6 +24,9 @@ export function createDrawings({ store, bus, host, config }) {
   let drawGen = 0; // monotonic guard against a stale drawings fetch
   let pendingAnchor = null; // first click of a two-point drawing
   let pendingAnchorKind = state.tool; // tool the anchor was collected under
+  // F6 (D6): a position collects entry (time+price) -> stop price -> tp price.
+  // The 3-click state machine is the pure position-draft-core (cancel-safe, R6).
+  const positionDraft = createDraft();
   let selectedId = null; // interaction selection (closure only; never a store key)
   const selection = { isSelected: function (row) { return row.id === selectedId; } };
   const enc = encodeURIComponent;
@@ -174,6 +179,7 @@ export function createDrawings({ store, bus, host, config }) {
     const price = candleSeries.coordinateToPrice(param.point.y);
     if (price === null || price === undefined) return;
     const kind = state.tool;
+    if (kind === "measure") return; // ephemeral: measure owns its own listeners
     if (kind === "hline") {
       createDrawing("hline", { price: price }, Draw.defaultStyle("hline"));
       return;
@@ -190,6 +196,13 @@ export function createDrawings({ store, bus, host, config }) {
       }
       return;
     }
+    // F6 (D6): position collects THREE clicks — entry (time+price), then the
+    // stop price, then the take_profit price; the third finalizes the POST.
+    if (kind === "position") {
+      const points = positionDraft.collect({ time: param.time, price: price });
+      if (points) finalizePosition(points);
+      return;
+    }
     // trendline | fib | rect: first click sets the anchor, second finalizes.
     if (pendingAnchor === null) {
       pendingAnchor = { time: param.time, price: price };
@@ -199,15 +212,42 @@ export function createDrawings({ store, bus, host, config }) {
     pendingAnchor = null;
   }
 
+  // F6 (D6): persist a position's points with the derived direction colour.
+  function finalizePosition(points) {
+    createDrawing("position", points, defaultPositionStyle(points));
+  }
+
+  // F6 (D5/R15): the position-seed controller (controllers/position-seed.js, F6
+  // UI #194) copies a setup's levels VERBATIM and hands the shaped points here —
+  // the client never recomputes SMC levels; it only persists the position.
+  function seedPosition(points) {
+    if (!points) return;
+    finalizePosition(points);
+  }
+
   // Tool selection now lives in controllers/draw-toolbar.js (F5 S2): it writes
   // ``store.tool`` (the SAME command the legacy buttons emitted). A tool change
-  // only needs to drop a half-collected two-point anchor.
+  // only needs to drop a half-collected anchor or position draft.
   store.subscribe(function () {
     if (state.tool !== pendingAnchorKind) {
       pendingAnchorKind = state.tool;
       pendingAnchor = null;
+      positionDraft.cancel();
     }
   });
+
+  // Escape (design-system R6): cancel a half-collected position draft (the
+  // measure cancels itself in measure.js). Bound once on the #chart container,
+  // which survives a rebuild.
+  const chartEl = document.getElementById("chart");
+  if (chartEl) {
+    chartEl.addEventListener("keydown", function (e) {
+      if (e.key === "Escape" && positionDraft.active()) {
+        positionDraft.cancel();
+        e.preventDefault();
+      }
+    });
+  }
 
   if (textDialog) {
     textDialog.addEventListener("close", function () {
@@ -231,10 +271,11 @@ export function createDrawings({ store, bus, host, config }) {
     // store.set (not a raw write) so the toolbar's subscriber clears aria-pressed.
     store.set({ tool: null });
     pendingAnchor = null;
+    positionDraft.cancel();
     selectedId = null; // R14: a symbol switch clears selection with the drawings
     currentDrawings = [];
     drawGen++;
   }
 
-  return { onChartClick, attachAllDrawings, refreshDrawings, clearForSwitch };
+  return { onChartClick, attachAllDrawings, refreshDrawings, clearForSwitch, seedPosition };
 }

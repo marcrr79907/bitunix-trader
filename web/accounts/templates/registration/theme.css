@@ -157,6 +157,19 @@ code{font-family:var(--mono); background:var(--surface); padding:1px 5px; border
 .smc label{display:flex; align-items:center; gap:var(--sp-2); cursor:pointer}
 .smc input[type=checkbox]{accent-color:var(--accent)}
 
+/* F6 measure readout (D8): a monospace live region mirroring #rsi. Tokens only. */
+#measure-readout{font-family:var(--mono); font-size:var(--fs-3); color:var(--text);
+  margin:0 0 var(--sp-2); white-space:nowrap; overflow:hidden; text-overflow:ellipsis}
+
+/* F6 position readout (UI #194): mirror #measure-readout so the two live
+   regions read as one system. Tokens only. */
+#position-readout{font-family:var(--mono); font-size:var(--fs-3); color:var(--text);
+  margin:0 0 var(--sp-2); white-space:nowrap; overflow:hidden; text-overflow:ellipsis}
+/* F6 UI #194: a disabled seed (no setup yet) must LOOK disabled, not just be
+   inoperable — muted foreground + a default cursor. */
+#position-seed:disabled{color:var(--muted); border-color:var(--border);
+  background:var(--surface); cursor:default}
+
 /* drawings vertical icon toolbar (F5 S2) */
 .draw-tools{display:flex; flex-direction:column; gap:var(--sp-2);
   margin:0; border:1px solid var(--border); border-radius:var(--r); padding:var(--sp-2)}

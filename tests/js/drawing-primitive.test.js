@@ -15,6 +15,7 @@ function recordingCtx() {
   const calls = [];
   const ctx = {
     calls,
+    fills: [], // fillStyle captured at each fillRect (F6 UI #193 zone colours)
     save: () => calls.push("save"),
     restore: () => calls.push("restore"),
     beginPath: () => calls.push("beginPath"),
@@ -22,7 +23,7 @@ function recordingCtx() {
     lineTo: () => calls.push("lineTo"),
     stroke: () => calls.push("stroke"),
     strokeRect: () => calls.push("strokeRect"),
-    fillRect: () => calls.push("fillRect"),
+    fillRect: () => { calls.push("fillRect"); ctx.fills.push(ctx.fillStyle); },
     fillText: () => calls.push("fillText"),
     arc: () => calls.push("arc"),
     fill: () => calls.push("fill"),
@@ -65,4 +66,88 @@ test("autoscaleInfo is null when the drawing is hidden (R6)", () => {
   });
   const hidden = makeDrawingPrimitive({ ...HLINE, visible: false }, {});
   assert.strictEqual(hidden.autoscaleInfo(), null);
+});
+
+// --- position render (F6 R6) -------------------------------------------------
+
+const POSITION = {
+  id: 9,
+  kind: "position",
+  points: { entry: { time: 10, price: 50 }, stop: 45, take_profit: 60 },
+  style: { color: "#26a69a", lineWidth: 1 },
+};
+
+test("renderShape draws a position via position-core (zones + levels + R:R)", () => {
+  const ctx = recordingCtx();
+  renderShape(ctx, { width: 300, height: 300 }, POSITION, MAP, false);
+  // Two filled bands (risk + reward) and three level strokes.
+  assert.ok(ctx.calls.filter((c) => c === "fillRect").length >= 2, "risk + reward bands");
+  assert.ok(ctx.calls.filter((c) => c === "stroke").length >= 3, "three level lines");
+  // The LONG/SHORT label + the R:R figure are written as text (not colour-only).
+  assert.ok(ctx.calls.filter((c) => c === "fillText").length >= 2, "label + R:R");
+});
+
+test("renderShape position degrades (no throw) when the entry is off-bar", () => {
+  const ctx = recordingCtx();
+  const map = { x: () => null, y: (p) => p };
+  assert.doesNotThrow(() =>
+    renderShape(ctx, { width: 300, height: 300 }, POSITION, map, false),
+  );
+  assert.strictEqual(ctx.calls.filter((c) => c === "fillRect").length, 0, "no box off-bar");
+});
+
+test("renderShape position draws nothing when hidden (R6)", () => {
+  const ctx = recordingCtx();
+  renderShape(ctx, { width: 300, height: 300 }, { ...POSITION, visible: false }, MAP, false);
+  assert.deepStrictEqual(ctx.calls, ["save", "restore"]);
+});
+
+test("autoscaleInfo of a position includes stop and take_profit (R6)", () => {
+  const prim = makeDrawingPrimitive(POSITION, {});
+  assert.deepStrictEqual(prim.autoscaleInfo(), {
+    priceRange: { minValue: 45, maxValue: 60 },
+  });
+});
+
+test("autoscaleInfo of a hidden position is null (R6)", () => {
+  const prim = makeDrawingPrimitive({ ...POSITION, visible: false }, {});
+  assert.strictEqual(prim.autoscaleInfo(), null);
+});
+
+// --- position zone colours read shell tokens (F6 UI #193 / R9) ----------------
+
+function withTokens(values, fn) {
+  const prevDoc = globalThis.document;
+  const prevGcs = globalThis.getComputedStyle;
+  globalThis.document = { documentElement: {} };
+  globalThis.getComputedStyle = () => ({
+    getPropertyValue: (n) => values[n] || "",
+  });
+  try {
+    return fn();
+  } finally {
+    if (prevDoc === undefined) delete globalThis.document;
+    else globalThis.document = prevDoc;
+    if (prevGcs === undefined) delete globalThis.getComputedStyle;
+    else globalThis.getComputedStyle = prevGcs;
+  }
+}
+
+test("position zones paint with the resolved --dn/--up tokens, not literals (R9)", () => {
+  // Deliberately NON-standard token values so a hard-coded literal fails.
+  const ctx = recordingCtx();
+  withTokens({ "--dn": "#cf222e", "--up": "#1a7f37", "--muted": "#57606a" }, () => {
+    renderShape(ctx, { width: 300, height: 300 }, POSITION, MAP, false);
+  });
+  assert.ok(ctx.fills.includes("#cf222e"), `risk uses --dn: ${ctx.fills}`);
+  assert.ok(ctx.fills.includes("#1a7f37"), `reward uses --up: ${ctx.fills}`);
+  assert.ok(!ctx.fills.includes("#ef5350"), "risk literal must not be painted");
+  assert.ok(!ctx.fills.includes("#26a69a"), "reward literal must not be painted");
+});
+
+test("position zones fall back to the literals with no DOM (R9)", () => {
+  const ctx = recordingCtx();
+  renderShape(ctx, { width: 300, height: 300 }, POSITION, MAP, false);
+  assert.ok(ctx.fills.includes("#ef5350"), `risk fallback: ${ctx.fills}`);
+  assert.ok(ctx.fills.includes("#26a69a"), `reward fallback: ${ctx.fills}`);
 });

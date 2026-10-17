@@ -10,7 +10,7 @@
 // is deterministically testable without a canvas.
 
 // Mirrors Drawing.Kind on the server (the model is the source of truth).
-var DRAWING_KINDS = ["hline", "trendline", "fib", "rect", "text"];
+var DRAWING_KINDS = ["hline", "trendline", "fib", "rect", "text", "position"];
 
 // Default fib ratios (TradingView's seven) and per-kind style seed.
 var FIB_RATIOS = [0, 0.236, 0.382, 0.5, 0.618, 0.786, 1];
@@ -20,6 +20,9 @@ var COLORS = {
   fib: "#7e57c2",
   rect: "#26a69a",
   text: "#e6edf3",
+  // F6: neutral seed; direction colour is presentation-only (position-core
+  // defaultPositionStyle derives it, but a persisted row keeps its own).
+  position: "#787b86",
 };
 
 function defaultStyle(kind) {

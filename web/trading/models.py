@@ -247,6 +247,7 @@ class Drawing(UserOwnedModel):
         FIB = "fib"
         RECT = "rect"
         TEXT = "text"
+        POSITION = "position"
 
     symbol = models.CharField(max_length=32)
     kind = models.CharField(max_length=16, choices=Kind.choices)

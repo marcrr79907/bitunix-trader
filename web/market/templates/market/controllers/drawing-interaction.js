@@ -9,6 +9,8 @@
 // the persistence (one PUT per gesture). Geometry comes from the pure
 // drawing-interaction-core.js; the brush never writes series data (#68).
 import { grabHandle, applyDrag } from "../drawing-interaction-core.js";
+import { riskReward } from "../position-core.js";
+import { createCoalescer } from "../readout-coalesce-core.js";
 
 // Container-relative pixel for a client coordinate (the ``#chart`` rect is the
 // reference frame; a missing rect degrades to identity, never NaN).
@@ -48,8 +50,14 @@ export function createDrawingInteraction({ store, bus, host, config }) {
   const dialog = document.getElementById("drawing-settings-dialog");
   const colorInput = document.getElementById("ds-color");
   const widthInput = document.getElementById("ds-width");
+  const positionReadout = document.getElementById("position-readout");
   let rows = []; // the latest ``drawings:changed`` rows (shared refs with drawings.js)
   let selectedId = null;
+  let readoutId = null; // the id the R:R readout currently announces (bus-driven)
+  // F6 UI #192: coalesce drag-frame readout writes to one per animation frame.
+  const readoutCoalescer = createCoalescer(function (p) {
+    writePositionReadout(p ? p.id : null, p ? p.points : null);
+  });
   let drag = null; // {id, target, lastX, lastY, moved}
   let dialogId = null;
   let bound = false;
@@ -59,11 +67,63 @@ export function createDrawingInteraction({ store, bus, host, config }) {
   bus.on("drawings:changed", function (p) {
     rows = (p && p.rows) || [];
     if (selectedId !== null && !rowById(selectedId)) selectedId = null;
+    writePositionReadout(readoutId, null);
   });
 
   function rowById(id) {
     return rows.find(function (r) { return r.id === id; }) || null;
   }
+
+  // F6 (design-system R6): the selected position's R:R lives in an ``aria-live``
+  // DOM node (the canvas text stays as visual reinforcement). ``id`` is the
+  // announced selection; a non-position or absent selection clears the node.
+  // R:R comes from the pure position-core (single source); a degenerate rr
+  // (null) clears it. ``pointsOverride`` lets a live drag refresh immediately.
+  function writePositionReadout(id, pointsOverride) {
+    readoutId = id === undefined ? null : id;
+    if (!positionReadout) return;
+    const row = readoutId === null ? null : rowById(readoutId);
+    if (!row || row.kind !== "position") {
+      positionReadout.textContent = "";
+      return;
+    }
+    const p = pointsOverride || row.points || {};
+    const rr = riskReward(p.entry && p.entry.price, p.stop, p.take_profit).rr;
+    positionReadout.textContent = rr === null ? "" : "R:R " + rr.toFixed(2);
+  }
+
+  // F6 UI #192: a drag frame at 60fps must not churn the polite region. Coalesce
+  // a live drag refresh to one write per animation frame; a selection / drag-end
+  // write goes through immediately (the announcement is never dropped).
+  function schedulePositionReadout(id, pointsOverride) {
+    readoutId = id;
+    readoutCoalescer.schedule({ id: id, points: pointsOverride });
+  }
+
+  function flushPositionReadout(id, pointsOverride) {
+    readoutId = id;
+    readoutCoalescer.flush({ id: id, points: pointsOverride });
+  }
+
+  // Any selection source (pointer, tree, keyboard) announces on the bus, so the
+  // readout follows the ONE announcement rather than a second selection copy.
+  // Mirror the announcement into ``selectedId`` so a tree-select keeps the
+  // pointer hit-test in sync (a later canvas miss must clear it, not early-return).
+  bus.on("drawing:selected", function (p) {
+    selectedId = p ? p.id : null;
+    writePositionReadout(p ? p.id : null, null);
+  });
+
+  // A live row change (drag/style) refreshes the R:R when it touches the
+  // announced position; drawings.js already applied the new points to the row.
+  // F6 UI #192: a live drag frame (persist !== true) coalesces per frame; the
+  // drag-end write (persist === true) flushes immediately.
+  bus.on("drawing:changed", function (p) {
+    if (!p || p.id !== readoutId) return;
+    const points = p.points;
+    if (p.persist === true) flushPositionReadout(readoutId, points);
+    else schedulePositionReadout(readoutId, points);
+  });
 
   // Data<->pixel map for the core. All four functions may return null with no
   // chart/series or off-bar; the core keeps the old component on a null inverse.
@@ -81,6 +141,7 @@ export function createDrawingInteraction({ store, bus, host, config }) {
   function setSelection(id) {
     if (selectedId === id) return;
     selectedId = id;
+    // The ``drawing:selected`` emit drives the R:R readout (one announcement).
     bus.emit("drawing:selected", { id: id });
   }
 
@@ -120,6 +181,9 @@ export function createDrawingInteraction({ store, bus, host, config }) {
     if (!row) return;
     const points = applyDrag(row, drag.target, dx, dy, map());
     // D6: live render via the primitive requestUpdate in drawings.js, no PUT.
+    // The emitted ``drawing:changed`` (persist !== true) drives the coalesced
+    // R:R readout refresh (#192) — no direct write here (would churn the
+    // aria-live region per frame and bypass the coalescer).
     bus.emit("drawing:changed", { id: drag.id, points: points, persist: false });
   }
 

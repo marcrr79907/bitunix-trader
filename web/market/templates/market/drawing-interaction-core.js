@@ -10,6 +10,7 @@
 // a value has no bar / no scale — every consumer keeps the OLD component on a
 // null conversion so a drag can never emit null (which the API would 400).
 import { hitTest } from "./drawing-core.js";
+import { positionBox, positionHandles } from "./position-core.js";
 
 const HANDLE_RADIUS = 6;
 const BODY_RADIUS = 4;
@@ -48,6 +49,9 @@ function handlesFor(kind, points, map) {
       if (c) c.forEach(function (h) { add(h.id, h.x, h.y); });
     } else if (kind === "text") {
       add("anchor", map.x(points.time), map.y(points.price));
+    } else if (kind === "position") {
+      // F6 (R10): 4 handles — entry anchor + stop/take_profit/entry-price levels.
+      positionHandles(points, map).forEach(function (h) { add(h.id, h.x, h.y); });
     }
     return out;
   } catch (e) {
@@ -128,6 +132,16 @@ function bodyHit(row, x, y, map) {
     const dy = a.y - y;
     return dx * dx + dy * dy <= BODY_RADIUS * BODY_RADIUS;
   }
+  if (row.kind === "position") {
+    // F6 (R10): the box body is the entry->stop ∪ entry->take_profit band
+    // (BOX_WIDTH wide from the entry column), padded by BODY_RADIUS.
+    const box = positionBox(p, map);
+    if (!box) return false;
+    const top = Math.min(box.riskBand.top, box.rewardBand.top) - BODY_RADIUS;
+    const bottom = Math.max(box.riskBand.bottom, box.rewardBand.bottom) + BODY_RADIUS;
+    return x >= box.left - BODY_RADIUS && x <= box.right + BODY_RADIUS
+      && y >= top && y <= bottom;
+  }
   return false;
 }
 
@@ -179,10 +193,37 @@ function applyDrag(row, target, dxPx, dyPx, map) {
       out.price = moveValue(map.y(points.price), dyPx, map.price, points.price);
       return out;
     }
+    if (kind === "position") {
+      return dragPosition(out, points, target, dxPx, dyPx, map);
+    }
     return out;
   } catch (e) {
     return (row && row.points) || {};
   }
+}
+
+// F6 (R10): a position drag. Handle indices mirror positionHandles
+// (0=entry anchor, 1=entry price, 2=stop, 3=take_profit); "body" shifts all
+// three levels (y) and the entry column (x). Never mutates ``points``.
+function dragPosition(out, points, target, dx, dy, map) {
+  const entry = points.entry || {};
+  const moveY = function (oldPrice) { return moveValue(map.y(oldPrice), dy, map.price, oldPrice); };
+  if (target === "body") {
+    out.entry = { time: moveValue(map.x(entry.time), dx, map.time, entry.time), price: moveY(entry.price) };
+    out.stop = moveY(points.stop);
+    out.take_profit = moveY(points.take_profit);
+    return out;
+  }
+  if (target === 0) {
+    out.entry = { time: moveValue(map.x(entry.time), dx, map.time, entry.time), price: moveY(entry.price) };
+  } else if (target === 1) {
+    out.entry = { time: entry.time, price: moveY(entry.price) };
+  } else if (target === 2) {
+    out.stop = moveY(points.stop);
+  } else if (target === 3) {
+    out.take_profit = moveY(points.take_profit);
+  }
+  return out;
 }
 
 // Translate one anchor by a pixel delta (both components).
@@ -227,4 +268,4 @@ function hasAnchor(points, key) {
   return !!points[key] && typeof points[key].time !== "undefined";
 }
 
-export { HANDLE_RADIUS, BODY_RADIUS, handlesFor, grabHandle, applyDrag };
+export { HANDLE_RADIUS, BODY_RADIUS, handlesFor, grabHandle, bodyHit, applyDrag };

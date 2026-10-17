@@ -21,6 +21,8 @@ import { createDrawingInteraction } from "./controllers/drawing-interaction.js";
 import { createSmc, readSmc } from "./controllers/smc.js";
 import { createToolbar } from "./controllers/toolbar.js";
 import { createDrawToolbar } from "./controllers/draw-toolbar.js";
+import { createMeasure } from "./controllers/measure.js";
+import { createPositionSeed } from "./controllers/position-seed.js";
 import { createObjectTree } from "./controllers/object-tree.js";
 import { createLegend } from "./controllers/legend.js";
 import { createPreference } from "./controllers/preference.js";
@@ -70,6 +72,10 @@ export function boot(config) {
   const stream = createStream({ store, bus, host, config });
   const drawings = createDrawings({ store, bus, host, config });
   const drawingInteraction = createDrawingInteraction({ store, bus, host, config });
+  const measure = createMeasure({ store, bus, host, config });
+  // F6 UI #194: the "Position from setup" button state + setups cache. It seeds
+  // a position through drawings.js (single source for the POST).
+  createPositionSeed({ bus, onSeed: drawings.seedPosition });
   const smc = createSmc({ store, bus, host, config });
   // Theme (R27/CT2/CT3): the toolbar resolves + writes ``data-theme``, then
   // calls this callback (NO bus event — R20). Live flip is option-only (#68).
@@ -113,6 +119,9 @@ export function boot(config) {
     // The #chart container survives a rebuild; bind() is idempotent (first build
     // binds, later builds are no-ops). Drawings re-attach above.
     drawingInteraction.attach();
+    // F6 (D1/D4): the measure controller owns its own #chart listeners (guarded
+    // on state.tool==="measure"); bind() is idempotent like the interaction.
+    measure.attach();
     host.subscribeClick(drawings.onChartClick);
     host.subscribeVisibleRange(history.onVisibleRange);
     bus.emit("chart:built", {
@@ -151,6 +160,8 @@ export function boot(config) {
     // it always clears. The bumps invalidate in-flight fetches.
     if (symbolChanged) drawings.clearForSwitch();
     smc.clearForSwitch();
+    // F6 (R4): a symbol switch clears an ephemeral measurement (no persistence).
+    if (symbolChanged) measure.clearForSwitch();
     // R14: a symbol switch clears selection with the drawings; an interval-only
     // switch keeps it (the drawings stay attached, #68).
     if (symbolChanged) drawingInteraction.clearForSwitch();
