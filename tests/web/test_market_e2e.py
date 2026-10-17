@@ -3932,8 +3932,9 @@ def test_context_menu_on_drawing_shows_delete_and_duplicate(
 def test_context_menu_opens_by_keyboard_at_selection(
     seeded_5m_candles, interaction_drawing, browser_page
 ):
-    # F7 UI #204: with a drawing selected, Shift+F10 opens the menu anchored at
-    # the drawing (not the viewport corner). #chart advertises aria-haspopup.
+    # F7 UI #204: with a drawing selected (via the tree row -> drawing:selected),
+    # Shift+F10 opens the menu anchored to the chart, not the viewport corner.
+    # #chart advertises aria-haspopup.
     page, base_url = browser_page
     page.goto(f"{base_url}/market/")
     _wait_ready(page)
@@ -3941,8 +3942,9 @@ def test_context_menu_opens_by_keyboard_at_selection(
         "() => window.marketChart.drawings && window.marketChart.drawings.length === 1",
         timeout=10000,
     )
-    _select_hline(page)  # selects the seeded hline and focuses #chart
     assert page.locator("#chart").get_attribute("aria-haspopup") == "menu"
+    page.locator("#object-tree .tree-row[data-id] .tree-row-name").first.click()
+    page.locator("#chart").focus()
     page.keyboard.press("Shift+F10")
     page.wait_for_selector('div[role="menu"]', timeout=5000)
     labels = page.locator('div[role="menu"] [role="menuitem"]').all_text_contents()
