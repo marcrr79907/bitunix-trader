@@ -958,6 +958,22 @@ test("a bare F10 (no Shift) does not open the menu (F7 UI #204)", () => {
   } finally { f.restore(); }
 });
 
+test("an item without a shortcut omits aria-keyshortcuts (F7 UI #206)", () => {
+  // The model yields keyshortcut:"" for Duplicate/Add indicator; writing it
+  // verbatim leaves an empty (misleading) attribute. Omit it entirely.
+  const f = menuFixture([HLINE_ROW]);
+  try {
+    f.chart.fire("contextmenu", ctxEv(300, 100));
+    const items = menuNode(f.body).children;
+    assert.strictEqual(items[0].getAttribute("aria-keyshortcuts"), "Delete");
+    assert.strictEqual(
+      items[1].hasAttribute("aria-keyshortcuts"),
+      false,
+      "an empty shortcut must not be written",
+    );
+  } finally { f.restore(); }
+});
+
 test("measure stroke paints with the resolved --accent token, not a literal (R9)", () => {
   const f = measureFixture();
   const prevDoc = globalThis.document;

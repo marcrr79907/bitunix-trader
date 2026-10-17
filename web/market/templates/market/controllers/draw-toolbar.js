@@ -96,6 +96,14 @@ export function createDrawToolbar({ store }) {
       if (TOOL_KEYS[kind]) btn.setAttribute("aria-keyshortcuts", TOOL_KEYS[kind]);
       const icon = iconFor(kind);
       if (icon) btn.innerHTML = icon;
+      // F7 UI #206: the aria-keyshortcuts letter is only honest if a sighted
+      // user can see it too — surface it as a muted key affordance.
+      if (TOOL_KEYS[kind]) {
+        const key = document.createElement("span");
+        key.className = "tool-key";
+        key.textContent = TOOL_KEYS[kind];
+        btn.appendChild(key);
+      }
       btn.addEventListener("click", function () { activate(kind); });
       btn.addEventListener("keydown", function (e) {
         if (e.key !== "ArrowDown" && e.key !== "ArrowUp"

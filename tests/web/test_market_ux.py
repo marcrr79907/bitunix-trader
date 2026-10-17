@@ -311,6 +311,16 @@ def test_ui_audit_undo_hint_uses_tokens(logged_in_client):
     assert not re.search(r"#[0-9a-fA-F]{3,8}\b", hint), "no hard-coded hex in the hint"
 
 
+def test_ui_audit_menu_never_writes_empty_keyshortcut(logged_in_client):
+    # F7 UI #206: the served context-menu controller must guard the
+    # aria-keyshortcuts attribute — an empty value is a misleading attribute.
+    js = logged_in_client.get("/market/controllers/context-menu.js").content.decode()
+    assert 'aria-keyshortcuts", item.keyshortcut || ""' not in js, (
+        "an empty aria-keyshortcuts must not be written"
+    )
+    assert "if (item.keyshortcut)" in js
+
+
 def test_csp_present_on_market_page(logged_in_client):
     response = logged_in_client.get("/market/")
     assert response.status_code == 200

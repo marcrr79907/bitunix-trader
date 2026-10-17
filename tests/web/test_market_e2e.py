@@ -1035,6 +1035,9 @@ def test_draw_toolbar_renders_groups_and_sets_store(browser_page):
         page.locator('.draw-tool[data-kind="fib"]').get_attribute("aria-label")
         == "Fibonacci retracement"
     )
+    # F7 UI #206: the advertised letter is surfaced visually on every button.
+    assert page.locator(".draw-tools .draw-tool .tool-key").count() == 7
+    assert page.locator('.draw-tool[data-kind="fib"] .tool-key').text_content() == "F"
 
     # No tool active at boot: nothing pressed.
     assert page.locator('.draw-tools .draw-tool[aria-pressed="true"]').count() == 0

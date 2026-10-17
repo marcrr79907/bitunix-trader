@@ -123,7 +123,9 @@ export function createContextMenu({ store, bus, host, config }) {
       b.type = "button";
       b.setAttribute("role", "menuitem");
       b.setAttribute("tabindex", i === 0 ? "0" : "-1");
-      b.setAttribute("aria-keyshortcuts", item.keyshortcut || "");
+      // F7 UI #206: only advertise a shortcut that exists — an empty
+      // aria-keyshortcuts is a misleading attribute, so omit it entirely.
+      if (item.keyshortcut) b.setAttribute("aria-keyshortcuts", item.keyshortcut);
       b.textContent = item.label;
       b.addEventListener("click", function () { activate(item, row); });
       items.push(b);

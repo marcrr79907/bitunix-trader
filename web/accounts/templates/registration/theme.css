@@ -178,6 +178,9 @@ code{font-family:var(--mono); background:var(--surface); padding:1px 5px; border
   min-width:36px; min-height:36px; padding:var(--sp-1);
   background:var(--surface); border:1px solid var(--border); color:var(--text); border-radius:var(--r)}
 .draw-tool svg{display:block}
+/* F7 UI #206: the per-tool shortcut letter surfaced visually (muted, small) so
+   the aria-keyshortcuts attribute is honest to sighted users. */
+.tool-key{color:var(--muted); font-size:var(--fs-3); margin-left:var(--sp-1)}
 /* Not color-only (design-system R6): the active tool gains a 2px border + a
    surface lift alongside aria-pressed. */
 .draw-tool[aria-pressed="true"]{border:2px solid var(--accent); color:var(--accent); background:var(--bg-2)}
