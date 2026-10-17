@@ -480,3 +480,116 @@ test("measure attach() is a no-op with no active measurement (#188/R1)", () => {
     assert.strictEqual(f.host._series.attaches, 0, "no phantom primitive on rebuild");
   } finally { f.restore(); }
 });
+
+// F6 UI #192: the aria-live readout MUST NOT be rewritten on every pointermove.
+// N moves inside one animation frame coalesce to a SINGLE DOM write; the final
+// write on pointerup still happens. rAF is shimmed so a frame is flushed on cue.
+function withRaf(fn) {
+  const prev = globalThis.requestAnimationFrame;
+  const queued = [];
+  globalThis.requestAnimationFrame = (cb) => { queued.push(cb); return queued.length; };
+  try {
+    return fn(() => { const q = queued.splice(0); q.forEach((cb) => cb()); });
+  } finally {
+    if (prev === undefined) delete globalThis.requestAnimationFrame;
+    else globalThis.requestAnimationFrame = prev;
+  }
+}
+
+function countingEl(tag) {
+  const el = makeEl(tag);
+  let text = "";
+  let writes = 0;
+  Object.defineProperty(el, "textContent", {
+    get: () => text,
+    set: (v) => { text = v; writes += 1; },
+  });
+  Object.defineProperty(el, "writes", { get: () => writes });
+  return el;
+}
+
+test("measure: N pointermoves in one frame write the live region once (#192)", () => {
+  const prevDoc = globalThis.document;
+  const chartEl = makeEl("section");
+  const readout = countingEl("p");
+  globalThis.document = {
+    getElementById: (id) => (id === "chart" ? chartEl : id === "measure-readout" ? readout : null),
+  };
+  try {
+    withRaf((flush) => {
+      const store = makeStore({ tool: "measure", interval: "1m", symbol: "BTCUSDT" });
+      const host = makeHost();
+      const m = createMeasure({ store, bus: { on() {}, emit() {} }, host, config: {} });
+      m.attach();
+      chartEl.fire("pointerdown", ev(10, 100));
+      const base = readout.writes; // the pointerdown write is immediate (first point)
+      for (let i = 0; i < 20; i++) chartEl.fire("pointermove", ev(10 + i, 100 + i));
+      assert.strictEqual(readout.writes, base, "no per-move DOM write before the frame");
+      flush();
+      assert.strictEqual(readout.writes, base + 1, "20 moves coalesce to one write");
+      assert.match(readout.textContent, /\d/, "the coalesced write carries a real figure");
+    });
+  } finally { globalThis.document = prevDoc; }
+});
+
+test("measure: pointerup flushes the final readout write immediately (#192)", () => {
+  const prevDoc = globalThis.document;
+  const chartEl = makeEl("section");
+  const readout = countingEl("p");
+  globalThis.document = {
+    getElementById: (id) => (id === "chart" ? chartEl : id === "measure-readout" ? readout : null),
+  };
+  try {
+    withRaf(() => {
+      const store = makeStore({ tool: "measure", interval: "1m", symbol: "BTCUSDT" });
+      const host = makeHost();
+      const m = createMeasure({ store, bus: { on() {}, emit() {} }, host, config: {} });
+      m.attach();
+      chartEl.fire("pointerdown", ev(10, 100));
+      chartEl.fire("pointermove", ev(60, 140));
+      const before = readout.writes;
+      chartEl.fire("pointerup", ev(60, 140)); // no frame flushed first
+      assert.strictEqual(readout.writes, before + 1, "pointerup writes the final value");
+      assert.match(readout.textContent, /\d/);
+    });
+  } finally { globalThis.document = prevDoc; }
+});
+
+
+// F6 UI #193 (R9): the measure stroke reads the shell --accent token, not a
+// literal, so the light theme stays on-palette. Drive the primitive's renderer
+// directly with a token shim + a recording ctx.
+function renderMeasurePrim(ctx) {
+  return (prim) =>
+    prim.paneViews()[0].renderer().draw({
+      useMediaCoordinateSpace: (cb) => cb({ context: ctx, mediaSize: { width: 300, height: 300 } }),
+    });
+}
+
+test("measure stroke paints with the resolved --accent token, not a literal (R9)", () => {
+  const f = measureFixture();
+  const prevDoc = globalThis.document;
+  const prevGcs = globalThis.getComputedStyle;
+  const strokes = [];
+  const ctx = {
+    save() {}, restore() {}, setLineDash() {}, beginPath() {}, moveTo() {}, lineTo() {},
+    stroke() { strokes.push(ctx.strokeStyle); }, fillRect() {}, fillText() {},
+    set strokeStyle(v) { this._s = v; }, get strokeStyle() { return this._s; },
+    set fillStyle(v) {},
+    font: "", lineWidth: 1, globalAlpha: 1,
+  };
+  try {
+    f.chartEl.fire("pointerdown", ev(10, 100));
+    f.chartEl.fire("pointermove", ev(50, 120));
+    // Override the token shim AFTER the fixture installed its document stub.
+    globalThis.document = { ...prevDoc, documentElement: {} };
+    globalThis.getComputedStyle = () => ({ getPropertyValue: (n) => (n === "--accent" ? "#0969da" : "") });
+    renderMeasurePrim(ctx)(f.host._series._prim);
+    assert.ok(strokes.includes("#0969da"), `measure stroke uses --accent: ${strokes}`);
+    assert.ok(!strokes.includes("#2962ff"), "measure literal must not be painted");
+  } finally {
+    if (prevDoc === undefined) delete globalThis.document; else globalThis.document = prevDoc;
+    if (prevGcs === undefined) delete globalThis.getComputedStyle; else globalThis.getComputedStyle = prevGcs;
+    f.restore();
+  }
+});

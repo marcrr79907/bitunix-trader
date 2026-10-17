@@ -9,6 +9,8 @@
 // the pure measure-core.js; the numbers live in the ``#measure-readout``
 // aria-live DOM node (D8).
 import { measure, formatMeasure } from "../measure-core.js";
+import { token } from "../theme-core.js";
+import { createCoalescer } from "../readout-coalesce-core.js";
 
 export function createMeasure({ store, bus, host, config }) {
   const el = document.getElementById("chart");
@@ -19,6 +21,8 @@ export function createMeasure({ store, bus, host, config }) {
   let drawing = false; // a press-drag is in progress
   let prim = null; // the ONE attached primitive (while a measurement exists)
   let primSeries = null; // the series ``prim`` is currently attached to
+  // F6 UI #192: coalesce drag-frame readout writes to one per animation frame.
+  const readoutCoalescer = createCoalescer(writeReadout);
   let bound = false;
   const c = { chart: null, series: null, requestUpdate: null };
 
@@ -64,7 +68,7 @@ export function createMeasure({ store, bus, host, config }) {
     const y2 = map.y(b.price);
     if (x1 === null || y1 === null || x2 === null || y2 === null) return;
     ctx.save();
-    ctx.strokeStyle = ctx.fillStyle = "#2962ff";
+    ctx.strokeStyle = ctx.fillStyle = token("--accent", "#2962ff");
     ctx.lineWidth = 1;
     ctx.setLineDash([4, 3]);
     ctx.beginPath();
@@ -97,13 +101,17 @@ export function createMeasure({ store, bus, host, config }) {
     primSeries = series;
   }
 
-  // Attach the primitive once (idempotent) and push the readout to the DOM.
-  function ensurePrimitive() {
+  // Attach the primitive once (idempotent), redraw the canvas LIVE, and write
+  // the aria-live DOM. F6 UI #192: a per-move DOM write churns a polite region,
+  // so only an explicit (pointerdown/up) call writes immediately; a drag frame
+  // COALESCES to one write via rAF (the canvas text stays live each move).
+  function ensurePrimitive(immediate) {
     const series = host.getCandleSeries();
     if (!series) return;
     if (!prim) prim = makePrimitive();
     bindPrim();
-    writeReadout();
+    if (immediate) readoutCoalescer.flush();
+    else readoutCoalescer.schedule();
     if (prim.requestUpdate) prim.requestUpdate();
   }
 
@@ -117,6 +125,7 @@ export function createMeasure({ store, bus, host, config }) {
     drawing = false;
     a = null;
     b = null;
+    readoutCoalescer.cancel();
     if (prim) {
       const series = primSeries || host.getCandleSeries();
       if (series) series.detachPrimitive(prim);
@@ -152,7 +161,7 @@ export function createMeasure({ store, bus, host, config }) {
     a = p;
     b = p;
     drawing = true;
-    ensurePrimitive();
+    ensurePrimitive(true);
     e.preventDefault();
     e.stopPropagation();
   }
@@ -162,11 +171,13 @@ export function createMeasure({ store, bus, host, config }) {
     const p = pointAt(e);
     if (!p) return;
     b = p;
-    ensurePrimitive();
+    ensurePrimitive(false); // canvas live; DOM write coalesced per frame (#192)
   }
 
   function onPointerUp() {
     drawing = false; // the measurement stays readable (no clear on release)
+    // F6 UI #192: flush the final readout so the last value is always announced.
+    if (a) readoutCoalescer.flush();
   }
 
   function onKeyDown(e) {

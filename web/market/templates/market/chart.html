@@ -58,7 +58,8 @@
     <div id="draw-tools" aria-labelledby="drawings-heading"></div>
     <h2 id="measure-heading">Measure</h2>
     <p id="measure-readout" aria-live="polite">–</p>
-    <button type="button" id="position-seed">Position from setup</button>
+    <h2 id="position-heading">Position</h2>
+    <button type="button" id="position-seed" disabled>Position from setup</button>
     <p id="position-readout" aria-live="polite"></p>
     <h2 id="objects-heading">Objects</h2>
     <div id="object-tree" aria-labelledby="objects-heading"></div>
@@ -121,7 +122,8 @@
 <link rel="modulepreload" href="{% url 'market_chart_module_js' name='chart-host-candles' %}">
 <link rel="modulepreload" href="{% url 'market_chart_module_js' name='measure-core' %}">
 <link rel="modulepreload" href="{% url 'market_chart_module_js' name='position-core' %}">
-<link rel="modulepreload" href="{% url 'market_chart_module_js' name='position-draft-core' %}">
+    <link rel="modulepreload" href="{% url 'market_chart_module_js' name='position-draft-core' %}">
+    <link rel="modulepreload" href="{% url 'market_chart_module_js' name='readout-coalesce-core' %}">
 <link rel="modulepreload" href="{% url 'market_chart_module_js' name='main' %}">
 <link rel="modulepreload" href="{% url 'market_controller_js' name='indicators' %}">
 <link rel="modulepreload" href="{% url 'market_controller_js' name='history' %}">
@@ -134,6 +136,7 @@
 <link rel="modulepreload" href="{% url 'market_controller_js' name='object-tree' %}">
 <link rel="modulepreload" href="{% url 'market_controller_js' name='legend' %}">
 <link rel="modulepreload" href="{% url 'market_controller_js' name='preference' %}">
-<link rel="modulepreload" href="{% url 'market_controller_js' name='measure' %}">
+    <link rel="modulepreload" href="{% url 'market_controller_js' name='measure' %}">
+    <link rel="modulepreload" href="{% url 'market_controller_js' name='position-seed' %}">
 <script type="module" src="{% url 'market_chart_js' %}"></script>
 {% endblock %}

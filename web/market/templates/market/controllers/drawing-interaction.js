@@ -10,6 +10,7 @@
 // drawing-interaction-core.js; the brush never writes series data (#68).
 import { grabHandle, applyDrag } from "../drawing-interaction-core.js";
 import { riskReward } from "../position-core.js";
+import { createCoalescer } from "../readout-coalesce-core.js";
 
 // Container-relative pixel for a client coordinate (the ``#chart`` rect is the
 // reference frame; a missing rect degrades to identity, never NaN).
@@ -53,6 +54,10 @@ export function createDrawingInteraction({ store, bus, host, config }) {
   let rows = []; // the latest ``drawings:changed`` rows (shared refs with drawings.js)
   let selectedId = null;
   let readoutId = null; // the id the R:R readout currently announces (bus-driven)
+  // F6 UI #192: coalesce drag-frame readout writes to one per animation frame.
+  const readoutCoalescer = createCoalescer(function (p) {
+    writePositionReadout(p ? p.id : null, p ? p.points : null);
+  });
   let drag = null; // {id, target, lastX, lastY, moved}
   let dialogId = null;
   let bound = false;
@@ -87,6 +92,19 @@ export function createDrawingInteraction({ store, bus, host, config }) {
     positionReadout.textContent = rr === null ? "" : "R:R " + rr.toFixed(2);
   }
 
+  // F6 UI #192: a drag frame at 60fps must not churn the polite region. Coalesce
+  // a live drag refresh to one write per animation frame; a selection / drag-end
+  // write goes through immediately (the announcement is never dropped).
+  function schedulePositionReadout(id, pointsOverride) {
+    readoutId = id;
+    readoutCoalescer.schedule({ id: id, points: pointsOverride });
+  }
+
+  function flushPositionReadout(id, pointsOverride) {
+    readoutId = id;
+    readoutCoalescer.flush({ id: id, points: pointsOverride });
+  }
+
   // Any selection source (pointer, tree, keyboard) announces on the bus, so the
   // readout follows the ONE announcement rather than a second selection copy.
   // Mirror the announcement into ``selectedId`` so a tree-select keeps the
@@ -98,8 +116,13 @@ export function createDrawingInteraction({ store, bus, host, config }) {
 
   // A live row change (drag/style) refreshes the R:R when it touches the
   // announced position; drawings.js already applied the new points to the row.
+  // F6 UI #192: a live drag frame (persist !== true) coalesces per frame; the
+  // drag-end write (persist === true) flushes immediately.
   bus.on("drawing:changed", function (p) {
-    if (p && p.id === readoutId) writePositionReadout(readoutId, p.points);
+    if (!p || p.id !== readoutId) return;
+    const points = p.points;
+    if (p.persist === true) flushPositionReadout(readoutId, points);
+    else schedulePositionReadout(readoutId, points);
   });
 
   // Data<->pixel map for the core. All four functions may return null with no

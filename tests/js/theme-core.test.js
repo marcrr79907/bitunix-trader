@@ -144,6 +144,32 @@ test("optionsFor: no ColorType global still yields a usable solid type", () => {
   }
 });
 
+// --- token (F6 UI #193 / R9) -----------------------------------------------
+
+test("token: reads a resolved custom property from the shell (R9)", () => {
+  const prevDoc = globalThis.document;
+  const prevGcs = globalThis.getComputedStyle;
+  globalThis.document = { documentElement: {} };
+  globalThis.getComputedStyle = () => ({
+    getPropertyValue: (n) => (n === "--up" ? "  #1a7f37  " : ""),
+  });
+  try {
+    assert.strictEqual(core.token("--up", "#26a69a"), "#1a7f37");
+    assert.strictEqual(core.token("--missing", "#26a69a"), "#26a69a");
+  } finally {
+    if (prevDoc === undefined) delete globalThis.document;
+    else globalThis.document = prevDoc;
+    if (prevGcs === undefined) delete globalThis.getComputedStyle;
+    else globalThis.getComputedStyle = prevGcs;
+  }
+});
+
+test("token: without a DOM it falls back to the literal and never throws", () => {
+  assert.strictEqual(core.token("--up", "#26a69a"), "#26a69a");
+  assert.strictEqual(core.token("--dn", "#ef5350"), "#ef5350");
+  assert.doesNotThrow(() => core.token("--accent", null));
+});
+
 // --- contrast / determinism / purity ---------------------------------------
 
 test("contrast: axis text vs background >= 4.5:1 in both themes", () => {
