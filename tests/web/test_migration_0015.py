@@ -46,6 +46,13 @@ def _up_to_latest():
     _migrate(MigrationExecutor(connection).loader.graph.leaf_nodes())
 
 
+def _up_to_0015():
+    """All apps at their leaf, except ``trading`` pinned to 0015 (the migration
+    under test). ``0016`` landed after it, so "latest" no longer means 0015."""
+    leaves = MigrationExecutor(connection).loader.graph.leaf_nodes()
+    _migrate([_AFTER if app == "trading" else (app, name) for app, name in leaves])
+
+
 def _trading_leaf() -> str:
     """Latest APPLIED ``trading`` migration (graph leaves ignore applied state)."""
     applied = MigrationRecorder(connection).applied_migrations()
@@ -83,8 +90,8 @@ def test_0015_adds_position_choice_forward_then_reverses_without_data_loss():
         email="mig0015@example.com", password="pw-123456"
     )
     try:
-        # Pre-state: the migration is the latest leaf; every prior kind seeded.
-        _up_to_latest()
+        # Pre-state: the migration under test is applied; every prior kind seeded.
+        _up_to_0015()
         assert _trading_leaf() == _AFTER[1]
 
         _down_to_0014()
@@ -93,7 +100,7 @@ def test_0015_adds_position_choice_forward_then_reverses_without_data_loss():
             _seed_row(user.pk, kind)
 
         # Forward: ``position`` becomes a selectable kind; no row is touched.
-        _up_to_latest()
+        _up_to_0015()
         assert "position" in Drawing.Kind.values
         assert _kinds() == sorted(_PRIOR_KINDS)
 
