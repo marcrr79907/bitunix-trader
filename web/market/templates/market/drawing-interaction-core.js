@@ -11,6 +11,7 @@
 // null conversion so a drag can never emit null (which the API would 400).
 import { hitTest } from "./drawing-core.js";
 import { positionBox, positionHandles } from "./position-core.js";
+import * as Tools from "./drawing-tools-core.js";
 
 const HANDLE_RADIUS = 6;
 const BODY_RADIUS = 4;
@@ -39,6 +40,9 @@ function handlesFor(kind, points, map) {
     };
     if (kind === "hline") {
       add("price", 0, map.y(points.price));
+    } else if (Tools.NEW_KINDS.indexOf(kind) !== -1) {
+      // F9 S3 (R10): ONE guard — the eight new kinds own their handles.
+      return Tools.toolHandles(kind, points, map);
     } else if (kind === "trendline" || kind === "fib") {
       const a = anchorPx(points.p1, map);
       const b = anchorPx(points.p2, map);
@@ -106,6 +110,8 @@ function grabHandle(rows, x, y, map, radius) {
 // Per-kind body proximity (BODY_RADIUS unless noted).
 function bodyHit(row, x, y, map) {
   const p = row.points || {};
+  // F9 S3 (R10): ONE guard — the eight new kinds own their body hit-test.
+  if (Tools.NEW_KINDS.indexOf(row.kind) !== -1) return Tools.toolBodyHit(row.kind, p, x, y, map);
   if (row.kind === "hline") {
     const y2 = map.y(p.price);
     return y2 !== null && y2 !== undefined && Math.abs(y - y2) <= BODY_RADIUS;
@@ -164,6 +170,14 @@ function applyDrag(row, target, dxPx, dyPx, map) {
     const points = (row && row.points) || {};
     const out = JSON.parse(JSON.stringify(points));
     const kind = row && row.kind;
+
+    // F9 S3 (R10): ONE guard — the eight new kinds own their drag transform.
+    // ``target`` arrives as a handle index (grabHandle contract); resolve it to
+    // the descriptor's anchor id via the same handle list.
+    if (Tools.NEW_KINDS.indexOf(kind) !== -1) {
+      const slug = target === "body" ? "body" : (Tools.toolHandles(kind, points, map)[target] || {}).id;
+      return Tools.toolDrag(kind, points, slug, dxPx, dyPx, map);
+    }
 
     if (kind === "hline") {
       out.price = moveValue(map.y(points.price), dyPx, map.price, points.price);

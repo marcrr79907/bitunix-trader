@@ -80,7 +80,7 @@ test("renders a vertical role=toolbar with one role=group per tool group", () =>
       toolbar.children.map((g) => g.getAttribute("aria-label")),
       ["Lines", "Fib", "Shapes", "Text", "Measure", "Positions"],
     );
-    assert.strictEqual(buttonsOf(mount).length, 7);
+    assert.strictEqual(buttonsOf(mount).length, 15);
   } finally { restore(); }
 });
 
@@ -134,7 +134,7 @@ test("each tool button carries an aria-keyshortcuts value (R1 delta, F7)", () =>
   try {
     createDrawToolbar({ store: makeStore({ tool: null }) });
     const btns = buttonsOf(mount);
-    assert.strictEqual(btns.length, 7);
+    assert.strictEqual(btns.length, 15);
     for (const b of btns) {
       assert.strictEqual(
         b.getAttribute("aria-keyshortcuts"),
@@ -172,13 +172,13 @@ test("roving tabindex: exactly one 0, the rest -1; ArrowDown moves focus (R3)", 
     createDrawToolbar({ store: makeStore({ tool: null }) });
     const btns = buttonsOf(mount);
     assert.strictEqual(btns.filter((b) => b.getAttribute("tabindex") === "0").length, 1);
-    assert.strictEqual(btns.filter((b) => b.getAttribute("tabindex") === "-1").length, 6);
+    assert.strictEqual(btns.filter((b) => b.getAttribute("tabindex") === "-1").length, 14);
     btns[0].focus();
     btns[0].keydown("ArrowDown");
     assert.strictEqual(globalThis.document.activeElement, btns[1]);
     btns[1].keydown("End");
-    assert.strictEqual(globalThis.document.activeElement, btns[6]);
-    btns[6].keydown("Home");
+    assert.strictEqual(globalThis.document.activeElement, btns[14]);
+    btns[14].keydown("Home");
     assert.strictEqual(globalThis.document.activeElement, btns[0]);
   } finally { restore(); }
 });
@@ -234,3 +234,53 @@ test("a letter typed in a text field inside #chart is ignored (R3)", () => {
 function keyEventish(key) {
   return { key, _pd: false, preventDefault() { this._pd = true; } };
 }
+
+// --- F9 letters (F9 S3 R1/R3) -------------------------------------------------
+
+test("TOOL_KEYS gains the eight F9 letters with no collision (R1 delta)", () => {
+  assert.deepStrictEqual(
+    {
+      ray: TOOL_KEYS.ray, vline: TOOL_KEYS.vline, channel: TOOL_KEYS.channel,
+      price: TOOL_KEYS.price, callout: TOOL_KEYS.callout, fib_ext: TOOL_KEYS.fib_ext,
+      fib_time: TOOL_KEYS.fib_time, fib_zone: TOOL_KEYS.fib_zone,
+    },
+    { ray: "A", vline: "I", channel: "C", price: "U",
+      callout: "O", fib_ext: "E", fib_time: "W", fib_zone: "Z" },
+  );
+  // No collision with the pre-F9 letters H/T/F/R/X/M/P or the tree's v/l/s.
+  const letters = Object.values(TOOL_KEYS).map((s) => s.toLowerCase());
+  assert.strictEqual(new Set(letters).size, letters.length);
+  ["h", "t", "f", "r", "x", "m", "p", "v", "l", "s"].forEach((treeLetter) => {
+    const f9 = ["a", "i", "c", "u", "o", "e", "w", "z"];
+    assert.ok(!f9.includes(treeLetter), treeLetter);
+  });
+});
+
+test("an F9 letter fires inside #chart and activates its tool (R3)", () => {
+  const mount = makeEl("div");
+  const chart = makeEl("section");
+  const store = makeStore({ tool: null });
+  const restore = installDom(mount, chart);
+  try {
+    createDrawToolbar({ store });
+    chart.keydown("c"); // TOOL_KEYS.channel
+    assert.strictEqual(store.get().tool, "channel");
+    chart.keydown("z"); // TOOL_KEYS.fib_zone
+    assert.strictEqual(store.get().tool, "fib_zone");
+  } finally { restore(); }
+});
+
+test("every F9 tool button shows its own letter (R1)", () => {
+  const mount = makeEl("div");
+  const restore = installDom(mount);
+  try {
+    createDrawToolbar({ store: makeStore({ tool: null }) });
+    const f9 = ["ray", "vline", "channel", "price", "callout", "fib_ext", "fib_time", "fib_zone"];
+    for (const kind of f9) {
+      const b = buttonsOf(mount).find((x) => x.dataset.kind === kind);
+      assert.ok(b, `${kind} button`);
+      assert.strictEqual(b.getAttribute("aria-keyshortcuts"), TOOL_KEYS[kind], kind);
+      assert.strictEqual(toolKeyOf(b).textContent, TOOL_KEYS[kind], kind);
+    }
+  } finally { restore(); }
+});

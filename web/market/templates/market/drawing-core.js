@@ -8,9 +8,14 @@
 // The adapter (chart.js) owns the chart, the fetch/DOM, and the v5 primitives;
 // it delegates every coordinate/geometry/round-trip decision here so the logic
 // is deterministically testable without a canvas.
+import * as Tools from "./drawing-tools-core.js";
 
 // Mirrors Drawing.Kind on the server (the model is the source of truth).
-var DRAWING_KINDS = ["hline", "trendline", "fib", "rect", "text", "position"];
+var DRAWING_KINDS = [
+  "hline", "trendline", "fib", "rect", "text", "position",
+  // F9 S3: the eight new kinds (geometry lives in drawing-tools-core).
+  "ray", "vline", "channel", "price", "callout", "fib_ext", "fib_time", "fib_zone",
+];
 
 // Default fib ratios (TradingView's seven) and per-kind style seed.
 var FIB_RATIOS = [0, 0.236, 0.382, 0.5, 0.618, 0.786, 1];
@@ -26,6 +31,8 @@ var COLORS = {
 };
 
 function defaultStyle(kind) {
+  // F9 S3: one guard — the eight new kinds delegate to the descriptor map.
+  if (Tools.NEW_KINDS.indexOf(kind) !== -1) return Tools.defaultToolStyle(kind);
   if (kind === "fib") return { color: COLORS.fib, lineWidth: 1, levels: FIB_RATIOS.slice() };
   if (kind === "rect") return { color: COLORS.rect, lineWidth: 1, fill: true };
   if (kind === "text") return { color: COLORS.text, fontSize: 14 };
