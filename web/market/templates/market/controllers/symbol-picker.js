@@ -19,6 +19,7 @@ export function createSymbolPicker({ store, bus, config }) {
   const input = document.getElementById("symbol-search");
   const list = document.getElementById("symbol-results");
   const status = document.getElementById("symbol-status");
+  const empty = document.getElementById("symbol-empty");
   if (!input || !list) return { refresh: function () {} };
 
   let universe = [];
@@ -194,6 +195,10 @@ export function createSymbolPicker({ store, bus, config }) {
       // A failed catalog fetch still leaves the server-rendered default list
       // searchable (the picker never leaves the user with nothing).
       if (!universe.length) universe = (config.symbols || []).slice();
+      // Never leave the search silently unusable: say so, and disable the input.
+      if (empty) empty.hidden = universe.length > 0;
+      input.disabled = universe.length === 0;
+      if (!universe.length) announce("No symbols available right now");
     });
   }
 

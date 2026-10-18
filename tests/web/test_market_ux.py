@@ -586,3 +586,13 @@ def test_f11_toolbar_delegation_is_untouched(logged_in_client):
     # R20: toolbar.js must remain byte-identical (it owns the .pair handler).
     body = logged_in_client.get("/market/controllers/toolbar.js").content
     assert b'document.querySelectorAll(".pair")' in body
+
+
+def test_f11_search_has_an_empty_state_and_a_labelled_input(logged_in_client):
+    # /impeccable: a failed catalog leaves an explained, disabled search rather
+    # than a blank section; the input is programmatically labelled.
+    body = logged_in_client.get("/market/").content.decode()
+
+    assert 'id="symbol-empty"' in body
+    assert 'aria-labelledby="symbols-heading"' in body
+    assert '<label class="visually-hidden" for="symbol-search">' in body

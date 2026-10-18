@@ -146,7 +146,8 @@ code{font-family:var(--mono); background:var(--surface); padding:1px 5px; border
 .symbol-results li[aria-selected=true]{background:var(--border); color:var(--text)}
 .symbol-follow{background:var(--surface); border:1px solid var(--border); color:var(--muted);
   border-radius:var(--r); min-width:32px; min-height:32px; line-height:1; padding:0}
-.symbol-follow:disabled{color:var(--up); cursor:default}
+.symbol-follow[aria-pressed=true]{color:var(--text); font-weight:700}
+.symbol-empty{margin:0; color:var(--muted); font-size:var(--fs-3)}
 .pairs{display:flex; flex-wrap:wrap; gap:var(--sp-2)}
 .pairs .pair{background:var(--surface); border:1px solid var(--border); color:var(--text)}
 .indicators{display:flex; flex-direction:column; gap:var(--sp-1);
