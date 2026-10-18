@@ -139,14 +139,22 @@ export function createAlerts({ store, bus, host, config }) {
     errorEl.hidden = false;
   }
 
+  // Apply runs inside the dialog's ``close`` handler, so the dialog is already
+  // shut when the response lands. An error written into a closed dialog is zero
+  // feedback (#233): every failure RE-OPENS it. The typed level is untouched.
+  function fail(text) {
+    showError(text);
+    if (dialog) dialog.showModal();
+    if (levelInput) levelInput.focus();
+  }
+
   // Apply writes ONE request through the pure condition core; a null condition
   // is the "do not POST" signal and re-opens the dialog with the reason.
   function apply() {
     const level = Cond.levelFromInput(levelInput ? levelInput.value : "");
     const condition = Cond.conditionFrom({ op: opInput ? opInput.value : "", level: level });
     if (!condition) {
-      showError("Enter a price above 0");
-      if (dialog) dialog.showModal();
+      fail("Enter a price above 0");
       return;
     }
     const target = nearRule();
@@ -160,11 +168,11 @@ export function createAlerts({ store, bus, host, config }) {
     })
       .then(function (r) {
         return r.json().then(function (b) {
-          if (!r.ok) return showError((b && b.error) || "Could not save the alert");
+          if (!r.ok) return fail((b && b.error) || "Could not save the alert");
           return refresh();
         });
       })
-      .catch(function () { showError("Network error — the alert was not saved"); });
+      .catch(function () { fail("Network error — the alert was not saved"); });
   }
 
   if (dialog) {

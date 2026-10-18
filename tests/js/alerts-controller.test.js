@@ -92,12 +92,16 @@ function installDom() {
     },
   };
   const requests = [];
+  // A write hook lets a test simulate a 400 body or a network rejection
+  // without touching the GET path the build fetch depends on.
+  let onWrite = null;
   globalThis.fetch = (url, opts) => {
     const method = (opts && opts.method) || "GET";
     requests.push({ url, method, body: opts && opts.body ? JSON.parse(opts.body) : null });
     if (method === "GET") {
       return Promise.resolve({ ok: true, json: () => Promise.resolve({ alerts: rows }) });
     }
+    if (onWrite) return onWrite({ url, method, opts });
     return Promise.resolve({
       ok: true,
       json: () => Promise.resolve({ id: 9, condition: JSON.parse(opts.body).condition }),
@@ -107,6 +111,7 @@ function installDom() {
   return {
     els, requests, handles,
     seed(next) { rows = next; },
+    failWrite(fn) { onWrite = fn; },
     restore() {
       globalThis.document = prevDoc;
       globalThis.LightweightCharts = prevLwc;
@@ -254,6 +259,55 @@ test("Cancel writes nothing and returns focus to #chart", async () => {
     await settle();
     assert.strictEqual(f.dom.requests.filter((r) => r.method !== "GET").length, 0);
     assert.strictEqual(globalThis.document.activeElement, f.dom.els.chart);
+  } finally { f.dom.restore(); }
+});
+
+// --- F10 UI #233: a failed Apply must be visible ----------------------------
+//
+// Apply runs in the dialog's ``close`` handler, so the dialog is already shut
+// when the request resolves. Writing the error into the (closed) dialog is
+// zero feedback: every failure must re-open it with the message, keeping the
+// level the user typed.
+
+test("a 400 response re-opens the dialog with the server error visible (#233)", async () => {
+  const f = fixture();
+  f.dom.failWrite(() =>
+    Promise.resolve({
+      ok: false,
+      status: 400,
+      json: () => Promise.resolve({ error: "invalid condition" }),
+    }),
+  );
+  try {
+    f.host.move({ point: { x: 10, y: 100 } });
+    const bell = f.dom.els.chart.children.find((c) => c.id === "chart-alert-bell");
+    bell.click();
+    f.dom.els["alert-level"].value = "123.5";
+    f.dom.els["alert-dialog"].close("ok");
+    await settle();
+
+    assert.strictEqual(f.dom.requests.filter((r) => r.method === "POST").length, 1);
+    assert.strictEqual(f.dom.els["alert-dialog"].open, true, "the dialog re-opens");
+    assert.strictEqual(f.dom.els["alert-error"].hidden, false);
+    assert.strictEqual(f.dom.els["alert-error"].textContent, "invalid condition");
+    assert.strictEqual(f.dom.els["alert-level"].value, "123.5", "the typed level is kept");
+    assert.strictEqual(globalThis.document.activeElement, f.dom.els["alert-level"]);
+  } finally { f.dom.restore(); }
+});
+
+test("a network rejection re-opens the dialog with the error visible (#233)", async () => {
+  const f = fixture();
+  f.dom.failWrite(() => Promise.reject(new Error("offline")));
+  try {
+    f.host.move({ point: { x: 10, y: 100 } });
+    const bell = f.dom.els.chart.children.find((c) => c.id === "chart-alert-bell");
+    bell.click();
+    f.dom.els["alert-dialog"].close("ok");
+    await settle();
+
+    assert.strictEqual(f.dom.els["alert-dialog"].open, true);
+    assert.strictEqual(f.dom.els["alert-error"].hidden, false);
+    assert.match(f.dom.els["alert-error"].textContent, /Network error/);
   } finally { f.dom.restore(); }
 });
 
