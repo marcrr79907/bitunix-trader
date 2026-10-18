@@ -340,3 +340,277 @@ def test_alerts_post_missing_interval_key_is_400():
     response = _post(USER, body)
     assert response.status_code == 400
     assert AlertRule.objects.count() == 0
+
+
+# --- PUT /market/api/alerts/<id> (partial, immutable pair) ------------------
+
+
+def _detail_url(rule_id):
+    return f"{ALERTS_URL}/{rule_id}"
+
+
+def _put(client, rule_id, payload):
+    return client.put(
+        _detail_url(rule_id),
+        data=json.dumps(payload),
+        content_type="application/json",
+    )
+
+
+def test_alert_put_condition_updates_only_that_field():
+    rule = _rule(AUTH_USER, telegram_chat_id="7", is_active=False)
+
+    response = _put(
+        USER,
+        rule.id,
+        {"condition": {"type": "price", "op": "below", "level": 42000}},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["condition"] == {
+        "type": "price",
+        "op": "below",
+        "level": 42000.0,
+    }
+    rule.refresh_from_db()
+    assert rule.condition == {"type": "price", "op": "below", "level": 42000.0}
+    assert rule.is_active is False  # untouched
+    assert rule.telegram_chat_id == "7"  # untouched
+
+
+def test_alert_put_is_active_updates_only_that_field():
+    rule = _rule(AUTH_USER)
+
+    response = _put(USER, rule.id, {"is_active": False})
+
+    assert response.status_code == 200
+    assert response.json()["is_active"] is False
+    rule.refresh_from_db()
+    assert rule.is_active is False
+    assert rule.condition == {"type": "price", "op": "above", "level": 100.0}
+
+
+def test_alert_put_telegram_chat_id_updates_only_that_field():
+    rule = _rule(AUTH_USER)
+
+    response = _put(USER, rule.id, {"telegram_chat_id": "123456"})
+
+    assert response.status_code == 200
+    assert response.json()["telegram_chat_id"] == "123456"
+    rule.refresh_from_db()
+    assert rule.telegram_chat_id == "123456"
+    assert rule.is_active is True
+
+
+def test_alert_put_equal_symbol_and_interval_are_accepted_and_ignored():
+    rule = _rule(AUTH_USER)
+
+    response = _put(
+        USER,
+        rule.id,
+        {"symbol": "BTCUSDT", "interval": "1h", "is_active": False},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["is_active"] is False
+    rule.refresh_from_db()
+    assert (rule.symbol, rule.interval) == ("BTCUSDT", "1h")
+
+
+@pytest.mark.parametrize(
+    "override,message",
+    [
+        ({"symbol": "ETHUSDT"}, "symbol is immutable"),
+        ({"interval": "5m"}, "interval is immutable"),
+    ],
+    ids=["symbol", "interval"],
+)
+def test_alert_put_immutable_pair_is_400_and_writes_nothing(override, message):
+    rule = _rule(AUTH_USER)
+    body = {"condition": {"type": "price", "op": "below", "level": 9}}
+    body.update(override)
+
+    response = _put(USER, rule.id, body)
+
+    assert response.status_code == 400
+    assert response.json() == {"error": message}
+    rule.refresh_from_db()
+    assert rule.symbol == "BTCUSDT"
+    assert rule.interval == "1h"
+    assert rule.condition == {"type": "price", "op": "above", "level": 100.0}
+
+
+@pytest.mark.parametrize(
+    "condition",
+    [
+        {"type": "magic"},
+        {"type": "price", "op": "above", "level": "abc"},
+        "not-an-object",
+    ],
+    ids=["unknown-type", "non-numeric", "not-object"],
+)
+def test_alert_put_bad_condition_is_400_and_writes_nothing(condition):
+    rule = _rule(AUTH_USER)
+
+    response = _put(USER, rule.id, {"condition": condition})
+
+    assert response.status_code == 400
+    assert "error" in response.json()
+    rule.refresh_from_db()
+    assert rule.condition == {"type": "price", "op": "above", "level": 100.0}
+
+
+@pytest.mark.parametrize("is_active", ["true", 1, 0, None], ids=str)
+def test_alert_put_non_bool_is_active_is_400_and_writes_nothing(is_active):
+    rule = _rule(AUTH_USER)
+
+    response = _put(USER, rule.id, {"is_active": is_active})
+
+    assert response.status_code == 400
+    assert response.json() == {"error": "is_active must be a boolean"}
+    rule.refresh_from_db()
+    assert rule.is_active is True
+
+
+def test_alert_put_non_str_or_over_64_chat_id_is_400():
+    rule = _rule(AUTH_USER)
+
+    assert _put(USER, rule.id, {"telegram_chat_id": 42}).status_code == 400
+    assert _put(USER, rule.id, {"telegram_chat_id": "9" * 65}).status_code == 400
+    rule.refresh_from_db()
+    assert rule.telegram_chat_id == ""
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [{}, {"symbol": "BTCUSDT"}],
+    ids=["empty-body", "no-updatable-field"],
+)
+def test_alert_put_without_updatable_field_is_400(payload):
+    rule = _rule(AUTH_USER)
+
+    response = _put(USER, rule.id, payload)
+
+    assert response.status_code == 400
+    assert response.json() == {"error": "no updatable field"}
+
+
+def test_alert_put_invalid_json_and_non_object_body_are_400():
+    rule = _rule(AUTH_USER)
+
+    bad_json = USER.put(
+        _detail_url(rule.id), data="not-json", content_type="application/json"
+    )
+    non_object = USER.put(
+        _detail_url(rule.id), data="[1, 2]", content_type="application/json"
+    )
+
+    assert bad_json.status_code == 400
+    assert non_object.status_code == 400
+    rule.refresh_from_db()
+    assert rule.condition == {"type": "price", "op": "above", "level": 100.0}
+
+
+def test_alert_put_miss_is_404():
+    response = _put(USER, 999999, {"is_active": False})
+    assert response.status_code == 404
+    assert "error" in response.json()
+
+
+def test_alert_put_anonymous_redirects_to_login():
+    response = _put(ANON, 1, {"is_active": False})
+    assert response.status_code == 302
+    assert response.url.startswith("/login/")
+
+
+def test_alert_put_requires_csrf():
+    rule = _rule(AUTH_USER)
+    enforcing = Client(enforce_csrf_checks=True)
+    enforcing.force_login(AUTH_USER)
+
+    response = enforcing.put(
+        _detail_url(rule.id),
+        data=json.dumps({"is_active": False}),
+        content_type="application/json",
+    )
+
+    assert response.status_code == 403
+    rule.refresh_from_db()
+    assert rule.is_active is True
+
+
+def test_alert_put_b_of_a_id_is_404_and_a_unchanged():
+    from django.contrib.auth import get_user_model
+
+    rule = _rule(AUTH_USER)
+
+    b_client = Client()
+    b = get_user_model().objects.create_user(
+        email="alerts-putb@example.com", password="pw-123456"
+    )
+    b_client.force_login(b)
+
+    response = _put(b_client, rule.id, {"is_active": False})
+
+    assert response.status_code == 404
+    rule.refresh_from_db()
+    assert rule.is_active is True
+    assert rule.condition == {"type": "price", "op": "above", "level": 100.0}
+
+
+# --- DELETE /market/api/alerts/<id> -----------------------------------------
+
+
+def test_alert_delete_own_removes_the_row():
+    rule = _rule(AUTH_USER)
+
+    response = USER.delete(_detail_url(rule.id))
+
+    assert response.status_code == 204
+    assert response.content == b""
+    assert not AlertRule.objects.filter(pk=rule.id).exists()
+
+    body = USER.get(f"{ALERTS_URL}?symbol=BTCUSDT&interval=1h").json()
+    assert body["alerts"] == []
+
+
+def test_alert_delete_miss_is_404():
+    response = USER.delete(_detail_url(999999))
+    assert response.status_code == 404
+    assert "error" in response.json()
+
+
+def test_alert_delete_anonymous_redirects_to_login():
+    response = ANON.delete(_detail_url(1))
+    assert response.status_code == 302
+    assert response.url.startswith("/login/")
+
+
+def test_alert_delete_requires_csrf():
+    rule = _rule(AUTH_USER)
+    enforcing = Client(enforce_csrf_checks=True)
+    enforcing.force_login(AUTH_USER)
+
+    response = enforcing.delete(_detail_url(rule.id))
+
+    assert response.status_code == 403
+    assert AlertRule.objects.filter(pk=rule.id).exists()
+
+
+def test_alert_delete_b_of_a_id_is_404_and_a_row_survives():
+    from django.contrib.auth import get_user_model
+
+    rule = _rule(AUTH_USER)
+
+    b_client = Client()
+    b = get_user_model().objects.create_user(
+        email="alerts-delb@example.com", password="pw-123456"
+    )
+    b_client.force_login(b)
+
+    response = b_client.delete(_detail_url(rule.id))
+
+    assert response.status_code == 404
+    assert AlertRule.objects.filter(pk=rule.id).exists()
+    rule.refresh_from_db()
+    assert rule.condition == {"type": "price", "op": "above", "level": 100.0}

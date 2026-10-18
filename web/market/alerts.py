@@ -15,7 +15,7 @@ from __future__ import annotations
 import json
 
 from django.contrib.auth.decorators import login_required
-from django.http import HttpRequest, JsonResponse
+from django.http import HttpRequest, HttpResponse, JsonResponse
 from django.views.decorators.http import require_http_methods
 from trading.candles import CANDLE_INTERVALS
 from trading.models import AlertRule
@@ -114,3 +114,69 @@ def api_alerts(request: HttpRequest) -> JsonResponse:
             "alerts": [_row(r) for r in rows],
         }
     )
+
+
+@login_required
+@require_http_methods(["PUT", "DELETE"])
+def api_alert_detail(request: HttpRequest, id: int) -> HttpResponse:
+    """PUT updates / DELETE removes one alert rule by id (R10/R11).
+
+    Both verbs resolve the row through ``AlertRule.for_user(request.user)`` — an
+    id-only lookup MUST NOT be used. A miss (including another user's id) is a
+    404, so existence is never leaked. PUT is PARTIAL: ``symbol``/``interval``
+    are immutable (a differing value → 400, mirroring ``_put_drawing``),
+    ``condition`` is re-validated with ``parse_condition`` BEFORE any write, and
+    only the provided fields are persisted.
+    """
+    rule = AlertRule.for_user(request.user).filter(pk=id).first()
+    if rule is None:
+        return JsonResponse({"error": "not found"}, status=404)
+    if request.method == "DELETE":
+        rule.delete()
+        return HttpResponse(status=204)
+    return _put_alert(request, rule)
+
+
+_UPDATABLE = ("condition", "is_active", "telegram_chat_id")
+
+
+def _put_alert(request: HttpRequest, rule: AlertRule) -> JsonResponse:
+    try:
+        body = json.loads(request.body or b"{}")
+    except json.JSONDecodeError:
+        return JsonResponse({"error": "invalid JSON"}, status=400)
+    if not isinstance(body, dict):
+        return JsonResponse({"error": "invalid body"}, status=400)
+
+    # A rule is pair-scoped: moving it would silently leave the worker's group.
+    for field in ("symbol", "interval"):
+        if field in body and body[field] != getattr(rule, field):
+            return JsonResponse({"error": f"{field} is immutable"}, status=400)
+
+    if not any(field in body for field in _UPDATABLE):
+        return JsonResponse({"error": "no updatable field"}, status=400)
+
+    changed = []
+    if "condition" in body:
+        try:
+            rule.condition = parse_condition(body["condition"])
+        except ValueError as exc:
+            return JsonResponse({"error": str(exc)}, status=400)
+        changed.append("condition")
+
+    if "is_active" in body:
+        # ``True`` is an ``int``: require a real bool, not truthiness.
+        if not isinstance(body["is_active"], bool):
+            return JsonResponse({"error": "is_active must be a boolean"}, status=400)
+        rule.is_active = body["is_active"]
+        changed.append("is_active")
+
+    if "telegram_chat_id" in body:
+        chat_id = body["telegram_chat_id"]
+        if not isinstance(chat_id, str) or len(chat_id) > _CHAT_ID_MAX:
+            return JsonResponse({"error": "invalid telegram_chat_id"}, status=400)
+        rule.telegram_chat_id = chat_id
+        changed.append("telegram_chat_id")
+
+    rule.save(update_fields=changed)
+    return JsonResponse(_row(rule))
