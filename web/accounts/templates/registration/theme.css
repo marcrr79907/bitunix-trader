@@ -14,6 +14,11 @@
   /* Object-tree state tokens (F5 S3 / R10): selected row border, hidden eye/
      row tint, locked control. Declared in BOTH sets (no name missing). */
   --tree-selected:#8b949e; --tree-hidden:#8b949e; --tree-locked:#ffb74d;
+  /* F9 drawing palette (R9): one distinct token per kind, canvas-read via
+     theme-core.token. Strokes >=3:1 and fib labels >=4.5:1 vs the dark bg. */
+  --draw-ray:#ffb74d; --draw-vline:#82b1ff; --draw-channel:#80cbc4;
+  --draw-price:#ff8a80; --draw-callout:#e6edf3; --draw-fib-ext:#b388ff;
+  --draw-fib-time:#4dd0e1; --draw-fib-zone:#ce93d8;
 }
 
 /* Light palette (R1): selected by [data-theme="light"] on the root. Declares
@@ -29,6 +34,11 @@
   --r:8px; --mono:ui-monospace,SFMono-Regular,Menlo,monospace;
   --chart-text:#1f2328; --chart-connector:#616161;
   --tree-selected:#57606a; --tree-hidden:#57606a; --tree-locked:#9a6700;
+  /* F9 drawing palette, light set: accessible on #ffffff (strokes >=3:1,
+     fib labels >=4.5:1). Distinct from the existing hline/trendline colours. */
+  --draw-ray:#c2410c; --draw-vline:#0550ae; --draw-channel:#0f766e;
+  --draw-price:#b91c1c; --draw-callout:#24292f; --draw-fib-ext:#6f42c1;
+  --draw-fib-time:#0e7490; --draw-fib-zone:#7b1fa2;
 }
 
 *{box-sizing:border-box}
