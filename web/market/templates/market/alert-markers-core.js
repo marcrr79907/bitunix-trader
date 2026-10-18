@@ -60,6 +60,9 @@ export function summaryOf(rules) {
 // whose last_fired_at is off-series or unusable yields no marker — LWC v5 would
 // discard it anyway, and faking the newest-candle time would misplace it. The
 // fired state stays visible on the /signals/ pair badge.
+// Armed rules all share the newest-candle anchor, so their labels would stack
+// on one pixel row (F10 UI #234): one marker per DISTINCT level, and a level
+// shared by several rules carries its count (``A 100×3``).
 // `colors` ({armed, fired}) is optional: the controller passes the shell tokens
 // it resolved at render time; a missing/invalid entry falls back to COLORS.
 export function markersFor(rules, anchorTime, colors) {
@@ -69,6 +72,8 @@ export function markersFor(rules, anchorTime, colors) {
   var armedColor = colorOf(map.armed, COLORS.armed);
   var anchor = num(anchorTime);
   var out = [];
+  var armed = []; // insertion order -> stable label order
+  var armedIndex = {};
   for (var i = 0; i < rules.length; i++) {
     var rule = rules[i];
     if (!rule || typeof rule !== "object") continue;
@@ -77,15 +82,36 @@ export function markersFor(rules, anchorTime, colors) {
     var condition = rule.condition;
     var level = condition && typeof condition === "object" ? num(condition.level) : null;
     if (level === null) continue;
-    var fired = state === "fired";
-    var time = fired ? num(rule.last_fired_at) : anchor;
-    if (time === null) continue; // off-series / missing anchor -> drop
+    if (state === "fired") {
+      var firedTime = num(rule.last_fired_at);
+      if (firedTime === null) continue; // off-series / missing anchor -> drop
+      out.push({
+        time: firedTime,
+        position: "aboveBar",
+        shape: "arrowDown",
+        text: "F " + level,
+        color: firedColor,
+      });
+      continue;
+    }
+    if (anchor === null) continue; // no armed anchor -> drop
+    var key = String(level);
+    if (armedIndex[key] === undefined) {
+      armedIndex[key] = armed.push({ level: level, count: 1 }) - 1;
+    } else {
+      armed[armedIndex[key]].count += 1;
+    }
+  }
+  for (var j = 0; j < armed.length; j++) {
+    var entry = armed[j];
+    var text = "A " + entry.level;
+    if (entry.count > 1) text += "\u00d7" + entry.count;
     out.push({
-      time: time,
-      position: fired ? "aboveBar" : "belowBar",
-      shape: fired ? "arrowDown" : "circle",
-      text: (fired ? "F " : "A ") + level,
-      color: fired ? firedColor : armedColor,
+      time: anchor,
+      position: "belowBar",
+      shape: "circle",
+      text: text,
+      color: armedColor,
     });
   }
   return out;

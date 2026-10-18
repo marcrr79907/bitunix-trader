@@ -130,6 +130,45 @@ test("markersFor: never throws and never mutates the input", () => {
   assert.deepStrictEqual(rules, snapshot);
 });
 
+// --- armed markers collide (F10 UI #234, item 3) -----------------------------
+//
+// N armed rules share the newest-candle time (a marker time is one data point),
+// so N labels stack on the same pixel row. Aggregate the armed rules into ONE
+// marker per distinct level, and when several rules share a level render a
+// single label carrying the count (``A 100×3``) instead of N overlapping ones.
+
+test("markersFor: armed rules at the same level collapse into one counted label", () => {
+  const rules = [
+    { condition: { level: 100 }, is_active: true, last_fired_at: null },
+    { condition: { level: 100 }, is_active: true, last_fired_at: null },
+    { condition: { level: 100 }, is_active: true, last_fired_at: null },
+  ];
+  const out = markersFor(rules, ANCHOR);
+  assert.strictEqual(out.length, 1, "one marker, not three");
+  assert.strictEqual(out[0].text, "A 100\u00d73");
+});
+
+test("markersFor: armed rules at distinct levels keep one labeled marker each", () => {
+  const rules = [
+    { condition: { level: 100 }, is_active: true, last_fired_at: null },
+    { condition: { level: 80 }, is_active: true, last_fired_at: null },
+  ];
+  const out = markersFor(rules, ANCHOR);
+  assert.deepStrictEqual(out.map((m) => m.text), ["A 100", "A 80"]);
+});
+
+test("markersFor: a level shared by armed and fired stays two markers", () => {
+  // Fired anchors its own time; only the armed bucket is aggregated.
+  const rules = [
+    { condition: { level: 100 }, is_active: true, last_fired_at: 1729220400 },
+    { condition: { level: 100 }, is_active: true, last_fired_at: null },
+  ];
+  const out = markersFor(rules, ANCHOR);
+  assert.strictEqual(out.length, 2);
+  assert.strictEqual(out[0].text, "F 100");
+  assert.strictEqual(out[1].text, "A 100");
+});
+
 // --- colors are injected (F10 UI #232) ---------------------------------------
 //
 // The core stays pure and import-free: the controller resolves the shell tokens
