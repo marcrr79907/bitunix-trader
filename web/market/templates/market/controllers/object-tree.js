@@ -11,13 +11,10 @@
 import {
   TREE_GROUPS,
   labelFor,
-  EYE_ON,
-  EYE_OFF,
-  LOCK_ON,
-  LOCK_OFF,
   TRASH,
   GEAR,
 } from "../tool-icons-core.js";
+import { el, action, syncEye, syncLock } from "../object-tree-dom-core.js";
 import { createAddIndicator } from "../add-indicator-core.js";
 
 const DRAWINGS = TREE_GROUPS[0].label; // "Drawings"
@@ -38,32 +35,6 @@ export function createObjectTree({ store, bus, onIndicatorSettings }) {
   tree.setAttribute("role", "tree");
   tree.setAttribute("aria-label", "Chart objects");
   mount.appendChild(tree);
-
-  // --- small DOM helpers ------------------------------------------------------
-
-  function el(tag, cls, attrs) {
-    const node = document.createElement(tag);
-    if (cls) node.className = cls;
-    Object.keys(attrs || {}).forEach(function (k) { node.setAttribute(k, attrs[k]); });
-    return node;
-  }
-
-  // A native per-row action button. ``icon`` is a CSP-clean SVG string (no
-  // event attribute); the accessible name rides aria-label. ``shortcut`` is the
-  // documented per-row key that activates it (R6: the row owns roving focus, so
-  // the buttons stay tabindex=-1 and advertise their binding via aria-keyshortcuts).
-  function action(cls, label, icon, onClick, shortcut) {
-    const b = el("button", cls, {
-      type: "button", "aria-label": label, tabindex: "-1",
-    });
-    if (shortcut) b.setAttribute("aria-keyshortcuts", shortcut);
-    if (icon) b.innerHTML = icon;
-    b.addEventListener("click", function (e) {
-      e.stopPropagation();
-      onClick(b);
-    });
-    return b;
-  }
 
   // --- group scaffold ---------------------------------------------------------
 
@@ -153,14 +124,6 @@ export function createObjectTree({ store, bus, onIndicatorSettings }) {
     if (hit && hit._li) hit._li.setAttribute("aria-selected", "true");
     roving();
   }
-
-  // Sync a toggle button's icon + aria-pressed to a boolean (R6/R9: the icon
-  // swap keeps state not color-only). Eye and lock are the same shape.
-  function syncBtn(btn, on, onIcon, offIcon) {
-    btn.innerHTML = on ? onIcon : offIcon;
-    btn.setAttribute("aria-pressed", on ? "true" : "false");
-  }
-  const syncEye = (b, v) => syncBtn(b, v, EYE_ON, EYE_OFF), syncLock = (b, l) => syncBtn(b, l, LOCK_ON, LOCK_OFF);
 
   function indicatorRow(token) {
     const visible = !(state.indicatorVisible && state.indicatorVisible[token] === false);
