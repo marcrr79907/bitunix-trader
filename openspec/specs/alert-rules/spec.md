@@ -297,3 +297,127 @@ dependency. Rules MUST evaluate market data only; the sink MUST send messages on
 - GIVEN the new sink and worker step
 - WHEN the R11 order-surface scanner runs
 - THEN no order-execution surface is reported
+
+### Requirement: R10 — JSON CRUD transport
+
+The system MUST expose `/market/api/alerts` (GET list, POST create) and
+`/market/api/alerts/<id>` (PUT partial, DELETE), `@login_required` (anonymous →
+302 login). The transport lives in `web/market/alerts.py`; the HTML form transport
+(`web/trading/views.py:205-258`) stays as-is and the engine semantics are
+unchanged — both surfaces validate through `parse_condition` and are bounded on
+`SYMBOLS`/`CANDLE_INTERVALS`. GET MUST key on `symbol` AND `interval` (a rule is
+interval-scoped, `models.py:292`); a missing/empty `symbol`, missing `interval`, or
+an `interval` outside `CANDLE_INTERVALS` (`web/trading/candles.py:30`) MUST return
+400. Rows MUST be `{id, symbol, interval, condition, is_active, last_fired_at,
+telegram_chat_id}` with `last_fired_at` as epoch seconds or null (chart time
+convention, `models.py:68`) and `condition` echoed verbatim as stored. An empty
+result MUST be `200 {"alerts": []}`, never 404. POST MUST validate in order
+(JSON object → `symbol` → `SYMBOLS` → `interval` → `CANDLE_INTERVALS` →
+`parse_condition` → real-bool `is_active` → str/≤64 `telegram_chat_id`) before any
+write, mapping each failure to 400 with the engine's own message for a bad
+condition, and returns `201` with the row. PUT MUST be partial: absent fields keep
+stored values; `condition` is re-validated via `parse_condition`; `is_active` MUST
+be a real bool; `symbol`/`interval` are immutable (a differing value → 400 with the
+row untouched, an equal value accepted and ignored); a body with no updatable field
+→ 400; a miss → 404. DELETE MUST return `204` and a foreign/missing id MUST be
+`404`. POST/PUT/DELETE MUST require `X-CSRFToken` (missing → 403 via
+`CsrfViewMiddleware`).
+
+#### Scenario: List is pair-scoped
+
+- GIVEN A's rules on `(BTCUSDT,1h)` and `(BTCUSDT,5m)`
+- WHEN A GETs `?symbol=BTCUSDT&interval=1h`
+- THEN only the `1h` rows are returned with `last_fired_at` as epoch seconds
+
+#### Scenario: Missing pair key is 400
+
+- GIVEN a GET without `symbol` (or without `interval`)
+- WHEN the request is handled
+- THEN it returns 400 and no query result leaks
+
+#### Scenario: Empty pair is an empty list
+
+- GIVEN no rules for the requested pair
+- WHEN A GETs it
+- THEN it returns 200 `{"alerts": []}`, never 404
+
+#### Scenario: Create normalizes the condition
+
+- GIVEN a POST with `{type:"price",op:"above",level:"100"}`
+- WHEN the request is handled
+- THEN 201 is returned and the stored `condition` equals `parse_condition`'s output (`level` is a float)
+
+#### Scenario: Invalid condition is 400
+
+- GIVEN a POST with `condition={"type":"magic"}`
+- WHEN the request is handled
+- THEN 400 is returned with the engine's error message and no rule is created
+
+#### Scenario: Non-evaluable interval is 400
+
+- GIVEN a POST with `interval="1m"` or a symbol outside `SYMBOLS`
+- WHEN the request is handled
+- THEN 400 is returned and nothing is written
+
+#### Scenario: Partial PUT keeps absent fields
+
+- GIVEN A's rule with `condition` and `telegram_chat_id`
+- WHEN A PUTs only `{"is_active": false}`
+- THEN `is_active` flips, `condition` is unchanged, and one row exists
+
+#### Scenario: Symbol is immutable on PUT
+
+- GIVEN A's rule on `BTCUSDT`
+- WHEN A PUTs `{"symbol": "ETHUSDT"}`
+- THEN 400 is returned and the row is unchanged
+
+#### Scenario: Unknown id is 404
+
+- GIVEN an id that does not exist
+- WHEN PUT or DELETE is called
+- THEN 404 is returned
+
+#### Scenario: CSRF is enforced
+
+- GIVEN an authenticated POST (or PUT/DELETE) without `X-CSRFToken`
+- WHEN the request is handled
+- THEN 403 is returned and no rule is created or changed
+
+#### Scenario: Delete returns 204
+
+- GIVEN A's rule
+- WHEN A DELETEs it
+- THEN 204 is returned with an empty body and the row is gone
+
+### Requirement: R11 — API is for_user scoped
+
+Every read and write in the JSON transport MUST route through
+`AlertRule.for_user(request.user)`; the owner MUST be set explicitly on create
+(`for_user` filters, it does not inject — `views.py:472`) and MUST NEVER be taken
+from the request body. A pk owned by another user MUST yield 404 and MUST NOT leak
+existence, condition, or `last_fired_at`; a list MUST NOT contain another user's
+rows.
+
+#### Scenario: A ≠ B on list
+
+- GIVEN rules owned by A and by B on the same pair
+- WHEN B GETs the pair
+- THEN only B's rows are returned
+
+#### Scenario: A ≠ B on PUT and DELETE
+
+- GIVEN A's rule
+- WHEN B PUTs or DELETEs that pk
+- THEN 404 is returned and A's row is unchanged
+
+#### Scenario: Owner set on create
+
+- GIVEN a valid POST by A
+- WHEN the rule is written
+- THEN its `user` is A, even when the body names another owner
+
+#### Scenario: Anonymous is redirected
+
+- GIVEN an anonymous session
+- WHEN any alert API route is called
+- THEN 302 to login is returned

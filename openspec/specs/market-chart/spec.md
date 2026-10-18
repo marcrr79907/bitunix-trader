@@ -605,7 +605,9 @@ Modules MUST follow a frozen inventory: entry `chart.js` (thin: Django-injected
 `add-indicator-core.js`/`measure-core.js`/`position-core.js`/`position-draft-core.js`/
 `readout-coalesce-core.js`/`history-core.js`/`context-menu-core.js`/
 `drawing-tools-core.js`/`fib-tools-core.js`/`drawing-click-flow-core.js`/
-`tool-render-core.js`/`object-tree-dom-core.js`,
+`tool-render-core.js`/`object-tree-dom-core.js`/`alert-markers-core.js`/
+`alert-condition-core.js`/`alert-ui-core.js`/`alert-markers-view.js`/
+`alert-bell-view.js`,
 `chart-store.js` (UI/config state ONLY — MUST NOT hold candle data; its vocabulary
 is `symbol, interval, indicators, params, styles, smc, scaleMode, chartType, theme,
 tool, indicatorVisible`), `chart-bus.js`, `chart-host.js` (chart/series/panes/
@@ -616,18 +618,20 @@ factory `createCandles(chart, chartType) -> {getCandleSeries, getCandles,
 setCandles, updateCandle, remove}`),
 `controllers/{indicators,history,stream,drawings,drawing-interaction,smc,toolbar,
 legend,draw-toolbar,object-tree,preference,measure,position-seed,undo,context-menu,
-draft-preview}.js`,
+draft-preview,alerts}.js`,
 and `main.js` (ALL orchestration + boot/switch). No module MUST exceed ~300 lines.
 Controllers MUST import host/store/bus directly but MUST NOT import `main`;
 commands MUST travel the bus, so `main.js` has no circular imports. Every imported
 module MUST be served same-origin under `/market/` via its Django route (core →
 `MODULE_ALLOWLIST`, controller → `CONTROLLER_ALLOWLIST`); `MODULE_ALLOWLIST`
-(`views.py:44-75`, 28 entries) MUST include `measure-core`, `position-core`,
+(`views.py:44-75`, **33** entries) MUST include `measure-core`, `position-core`,
 `position-draft-core`, `readout-coalesce-core`, `history-core`, `context-menu-core`,
 `drawing-tools-core`, `fib-tools-core`, `drawing-click-flow-core`,
-`tool-render-core`, and `object-tree-dom-core`; `CONTROLLER_ALLOWLIST`
-(`views.py:76-95`, **16** entries) MUST include `measure`, `position-seed`, `undo`,
-`context-menu`, and `draft-preview`. The size rule
+`tool-render-core`, `object-tree-dom-core`, `alert-markers-core`,
+`alert-condition-core`, `alert-ui-core`, `alert-markers-view`, and
+`alert-bell-view`; `CONTROLLER_ALLOWLIST`
+(`views.py:76-95`, **17** entries) MUST include `measure`, `position-seed`, `undo`,
+`context-menu`, `draft-preview`, and `alerts`. The size rule
 MUST be enforced by the committed guard `tests/web/test_module_size_guard.py`
 (`CEILING = 300`; scans `web/market/templates/market/**/*.js` via `rglob` +
 `splitlines()`). The guard's `ALLOWLIST` MUST be empty — no module is exempt.
@@ -643,10 +647,13 @@ controller inventory had 13 entries and no `undo`/`context-menu`.)
 (Previously: the pure-core list had no `drawing-tools-core`/`fib-tools-core`/
 `drawing-click-flow-core`/`tool-render-core`/`object-tree-dom-core`; the
 controller inventory had 15 entries and no `draft-preview`.)
+(Previously: the pure-core list had no `alert-markers-core`/`alert-condition-core`/
+`alert-ui-core`/`alert-markers-view`/`alert-bell-view`; the controller inventory
+had 16 entries and no `alerts`; `MODULE_ALLOWLIST` was 28.)
 
 #### Scenario: Inventory and no-cycle
 
-- GIVEN the delivered modules, WHEN imports resolve, THEN the inventory (including `drawing-tools-core.js`, `fib-tools-core.js`, `drawing-click-flow-core.js`, `tool-render-core.js`, `object-tree-dom-core.js`, `theme-core.js`, `history-core.js`, `context-menu-core.js`, and `controllers/undo.js`/`controllers/context-menu.js`/`controllers/draft-preview.js`) exists, `theme-core.js` imports nothing, no controller imports `main`, and `main.js` has no cycles (`test_market_ux.py::test_import_graph_routes_resolve`)
+- GIVEN the delivered modules, WHEN imports resolve, THEN the inventory (including `drawing-tools-core.js`, `fib-tools-core.js`, `drawing-click-flow-core.js`, `tool-render-core.js`, `object-tree-dom-core.js`, `alert-markers-core.js`, `alert-condition-core.js`, `alert-ui-core.js`, `alert-markers-view.js`, `alert-bell-view.js`, `theme-core.js`, `history-core.js`, `context-menu-core.js`, and `controllers/undo.js`/`controllers/context-menu.js`/`controllers/draft-preview.js`/`controllers/alerts.js`) exists, `theme-core.js` imports nothing, no controller imports `main`, and `main.js` has no cycles (`test_market_ux.py::test_import_graph_routes_resolve`)
 
 #### Scenario: Store never holds candles
 
@@ -659,31 +666,35 @@ controller inventory had 15 entries and no `draft-preview`.)
 
 #### Scenario: New cores are served
 
-- GIVEN `drawing-tools-core`, `fib-tools-core`, `drawing-click-flow-core`, `tool-render-core`, and `object-tree-dom-core`
+- GIVEN `drawing-tools-core`, `fib-tools-core`, `drawing-click-flow-core`, `tool-render-core`, `object-tree-dom-core`, `alert-markers-core`, `alert-condition-core`, `alert-ui-core`, `alert-markers-view`, and `alert-bell-view`
 - WHEN requested under `/market/` with a JS MIME type
-- THEN each is served 200 (present in `MODULE_ALLOWLIST`; missing → 404 → blank chart; `test_market_ux.py::test_f9_cores_are_served`)
+- THEN each is served 200 (present in `MODULE_ALLOWLIST`; missing → 404 → blank chart; `test_market_ux.py::test_f9_cores_are_served`, `test_f10_alerts_are_served`)
 
-#### Scenario: Controller allowlist count is 16
+#### Scenario: Controller allowlist count is 17
 
 - GIVEN `CONTROLLER_ALLOWLIST`
 - WHEN inspected
-- THEN it holds **16** entries and `tests/web/test_market_ux.py:146,195` asserts the count `== 16` and passes — F9's click flow is a pure core and its draft preview is the one new controller (`draft-preview`, extraction R2 #222)
+- THEN it holds **17** entries and `tests/web/test_market_ux.py:146,195` asserts the count `== 17` and passes — F10 adds exactly one controller (`alerts`), prior count 16
 
 #### Scenario: No behavior change
 
 - GIVEN the change, WHEN the node tests and the E2E suite run
-- THEN they pass with no behavior-assertion edits beyond the added F9 cases, the 8-key seam (`window.marketChart`) is unchanged, and the HA contract (`chart-types-core`) is untouched
+- THEN they pass with no behavior-assertion edits beyond the added F10 cases, the 8-key seam (`window.marketChart`) is unchanged, and the HA contract (`chart-types-core`) is untouched
 
-> **Reconciliation note (verify W1, archive 2026-10-16; F9 archive 2026-10-18).**
+> **Reconciliation note (verify W1, archive 2026-10-16; F9 archive 2026-10-18;
+> F10 archive 2026-10-18).**
 > The `market-chart` R14 delta originally stated the controller count grew `8→10`;
 > the delivered F5 change landed at **11** because of the `preference` extraction.
 > F6 grew it to **13** (`measure`, `position-seed`), F7 to **15** (`undo`,
-> `context-menu`), and F9 to **16** (`draft-preview`, added by the R2 rework slice
-> that extracted the pending-draft preview out of `drawings.js`). `MODULE_ALLOWLIST`
-> is **28** entries in the delivered tree (F9 added `drawing-tools-core`,
-> `fib-tools-core`, `drawing-click-flow-core`, and — in the R2 rework —
-> `tool-render-core`/`object-tree-dom-core`). The canonical clause above matches
-> reality (`views.py:44-95`, `test_market_ux.py:146,195`). Functional invariant
+> `context-menu`), F9 to **16** (`draft-preview`, added by the R2 rework slice
+> that extracted the pending-draft preview out of `drawings.js`), and F10 to
+> **17** (`alerts`). `MODULE_ALLOWLIST` is **33** entries in the delivered tree:
+> F10 added `alert-markers-core`, `alert-condition-core`, `alert-ui-core`,
+> `alert-markers-view`, and `alert-bell-view` — two more than the delta's `28→30`
+> because S3 extracted the UI helpers to `alert-ui-core` to stay under the
+> ceiling, and the P1/P2 polish slices (#232–#234) extracted the bell element and
+> the marker view into their own adapters. The canonical clause above matches
+> reality (`views.py:44-95`, `test_market_ux.py:146,204`). Functional invariant
 > holds: every entry is served 200 and the import graph resolves.
 
 ### Requirement: R15 — ESM loading and module serving
@@ -764,14 +775,18 @@ The refactor MUST expose `window.marketChart` with frozen keys `{chart,
 candleSeries, panes, ready, drawings, smc, smcCounts, smcToggles}` and equivalent
 update-timing, and MUST re-expose `window.SmcOverlayCore` as the sanctioned test
 seam. The toolbar, the object tree, indicator visibility, the F5 vertical toolbar,
-the F6 measure/position tools, the F7 undo/context-menu layer, and the F9 drawing
-tools MUST NOT add a 9th key; the measure readout MUST be asserted via its DOM node
+the F6 measure/position tools, the F7 undo/context-menu layer, the F9 drawing
+tools, and the F10 alert layer MUST NOT add a 9th key; the measure readout MUST be
+asserted via its DOM node
 (`#measure-readout`) and the position via `window.marketChart.drawings` (existing)
 plus the captured POST/PUT, never via a new seam key. The F7 undo layer MUST be
 asserted via captured POST/PUT/DELETE and the F7 context menu via its DOM
 `role="menu"`, never via a new seam key. The F9 kinds MUST be asserted via
 `window.marketChart.drawings` (existing) plus the captured POST/PUT/DELETE and
-their rendered DOM/canvas, never via a new seam key.
+their rendered DOM/canvas, never via a new seam key. The F10 alert layer MUST be
+asserted via `#chart-alert-bell`, `#alert-dialog`, `#alert-status[aria-live]`,
+`#alert-confirm`, and the captured POST/PUT/DELETE to `/market/api/alerts`, never
+via a new seam key.
 `tests/web/test_market_e2e.py` MUST stay green except for the
 assertions that covered the DOM this change removes (`#drawing-list`, the
 indicators `fieldset`); each such assertion MUST be replaced by equivalent
@@ -784,12 +799,13 @@ by the slice that deletes the DOM — reconciled here per verify W2 / issue #177
 The F6 clause was added for the measure/position tools.)
 (Previously: the clause was silent on the F7 undo/context-menu layer.)
 (Previously: the clause was silent on the F9 drawing tools.)
+(Previously: the clause was silent on the F10 alert layer.)
 
 #### Scenario: Seam shape frozen
 
-- GIVEN a booted chart after the toolbar and tree exist with the measure, position, undo, context-menu, and F9 drawing layers
+- GIVEN a booted chart after the toolbar and tree exist with the measure, position, undo, context-menu, F9 drawing, and alert layers
 - WHEN `window.marketChart` is read
-- THEN all eight keys exist and update as before, with no toolbar/tree/visibility/measure/position/undo/menu/F9 key added
+- THEN all eight keys exist and update as before, with no toolbar/tree/visibility/measure/position/undo/menu/F9/alert key added
 
 #### Scenario: Measure has no seam key
 
@@ -808,6 +824,12 @@ The F6 clause was added for the measure/position tools.)
 - GIVEN an F9 drawing created, moved, then deleted
 - WHEN it is observed
 - THEN it is asserted via `window.marketChart.drawings` and the captured POST/PUT/DELETE, and `window.marketChart` still has exactly 8 keys (E2E `test_f9_tools_create_their_kind_and_drag_is_one_put`)
+
+#### Scenario: Alerts assert without a seam key
+
+- GIVEN an alert created from the bell and a rendered marker set
+- WHEN it is observed
+- THEN the bell is found by `#chart-alert-bell`, the dialog by `#alert-dialog`, the state summary by `#alert-status[aria-live]`, the confirmation by `#alert-confirm[role="status"]`, and the write by the captured POST/PUT/DELETE to `/market/api/alerts`, and `window.marketChart` still has exactly 8 keys
 
 #### Scenario: SMC core reachable
 
@@ -842,7 +864,8 @@ on a prior chart MUST be considered dead; consumers MUST re-subscribe after each
 The `autoSize: true` host option, the `#chart` markup change, the F8 chart-type
 and scale controls, the theme control, the F5 vertical toolbar, the object tree,
 the indicator-visibility toggle, the F6 measure/position tools, the F7
-undo/context-menu layer, and the F9 drawing tools MUST stay within R14
+undo/context-menu layer, the F9 drawing tools, and the F10 alert bell/dialog/
+markers MUST stay within R14
 (host owns construction) and MUST NOT add a `window.marketChart` key.
 `window.marketChart` MUST keep
 exactly its 8 frozen keys `{chart, candleSeries, panes, ready, drawings, smc,
@@ -865,30 +888,35 @@ are STRING LITERALS handled in `drawings.js` (the same literal convention as
 `history:*`/`undo:*`/`menu:*` event exists. The F9 tools MUST add NO bus event and
 NO store key: activating an F9 tool writes the existing `store.tool` value;
 creating reuses `createDrawing` (#68) and the existing `drawing:created` literal;
-`STORE_KEYS` MUST stay 11. No `history:*`/`undo:*`/`menu:*`/`tool:*`/`fib:*`/
-`channel:*` event exists.
+`STORE_KEYS` MUST stay 11. The F10 alert layer MUST add NO bus event and NO
+store key: `controllers/alerts.js` reacts to the existing `chart:built`,
+`history:loaded` and `candle:closed` events and its own fetches; the bell,
+dialog and marker state live in the controller closure; `STORE_KEYS` MUST stay
+11. No `history:*`/`undo:*`/`menu:*`/`tool:*`/`fib:*`/`channel:*`/`alert:*` event
+exists.
 (Previously: the envelope covered type/scale/theme and forbade a second event; F5
 adds exactly one, `indicator:visibility`; the F6 clause was added.)
 (Previously: the envelope was silent on the F7 undo/context-menu layer.)
 (Previously: the envelope was silent on the F9 drawing tools.)
+(Previously: the envelope was silent on the F10 alert layer.)
 
 #### Scenario: Seam stays 8 keys
 
-- GIVEN a booted chart after the toolbar and tree with the measure, position, undo, menu, and F9 layers
+- GIVEN a booted chart after the toolbar and tree with the measure, position, undo, menu, F9, and alert layers
 - WHEN `window.marketChart` is read
-- THEN exactly the 8 frozen keys exist and no toolbar/tree/visibility/measure/position/undo/menu/F9 key was added
+- THEN exactly the 8 frozen keys exist and no toolbar/tree/visibility/measure/position/undo/menu/F9/alert key was added
 
 #### Scenario: Exactly one new bus event (unchanged set)
 
 - GIVEN the change
 - WHEN the bus events are inspected
-- THEN the only `EVENTS` members are the pre-existing set plus `scale:changed` plus `indicator:visibility`; the position tool reuses `drawing:changed`/`drawing:selected`, the measure tool adds none, the F9 tools add none (the F9 create reuses the `drawing:created` string literal), and the F7 `drawing:duplicate`/`drawing:restore`/`drawing:created`/`drawing:create-failed` are string literals (not `EVENTS` members) — no `history:*`/`undo:*`/`menu:*`/`tool:*`/`fib:*`/`channel:*` event, no `measure:*`/`position:*` event, no `drawing:visibility`/`drawing:lock` event, and no new `EVENTS` entry exist
+- THEN the only `EVENTS` members are the pre-existing set plus `scale:changed` plus `indicator:visibility`; the position tool reuses `drawing:changed`/`drawing:selected`, the measure tool adds none, the F9 tools add none (the F9 create reuses the `drawing:created` string literal), and the F7 `drawing:duplicate`/`drawing:restore`/`drawing:created`/`drawing:create-failed` are string literals (not `EVENTS` members) — no `history:*`/`undo:*`/`menu:*`/`tool:*`/`fib:*`/`channel:*` event, no `measure:*`/`position:*` event, no `drawing:visibility`/`drawing:lock` event, no `alert:*` event (F10 reuses `chart:built`/`history:loaded`/`candle:closed`), and no new `EVENTS` entry exist
 
 #### Scenario: STORE_KEYS stays 11
 
-- GIVEN `chart-store.js` after F9
+- GIVEN `chart-store.js` after F10
 - WHEN its keys are inspected
-- THEN it holds exactly the 11 frozen keys — F9 adds none (new tools reuse `tool`; `chart-store.test.js` asserts `length === 11`)
+- THEN it holds exactly the 11 frozen keys — F9 and F10 add none (new tools reuse `tool`; F10 keeps alert state in the controller closure; `chart-store.test.js` asserts `length === 11`)
 
 #### Scenario: Visibility toggle is option-only
 
@@ -913,6 +941,12 @@ adds exactly one, `indicator:visibility`; the F6 clause was added.)
 - GIVEN a built chart with the `setData`/`update` spies installed
 - WHEN an F9 drawing is created or dragged
 - THEN it renders via `requestUpdate` (primitive) and neither `setData` nor `update` is called (issue #217; `drawing-primitive.test.js::an F9 primitive never calls setData/update (option-only, #68/#217)` — the throwing-stub proof added in the R1 fix slice)
+
+#### Scenario: Alert markers never touch the series data path
+
+- GIVEN a built chart with the `setData`/`update` spies installed
+- WHEN the alert markers render on build, on a candle close, on a theme flip, or on a symbol/interval switch
+- THEN they render through `createSeriesMarkers`/`setMarkers` and neither spy is called (#68; `controllers/alerts.js` has no writer call, and the controller's series stub exposes only `coordinateToPrice`/`priceToCoordinate`)
 
 #### Scenario: Existing E2E stays green except replaced assertions
 

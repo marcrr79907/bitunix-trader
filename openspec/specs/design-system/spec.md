@@ -145,7 +145,21 @@ axis, `callout` MUST show its text in a rounded balloon with an arrowhead,
 contrasting halo, and `ray`/`vline`/`channel` MUST differ by shape
 (line/extension/parallel geometry). A pending 2/3-click draft MUST be previewed
 on the canvas and the chart cursor MUST be a crosshair while a tool is active, so
-a partial gesture is visible rather than silent.
+a partial gesture is visible rather than silent. The F10 alert layer MUST follow
+the same model: `#chart-alert-bell` MUST be a real `<button type="button">` with a
+visible `:focus-visible` outline and an accessible name carrying the seeded price,
+and MUST stay focusable when ineligible (`aria-disabled="true"` plus an
+`aria-describedby` reason, never the native `disabled` attribute that would drop
+it from the tab order); a keyboard user MUST also reach the dialog through the
+context menu's "Add alert" item; `#alert-dialog` MUST trap focus natively, return
+focus to `#chart` on Cancel/`Escape`, and on a failed Apply MUST re-open with the
+error visible and the level input focused; alert marker state MUST be announced in
+`#alert-status[aria-live="polite"]` ("N alerts: F fired, A armed") and a
+successful Apply MUST be confirmed in the separate `#alert-confirm[role="status"]`
+so the summary is never overwritten; and armed/fired markers MUST differ by
+`shape`, `text` ("A"/"F" + level) and `position` (below/above the bar), never by
+color alone, with colors resolved from the `--alert-armed`/`--dn` tokens at render
+time so both themes clear AA.
 (Previously: AA contrast was required against the dark theme only.)
 (Previously: focus state covered nav links and form controls only; no focusable
 chart canvas, dialog, or toolbar/tree contract.)
@@ -156,6 +170,44 @@ the F6 S4/UI slices — the rule now matches the delivered behavior.)
 the visible tool shortcut letter.)
 (Previously: the rule was silent on the F9 drawing tools, their human labels, the
 draft preview, and the crosshair.)
+(Previously: the rule was silent on the F10 alert bell, dialog focus return,
+`#alert-status` live region, `#alert-confirm` toast, and not-color-only markers.)
+
+#### Scenario: Alert bell is focusable and named
+
+- GIVEN the rendered market page with a crosshair point
+- WHEN the bell is inspected
+- THEN it is a `<button type="button">` with an accessible name containing the price, reachable by Tab, with a visible `:focus-visible` state
+
+#### Scenario: Alert bell is inert but still focusable when ineligible
+
+- GIVEN a non-evaluable interval
+- WHEN the bell is inspected
+- THEN it is `aria-disabled="true"` (not natively `disabled`) with `aria-describedby="alert-interval-reason"`, so the reason is announceable, and activating it writes nothing
+
+#### Scenario: Alert dialog returns focus
+
+- GIVEN `#alert-dialog` opened from the bell
+- WHEN `Escape` or Cancel closes it
+- THEN focus returns to `#chart` and no request was captured
+
+#### Scenario: Alert state is live in the DOM
+
+- GIVEN 1 fired and 2 armed alerts on the active pair
+- WHEN the list renders
+- THEN `#alert-status[aria-live="polite"]` reads a summary such as "3 alerts: 1 fired, 2 armed"
+
+#### Scenario: Successful Apply is confirmed
+
+- GIVEN an alert created or edited through the dialog
+- WHEN the write succeeds
+- THEN `#alert-confirm[role="status"]` shows the armed/updated level and `#alert-status` keeps its count summary
+
+#### Scenario: Alert markers are not color-only
+
+- GIVEN an armed and a fired rule rendered as markers
+- WHEN the marker payload is inspected
+- THEN armed and fired differ in `shape`, in `text` ("A"/"F"), and in `position`, not only in `color`, and the colors come from the `--alert-armed`/`--dn` tokens in both themes
 
 #### Scenario: Visible focus
 - GIVEN a keyboard user
@@ -318,9 +370,20 @@ tree icons MUST be injected by same-origin JS (JS-built inline SVG from
 MAY appear in the SVG or markup. The F7 context menu MUST be JS-built DOM (a
 `role="menu"` node created by `controllers/context-menu.js`) and its
 `contextmenu` listener MUST be registered via `addEventListener`; NO inline
-`oncontextmenu` attribute or inline `<script>` MAY be added.
+`oncontextmenu` attribute or inline `<script>` MAY be added. The F10 alert bell,
+`<dialog>` and its controls MUST be built/declared without inline handlers (the
+`<dialog>` markup is static, the bell is created with `createElement` +
+`setAttribute`, and the confirmation/reason nodes are static markup), and the CSP
+value MUST stay unchanged.
 (Previously: the rule was silent on how icons are produced.)
 (Previously: the rule was silent on the F7 context menu.)
+(Previously: the rule was silent on the F10 alert bell/dialog.)
+
+#### Scenario: Alert dialog is CSP-clean
+
+- GIVEN the rendered market page with `#alert-dialog` and the bell
+- WHEN the markup and scripts are scanned
+- THEN no inline `<script>` or `on*` attribute exists for the alert UI and the CSP equals the prior value
 
 #### Scenario: CSP header unchanged
 - GIVEN a rendered page
