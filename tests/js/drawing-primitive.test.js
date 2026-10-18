@@ -26,8 +26,12 @@ function recordingCtx() {
     strokeRect: () => calls.push("strokeRect"),
     fillRect: () => { calls.push("fillRect"); ctx.fills.push(ctx.fillStyle); },
     fillText: () => calls.push("fillText"),
+    strokeText: () => calls.push("strokeText"),
     arc: () => calls.push("arc"),
     fill: () => calls.push("fill"),
+    rect: () => calls.push("rect"),
+    roundRect: () => calls.push("roundRect"),
+    measureText: (t) => ({ width: String(t).length * 6 }),
     font: "",
     strokeStyle: "",
     fillStyle: "",
@@ -350,4 +354,38 @@ test("fib_ext uses p3 as its right x extent, so dragging p3 moves it (#220)", ()
   const far = renderShapeLines(dragged);
   assert.ok(far.every((l) => l.x === 30), `right extent follows p3: ${JSON.stringify(far)}`);
   assert.notDeepStrictEqual(far, near, "the drawn extent actually moved");
+});
+
+// --- F9 R2 (#223): callout balloon + price right-axis tag ---------------------
+
+test("callout draws a balloon behind the text plus an arrowhead at the anchor (#223)", () => {
+  const ctx = recordingCtx();
+  ctx.roundRect = (...a) => { ctx.calls.push("roundRect"); ctx.roundRects.push(a); };
+  ctx.roundRects = [];
+  renderShape(ctx, { width: 300, height: 300 }, { ...F9_ROWS.callout, style: {} }, MAPR, false);
+  assert.ok(ctx.calls.includes("roundRect"), "the balloon is a rounded rect");
+  assert.ok(ctx.calls.filter((c) => c === "fill").length >= 1, "the balloon is filled");
+  // The connector leg plus the two arrowhead legs stroke.
+  assert.ok(ctx.calls.filter((c) => c === "stroke").length >= 2, "line + arrowhead");
+  assert.ok(ctx.calls.includes("fillText"), "the text sits on the balloon");
+});
+
+test("a price label is right-aligned inside the pane and uses the series format (#223)", () => {
+  const ctx = recordingCtx();
+  const texts = [];
+  ctx.fillText = (t, x) => { texts.push({ t, x, align: ctx.textAlign }); ctx.calls.push("fillText"); };
+  const map = { ...MAPR, format: (v) => v.toFixed(2) };
+  renderShape(ctx, { width: 300, height: 300 }, { ...F9_ROWS.price, style: {} }, map, false);
+  assert.strictEqual(texts.length, 1);
+  assert.strictEqual(texts[0].t, "50.00", "the series format, not String(raw)");
+  assert.ok(texts[0].x <= 300 && texts[0].x >= 290, `right-right label near width-4: ${texts[0].x}`);
+  assert.strictEqual(texts[0].align, "right");
+});
+
+test("a price label falls back to the raw number when no formatter is supplied (#223)", () => {
+  const ctx = recordingCtx();
+  const texts = [];
+  ctx.fillText = (t) => texts.push(t);
+  renderShape(ctx, { width: 300, height: 300 }, { ...F9_ROWS.price, style: {} }, MAPR, false);
+  assert.strictEqual(texts[0], "50", "String(price) fallback");
 });
