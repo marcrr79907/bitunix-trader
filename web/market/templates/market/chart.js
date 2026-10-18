@@ -31,6 +31,7 @@ export const CONFIG = {
     layout: "/market/api/layout",
     preference: "/market/api/preference",
     drawings: "/market/api/drawings",
+    alerts: "/market/api/alerts",
   },
 };
 
