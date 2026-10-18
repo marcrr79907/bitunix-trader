@@ -144,3 +144,174 @@ def test_run_loop_survives_candle_failure():
 
     assert result == 0
     assert TickerSnapshot.objects.count() == 1
+
+
+# --- F11 A-S3: due-interval scheduling and the watchlist union --------------
+
+from trading.candles import CANDLE_INTERVALS, due_intervals  # noqa: E402
+
+
+def test_due_intervals_same_bucket_omits_the_interval():
+    # 1h bucket: 0 and 3599 are the same bucket (5m/15m DO roll over).
+    assert "1h" not in due_intervals(3599, 0)
+    assert "1d" not in due_intervals(3599, 0)
+
+
+def test_due_intervals_boundary_includes_the_rolled_interval():
+    assert "1h" in due_intervals(3600, 3599)
+
+
+def test_due_intervals_fresh_process_returns_every_interval():
+    assert due_intervals(1_700_000_000, None) == CANDLE_INTERVALS
+
+
+def test_due_intervals_is_pure_and_deterministic():
+    assert due_intervals(100, 0) == due_intervals(100, 0)
+
+
+def test_fetch_closed_candles_honours_the_intervals_argument():
+    import trading.candles as candles
+
+    class Recorder:
+        def __init__(self):
+            self.calls = []
+
+        def kline(
+            self, symbol, interval="1m", limit=100, start_time=None, end_time=None
+        ):
+            self.calls.append(interval)
+            return []
+
+    recorder = Recorder()
+    candles.fetch_closed_candles(recorder, ["BTCUSDT"], intervals=("1h",))
+
+    assert recorder.calls == ["1h"]
+
+
+def test_fetch_closed_candles_isolates_one_failing_interval():
+    import trading.candles as candles
+
+    from src.client import BitunixError
+
+    class Flaky:
+        def __init__(self):
+            self.calls = []
+
+        def kline(
+            self, symbol, interval="1m", limit=100, start_time=None, end_time=None
+        ):
+            self.calls.append(interval)
+            if interval == "1h":
+                raise BitunixError(500, "boom")
+            return []
+
+    flaky = Flaky()
+    result = candles.fetch_closed_candles(
+        flaky, ["BTCUSDT"], intervals=("1h", "1d"), now=10**9
+    )
+
+    # The 1h failure did not stop the 1d request.
+    assert flaky.calls == ["1h", "1d"]
+    assert result == []
+
+
+# --- worker: union ingest set ----------------------------------------------
+
+
+@pytest.mark.django_db
+def test_ingest_symbols_puts_defaults_first_then_sorted_watchlist(
+    monkeypatch,
+):
+    from django.contrib.auth import get_user_model
+    from trading.models import Watchlist
+
+    monkeypatch.setattr(worker.config, "SYMBOLS", ["BTCUSDT"])
+    user = get_user_model().objects.create_user(
+        email="w@example.com", password="pw-123456"
+    )
+    Watchlist.objects.create(user=user, symbol="SOLUSDT")
+    Watchlist.objects.create(user=user, symbol="ETHUSDT")
+
+    assert worker.ingest_symbols() == ["BTCUSDT", "ETHUSDT", "SOLUSDT"]
+
+
+@pytest.mark.django_db
+def test_ingest_symbols_caps_and_never_starves_defaults(monkeypatch):
+    from django.contrib.auth import get_user_model
+    from trading.models import Watchlist
+
+    monkeypatch.setattr(worker.config, "SYMBOLS", ["AAAUSDT", "BBBUSDT"])
+    monkeypatch.setattr(worker.config, "MAX_WATCHLIST_SYMBOLS", 5)
+    user = get_user_model().objects.create_user(
+        email="w2@example.com", password="pw-123456"
+    )
+    Watchlist.objects.bulk_create(
+        [Watchlist(user=user, symbol=f"SYM{i:02d}USDT") for i in range(10)]
+    )
+
+    result = worker.ingest_symbols()
+
+    assert len(result) == 5
+    assert result[0] == "AAAUSDT" and result[1] == "BBBUSDT"
+
+
+@pytest.mark.django_db
+def test_ingest_symbols_dedups_a_default_that_is_also_watched(monkeypatch):
+    from django.contrib.auth import get_user_model
+    from trading.models import Watchlist
+
+    monkeypatch.setattr(worker.config, "SYMBOLS", ["BTCUSDT"])
+    user = get_user_model().objects.create_user(
+        email="w3@example.com", password="pw-123456"
+    )
+    Watchlist.objects.create(user=user, symbol="BTCUSDT")
+
+    assert worker.ingest_symbols() == ["BTCUSDT"]
+
+
+@pytest.mark.django_db
+def test_last_poll_advances_only_after_a_successful_cycle(monkeypatch):
+    import trading.candles as candles
+
+    monkeypatch.setattr(worker, "_last_poll", None)
+    monkeypatch.setattr(candles, "_now_seconds", lambda: 1000, raising=False)
+
+    worker.run_once(StubClient(), ["BTCUSDT"])
+
+    assert worker._last_poll is not None
+
+
+@pytest.mark.django_db
+def test_run_loop_uses_the_ingest_set_when_symbols_is_none(monkeypatch):
+    from django.contrib.auth import get_user_model
+    from trading.models import Watchlist
+
+    calls = []
+    monkeypatch.setattr(worker.config, "SYMBOLS", ["BTCUSDT"])
+    monkeypatch.setattr(
+        worker, "run_once", lambda client, symbols: (calls.append(symbols), (0, 0))[1]
+    )
+    user = get_user_model().objects.create_user(
+        email="loop@example.com", password="pw-123456"
+    )
+    Watchlist.objects.create(user=user, symbol="ETHUSDT")
+
+    worker.run_loop(None, symbols=None, iterations=1, sleep=lambda s: None)
+
+    assert calls == [["BTCUSDT", "ETHUSDT"]]
+
+
+@pytest.mark.django_db
+def test_run_loop_keeps_an_explicit_symbol_list(monkeypatch):
+    calls = []
+    monkeypatch.setattr(worker.config, "SYMBOLS", ["BTCUSDT"])
+    monkeypatch.setattr(
+        worker, "ingest_symbols", lambda: (_ for _ in ()).throw(AssertionError("no"))
+    )
+    monkeypatch.setattr(
+        worker, "run_once", lambda client, symbols: (calls.append(symbols), (0, 0))[1]
+    )
+
+    worker.run_loop(None, symbols=["SOLUSDT"], iterations=1, sleep=lambda s: None)
+
+    assert calls == [["SOLUSDT"]]
