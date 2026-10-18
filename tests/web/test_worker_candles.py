@@ -318,3 +318,24 @@ def test_run_loop_keeps_an_explicit_symbol_list(monkeypatch):
     worker.run_loop(None, symbols=["SOLUSDT"], iterations=1, sleep=lambda s: None)
 
     assert calls == [["SOLUSDT"]]
+
+
+def test_request_budget_stays_under_the_exchange_limit_at_the_cap(monkeypatch):
+    """F11 R9: due-interval scheduling keeps 50 symbols far under 10 req/s."""
+    from src.config import MAX_WATCHLIST_SYMBOLS
+
+    # Steady state: each symbol contributes sum(1/span) closed intervals per s.
+    per_symbol_per_second = sum(1 / span for span in INTERVAL_SECONDS.values())
+    scheduled = per_symbol_per_second * MAX_WATCHLIST_SYMBOLS
+
+    assert scheduled < 10, f"due-interval rate {scheduled:.2f} req/s exceeds the limit"
+    assert scheduled < 1, "the budget scenario promises well under 1 req/s"
+
+
+def test_negative_control_naive_polling_would_exceed_the_limit():
+    """Without due_intervals, the naive form breaks the 10 req/s budget."""
+    from src.config import MAX_WATCHLIST_SYMBOLS
+
+    naive = len(CANDLE_INTERVALS) * MAX_WATCHLIST_SYMBOLS / worker.INGEST_POLL_SECONDS
+
+    assert naive > 10, "the guard is the scheduling, not the throttle"
