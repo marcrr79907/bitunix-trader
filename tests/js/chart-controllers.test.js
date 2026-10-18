@@ -653,6 +653,7 @@ function makeEl(tag) {
   const el = {
     tagName: tag,
     _listeners: {},
+    style: {},
     textContent: "",
     setAttribute() {},
     addEventListener(type, fn) { (this._listeners[type] = this._listeners[type] || []).push(fn); },
@@ -1256,4 +1257,104 @@ test("measure stroke paints with the resolved --accent token, not a literal (R9)
     if (prevGcs === undefined) delete globalThis.getComputedStyle; else globalThis.getComputedStyle = prevGcs;
     f.restore();
   }
+});
+
+// --- F9 R2 (#222): a pending draft is VISIBLE + the cursor is a crosshair ----
+//
+// A 2/3-click draft used to draw nothing until the final click: the user clicked
+// into a void. The controller now attaches a TRANSIENT preview primitive after
+// every pending click (a primitive + requestUpdate, never a POST, #68), and
+// #chart shows a crosshair while a tool is active.
+function draftsPreviewFixture() {
+  const prevDoc = globalThis.document;
+  const prevWin = globalThis.window;
+  const prevFetch = globalThis.fetch;
+  const prevGcs = globalThis.getComputedStyle;
+  const attached = [];
+  const posts = [];
+  const chartEl = makeEl("div");
+  globalThis.document = {
+    getElementById: (id) => (id === "chart" ? chartEl : null),
+    querySelector: () => null,
+    documentElement: { style: {} },
+  };
+  globalThis.getComputedStyle = () => ({ getPropertyValue: () => "" });
+  globalThis.window = { marketChart: { drawings: [] } };
+  globalThis.fetch = (url, opts) => {
+    const method = (opts && opts.method) || "GET";
+    const body = JSON.parse((opts && opts.body) || "{}");
+    if (method !== "GET") posts.push({ url, method, body });
+    return Promise.resolve({
+      ok: true,
+      json: () => Promise.resolve({ drawings: [], id: 1, kind: body.kind, points: body.points }),
+    });
+  };
+  const chart = { timeScale: () => ({ timeToCoordinate: (t) => t }) };
+  const series = {
+    // Mirror v5: attaching hands the primitive its chart/series/requestUpdate.
+    attachPrimitive(prim) {
+      attached.push(prim);
+      prim.attached({ chart: chart, series: series, requestUpdate() {} });
+    },
+    detachPrimitive() {},
+    coordinateToPrice: (y) => y,
+    priceToCoordinate: (p) => p,
+  };
+  const bus = createBus();
+  const store = makeStore({ symbol: "BTCUSDT", interval: "1m", tool: null });
+  const host = { getChart: () => chart, getCandleSeries: () => series };
+  const d = createDrawings({ store, bus, host, config: { urls: { drawings: "/market/api/drawings" } } });
+  return {
+    d, store, chartEl, attached, posts,
+    tool: (kind) => store.set({ tool: kind }),
+    click(time, price) { d.onChartClick({ time, point: { y: price } }); },
+    restore() {
+      if (prevDoc === undefined) delete globalThis.document; else globalThis.document = prevDoc;
+      if (prevWin === undefined) delete globalThis.window; else globalThis.window = prevWin;
+      if (prevFetch === undefined) delete globalThis.fetch; else globalThis.fetch = prevFetch;
+      if (prevGcs === undefined) delete globalThis.getComputedStyle; else globalThis.getComputedStyle = prevGcs;
+    },
+  };
+}
+
+test("the first click of a channel attaches a preview primitive, no POST (#222)", () => {
+  const f = draftsPreviewFixture();
+  try {
+    f.tool("channel");
+    f.click(1, 10);
+    assert.strictEqual(f.attached.length, 1, "a preview primitive is attached");
+    assert.deepStrictEqual(f.posts, [], "a pending draft never POSTs");
+    // The preview row carries the first anchor and renders a stroke/point.
+    const drawn = [];
+    const ctx = {
+      save() {}, restore() {}, beginPath() {}, moveTo() {}, lineTo() {}, stroke() {},
+      arc(x, y) { drawn.push({ x, y }); }, fill() {}, setLineDash() {},
+      strokeRect() {}, fillRect() {}, fillText() {},
+      strokeStyle: "", fillStyle: "", lineWidth: 1, globalAlpha: 1, font: "",
+    };
+    f.attached[0].paneViews()[0].renderer().draw({
+      useMediaCoordinateSpace: (fn) => fn({ context: ctx, mediaSize: { width: 100, height: 100 } }),
+    });
+    assert.deepStrictEqual(drawn, [{ x: 1, y: 10 }], "the first anchor is drawn at its pixel");
+  } finally { f.restore(); }
+});
+
+test("#chart shows a crosshair cursor while a tool is active (#222)", () => {
+  const f = draftsPreviewFixture();
+  try {
+    assert.strictEqual(f.chartEl.style.cursor, "", "no tool -> no cursor override");
+    f.tool("ray");
+    assert.strictEqual(f.chartEl.style.cursor, "crosshair");
+    f.tool(null);
+    assert.strictEqual(f.chartEl.style.cursor, "", "the cursor is restored");
+  } finally { f.restore(); }
+});
+
+test("the draft preview never moves the price scale (#222/#68)", () => {
+  const f = draftsPreviewFixture();
+  try {
+    f.tool("channel");
+    f.click(1, 10);
+    assert.strictEqual(f.attached[0].autoscaleInfo(), null, "a preview must not rescale");
+  } finally { f.restore(); }
 });

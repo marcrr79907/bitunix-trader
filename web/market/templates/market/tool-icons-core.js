@@ -32,6 +32,34 @@ export const TREE_GROUPS = [
   { label: "Indicators", kinds: [] },
 ];
 
+// Human names (R2 #223): the SINGLE source for the toolbar's aria-label/title
+// and the object tree's row label, so a slug like ``fib_ext`` never reaches the
+// user. ``kind`` stays the persisted/wire value.
+export const TOOL_LABELS = {
+  hline: "Horizontal line",
+  trendline: "Trend line",
+  fib: "Fibonacci retracement",
+  rect: "Rectangle",
+  text: "Text",
+  measure: "Measure",
+  position: "Position",
+  ray: "Ray",
+  vline: "Vertical line",
+  channel: "Parallel channel",
+  price: "Price line",
+  callout: "Callout",
+  fib_ext: "Fibonacci extension",
+  fib_time: "Fibonacci time zones",
+  fib_zone: "Fibonacci bands",
+};
+
+// kind -> human label; an unknown kind degrades to the kind itself (never blank
+// for a real row), and a missing kind to an empty string.
+export function labelFor(kind) {
+  if (kind === undefined || kind === null) return "";
+  return TOOL_LABELS[kind] || String(kind);
+}
+
 const SVG_OPEN = '<svg viewBox="0 0 24 24" width="18" height="18" '
   + 'fill="none" stroke="currentColor" stroke-width="1.6" '
   + 'stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">';
@@ -47,14 +75,22 @@ const ICON_BODIES = {
   measure: '<path d="M3 15l12-12 6 6-12 12z"/><line x1="8" y1="10" x2="10" y2="12"/><line x1="11" y1="7" x2="13" y2="9"/><line x1="5" y1="13" x2="7" y2="15"/>',
   position: '<rect x="4" y="8" width="16" height="8" rx="1"/><line x1="4" y1="8" x2="20" y2="8"/><line x1="4" y1="12" x2="20" y2="12"/><line x1="4" y1="16" x2="20" y2="16"/>',
   // F9 S3: the eight new tool glyphs — each distinct, no event attribute.
-  ray: '<line x1="4" y1="16" x2="18" y2="8"/><path d="M15 7l3 1-1 3"/>',
+  // R2 #223: a BIG arrowhead (the old nib was ~2px at 18px).
+  ray: '<line x1="3" y1="17" x2="17" y2="8"/><path d="M11 6l7 2-2 7"/>',
   vline: '<line x1="12" y1="3" x2="12" y2="21"/>',
   channel: '<line x1="4" y1="14" x2="20" y2="8"/><line x1="4" y1="19" x2="20" y2="13"/>',
   price: '<line x1="3" y1="12" x2="16" y2="12"/><rect x="16" y="9" width="5" height="6" rx="1"/>',
   callout: '<path d="M4 6h13v9H9l-4 3v-3H4z"/><line x1="7" y1="10" x2="14" y2="10"/>',
-  fib_ext: '<line x1="4" y1="16" x2="20" y2="16"/><line x1="4" y1="12" x2="20" y2="12"/><line x1="4" y1="8" x2="20" y2="8"/><line x1="12" y1="6" x2="12" y2="18"/>',
+  // R2 #223: the projection leg is DASHED and runs past the last solid level so
+  // an extension never reads like a plain retracement stack.
+  fib_ext: '<line x1="4" y1="18" x2="20" y2="18"/><line x1="4" y1="13" x2="20" y2="13"/>'
+    + '<line x1="4" y1="8" x2="14" y2="8"/><line x1="14" y1="8" x2="20" y2="8" stroke-dasharray="2 2"/>'
+    + '<line x1="14" y1="4" x2="14" y2="20" stroke-dasharray="2 2"/>',
   fib_time: '<line x1="6" y1="4" x2="6" y2="20"/><line x1="12" y1="4" x2="12" y2="20"/><line x1="18" y1="4" x2="18" y2="20"/>',
-  fib_zone: '<rect x="4" y="5" width="16" height="4" rx="1"/><rect x="4" y="11" width="16" height="3" rx="1"/><rect x="4" y="16" width="16" height="3" rx="1"/>',
+  // R2 #223: three bands plus a diagonal hatch so a zone never reads as fib lines.
+  fib_zone: '<rect x="4" y="5" width="16" height="4" rx="1"/><rect x="4" y="11" width="16" height="3" rx="1"/>'
+    + '<rect x="4" y="16" width="16" height="3" rx="1"/>'
+    + '<line x1="6" y1="5" x2="10" y2="9"/><line x1="12" y1="11" x2="16" y2="14"/><line x1="8" y1="16" x2="12" y2="19"/>',
 };
 
 // A kind -> a self-contained inline-SVG string (no event attribute), or "" for

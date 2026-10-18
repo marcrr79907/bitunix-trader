@@ -11,6 +11,7 @@ import * as Tools from "./drawing-tools-core.js";
 import { handlesFor, HANDLE_RADIUS } from "./drawing-interaction-core.js";
 import { positionBox } from "./position-core.js";
 import { token } from "./theme-core.js";
+import { label, renderTool } from "./tool-render-core.js";
 
 // Price range so a full-width ray / rect / position box is not clipped (R6).
 function priceRangeFor(row) {
@@ -64,11 +65,10 @@ function renderShape(ctx, size, row, map, selected) {
     }
   } else if (kind === "fib") {
     const f = Draw.fibPath(row, map, row.style.levels);
-    ctx.font = "11px sans-serif";
     f.levels.forEach(function (l) {
       if (l.y === null || l.y === undefined) return;
       ctx.beginPath(); ctx.moveTo(f.x1, l.y); ctx.lineTo(f.x2, l.y); ctx.stroke();
-      ctx.fillText(l.ratio + "  " + l.price, f.x1, l.y - 2);
+      label(ctx, l.ratio + "  " + l.price, f.x1, l.y - 2);
     });
   } else if (kind === "rect") {
     const r = Draw.rectPath(row, map);
@@ -84,7 +84,7 @@ function renderShape(ctx, size, row, map, selected) {
     const tx = Draw.textPath(row, map);
     if (tx.x !== null && tx.x !== undefined && tx.y !== null && tx.y !== undefined) {
       ctx.font = (row.style.fontSize || 14) + "px sans-serif";
-      ctx.fillText(tx.text, tx.x, tx.y);
+      label(ctx, tx.text, tx.x, tx.y, (row.style.fontSize || 14) + "px sans-serif");
     }
   } else if (kind === "position") {
     renderPosition(ctx, row, map);
@@ -94,69 +94,6 @@ function renderShape(ctx, size, row, map, selected) {
   }
   if (selected) drawHandles(ctx, row, map);
   ctx.restore();
-}
-
-// F9 S3 (R6): the canvas switch for the eight new kinds. Geometry comes from
-// drawing-tools-core.toolPath (pure); nothing here is colour-only — ratio/price
-// labels carry the meaning (design-system R6). Off-bar legs are skipped, never
-// thrown. Canvas access lives here, not in the pure core.
-function renderTool(ctx, size, row, map) {
-  const kind = row.kind;
-  const p = Tools.toolPath(kind, row, map);
-  if (!p) return;
-  ctx.font = "11px sans-serif";
-  if (kind === "ray") {
-    if (p.a && p.b) {
-      ctx.beginPath(); ctx.moveTo(p.a.x, p.a.y); ctx.lineTo(p.b.x, p.b.y); ctx.stroke();
-    }
-  } else if (kind === "vline") {
-    if (p.x !== null && p.x !== undefined) {
-      ctx.beginPath(); ctx.moveTo(p.x, 0); ctx.lineTo(p.x, size.height); ctx.stroke();
-    }
-  } else if (kind === "channel") {
-    [[p.a, p.b], [p.c, p.d]].forEach(function (seg) {
-      if (seg[0] && seg[1]) {
-        ctx.beginPath(); ctx.moveTo(seg[0].x, seg[0].y); ctx.lineTo(seg[1].x, seg[1].y); ctx.stroke();
-      }
-    });
-  } else if (kind === "price") {
-    if (p.y !== null && p.y !== undefined) {
-      ctx.beginPath(); ctx.moveTo(0, p.y); ctx.lineTo(size.width, p.y); ctx.stroke();
-      ctx.fillText(String(p.price), 2, p.y - 2); // right-axis tag: not colour-only
-    }
-  } else if (kind === "callout") {
-    if (p.a && p.b) {
-      ctx.beginPath(); ctx.moveTo(p.a.x, p.a.y); ctx.lineTo(p.b.x, p.b.y); ctx.stroke();
-      ctx.fillText(String(p.text == null ? "" : p.text), p.b.x + 4, p.b.y - 4);
-    }
-  } else if (kind === "fib_ext") {
-    // #216: an off-bar x anchor skips the whole body (never coerce null -> 0).
-    if (p.x1 === null || p.x1 === undefined || p.x2 === null || p.x2 === undefined) return;
-    (p.levels || []).forEach(function (l) {
-      if (l.y === null || l.y === undefined) return;
-      ctx.beginPath(); ctx.moveTo(p.x1, l.y); ctx.lineTo(p.x2, l.y); ctx.stroke();
-      ctx.fillText(l.ratio + "  " + l.price, p.x1, l.y - 2);
-    });
-  } else if (kind === "fib_time") {
-    ((p && p.levels) || []).forEach(function (l) {
-      if (l.x === null || l.x === undefined) return;
-      ctx.beginPath(); ctx.moveTo(l.x, 0); ctx.lineTo(l.x, size.height); ctx.stroke();
-      ctx.fillText(String(l.ratio), l.x + 2, 12);
-    });
-  } else if (kind === "fib_zone") {
-    // #216: an off-bar x anchor or an off-scale level skips the band entirely.
-    if (p.x1 === null || p.x1 === undefined || p.x2 === null || p.x2 === undefined) return;
-    (p.bands || []).forEach(function (b) {
-      if (b.yLo === null || b.yLo === undefined
-        || b.yHi === null || b.yHi === undefined) return;
-      const top = Math.min(b.yLo, b.yHi);
-      ctx.globalAlpha = 0.15;
-      ctx.fillRect(p.x1, top, p.x2 - p.x1, Math.abs(b.yHi - b.yLo));
-      ctx.globalAlpha = 1;
-      ctx.strokeRect(p.x1, top, p.x2 - p.x1, Math.abs(b.yHi - b.yLo));
-      ctx.fillText(b.ratioLo + "-" + b.ratioHi, p.x1 + 2, top - 2);
-    });
-  }
 }
 
 // F6 (R6): a position box — a risk zone (entry->stop) and a reward zone
@@ -178,20 +115,19 @@ function renderPosition(ctx, row, map) {
   fill(box.rewardBand, token("--up", "#26a69a")); // reward (entry -> tp)
   ctx.strokeStyle = row.style.color || token("--muted", "#787b86");
   ctx.fillStyle = row.style.color || token("--muted", "#787b86");
-  ctx.font = "11px sans-serif";
   box.levels.forEach(function (l) {
     if (l.y === null || l.y === undefined) return;
     ctx.beginPath();
     ctx.moveTo(box.left, l.y);
     ctx.lineTo(box.right, l.y);
     ctx.stroke();
-    ctx.fillText(l.label + " " + l.price, box.left + 2, l.y - 2);
+    label(ctx, l.label + " " + l.price, box.left + 2, l.y - 2);
   });
   const dir = box.long ? "LONG" : "SHORT";
   const arrow = box.long ? "\u25b2" : "\u25bc";
-  ctx.fillText(arrow + " " + dir, box.left + 2, box.rewardBand.top - 4);
+  label(ctx, arrow + " " + dir, box.left + 2, box.rewardBand.top - 4);
   if (box.rr !== null && box.rr !== undefined) {
-    ctx.fillText("R:R " + box.rr.toFixed(2), box.left + 2, box.riskBand.bottom + 12);
+    label(ctx, "R:R " + box.rr.toFixed(2), box.left + 2, box.riskBand.bottom + 12);
   }
 }
 
@@ -224,6 +160,10 @@ function makeDrawingPrimitive(row, selection) {
   const map = {
     x: function (time) { return c.chart ? c.chart.timeScale().timeToCoordinate(time) : null; },
     y: function (price) { return c.series ? c.series.priceToCoordinate(price) : null; },
+    // R2 #223: the series' own price format, so a price tag reads like the axis.
+    format: function (price) {
+      try { return c.series.priceFormatter().format(price); } catch (e) { return String(price); }
+    },
     right: null,
   };
   return {
@@ -246,8 +186,9 @@ function makeDrawingPrimitive(row, selection) {
       }];
     },
     // F5 S3 (R6): a hidden full-width ray MUST NOT influence autoscale.
+    // A transient draft preview never moves the price scale (R2 #222).
     autoscaleInfo: function () {
-      return row.visible === false ? null : priceRangeFor(row);
+      return row.visible === false || sel.preview ? null : priceRangeFor(row);
     },
   };
 }

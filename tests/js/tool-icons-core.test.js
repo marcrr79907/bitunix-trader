@@ -137,3 +137,55 @@ test("purity: the icon core imports nothing", () => {
   assert.doesNotMatch(src, /^\s*import\b/m, "no ESM import");
   assert.doesNotMatch(src, /\brequire\s*\(/, "no CommonJS require");
 });
+
+// --- F9 R2 (#223): human labels shared by the toolbar + the object tree ------
+
+test("TOOL_LABELS covers every drawing kind + measure with a human name", () => {
+  const kinds = core.TOOL_GROUPS.flatMap((g) => g.kinds);
+  assert.deepStrictEqual(Object.keys(core.TOOL_LABELS).sort(), kinds.slice().sort());
+  kinds.forEach((kind) => {
+    assert.strictEqual(typeof core.TOOL_LABELS[kind], "string", kind);
+    assert.ok(core.TOOL_LABELS[kind].length > 2, kind);
+  });
+  // #223: fib_zone reads as bands, distinct from fib_time.
+  assert.strictEqual(core.TOOL_LABELS.fib_zone, "Fibonacci bands");
+  assert.notStrictEqual(core.TOOL_LABELS.fib_zone, core.TOOL_LABELS.fib_time);
+});
+
+test("labelFor: a known kind -> its human label; unknown/none -> the kind", () => {
+  assert.strictEqual(core.labelFor("fib_ext"), "Fibonacci extension");
+  assert.strictEqual(core.labelFor("fib_zone"), "Fibonacci bands");
+  assert.strictEqual(core.labelFor("nope"), "nope");
+  assert.strictEqual(core.labelFor(undefined), "");
+});
+
+// --- F9 R2 (#223): icon clarity at 18px --------------------------------------
+
+// The widest RELATIVE leg in a path's ``d`` after its opening move — the
+// arrowhead's real size (absolute coords would pass on the viewBox alone).
+function headDelta(d) {
+  const rel = d.replace(/^[Mm][^A-Za-z]*/, "");
+  const nums = (rel.match(/-?\d+(?:\.\d+)?/g) || []).map(Number);
+  return nums.length ? Math.max(...nums.map(Math.abs)) : 0;
+}
+
+test("ray's arrowhead spans >= 5 units, so it reads at 18px (#223)", () => {
+  const ray = core.iconFor("ray");
+  const heads = (ray.match(/<path d="([^"]+)"/g) || []).map((h) => h.match(/d="([^"]+)"/)[1]);
+  assert.ok(heads.length >= 1, "ray has an arrowhead path");
+  const span = Math.max(...heads.map(headDelta));
+  assert.ok(span >= 5, `arrowhead too small to read: delta ${span}`);
+});
+
+test("fib_ext shows its extension beyond the 0/1 pair via a dashed leg (#223)", () => {
+  const svg = core.iconFor("fib_ext");
+  assert.match(svg, /stroke-dasharray/, "the projection leg is dashed");
+});
+
+test("fib_zone shows a diagonal band, distinct from the fib line stack (#223)", () => {
+  const svg = core.iconFor("fib_zone");
+  const diagonals = (svg.match(/<line [^>]*>/g) || [])
+    .map((l) => ["x1", "y1", "x2", "y2"].map((k) => Number((l.match(new RegExp(k + '="(\\d+)"')) || [])[1])))
+    .filter((c) => c.every((n) => !Number.isNaN(n)) && c[0] !== c[2] && c[1] !== c[3]);
+  assert.ok(diagonals.length >= 1, "a diagonal hatch marks the band");
+});

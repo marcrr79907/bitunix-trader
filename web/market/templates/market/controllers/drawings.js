@@ -7,6 +7,7 @@ import * as Draw from "../drawing-core.js";
 import { makeDrawingPrimitive } from "../drawing-primitive.js";
 import { defaultPositionStyle } from "../position-core.js";
 import { createFlow } from "../drawing-click-flow-core.js";
+import { createDraftPreview } from "./draft-preview.js";
 
 function csrfToken() {
   const meta = document.querySelector('meta[name="csrf-token"]');
@@ -27,6 +28,11 @@ export function createDrawings({ store, bus, host, config }) {
   // the draft belongs to so a switch drops it (the core also resets on a miss).
   const flow = createFlow();
   let flowTool = state.tool;
+  // R2 #222: the transient PREVIEW of a half-collected draft (client-side only —
+  // never POSTed, never in ``currentDrawings``). Re-attached after a rebuild.
+  const preview = createDraftPreview({
+    host, flow, makePrimitive: makeDrawingPrimitive, styleFor: styleFor,
+  });
   let pendingDialog = null; // {kind, points} awaiting the #text-dialog
   let selectedId = null; // interaction selection (closure only; never a store key)
   const selection = { isSelected: function (row) { return row.id === selectedId; } };
@@ -44,6 +50,7 @@ export function createDrawings({ store, bus, host, config }) {
         candleSeries.attachPrimitive(prim);
         attached.push({ id: row.id, prim: prim });
       });
+      preview.attach(candleSeries);
     }
     window.marketChart.drawings = currentDrawings.slice();
     bus.emit("drawings:changed", { rows: currentDrawings.slice() });
@@ -181,6 +188,8 @@ export function createDrawings({ store, bus, host, config }) {
     if (price === null || price === undefined) return;
     const out = flow.collect(state.tool, { time: param.time, price: price });
     if (!out) return;
+    if (out.status === "pending") { preview.sync(); return; }
+    preview.sync();
     if (out.status === "dialog") { openTextDialog(out); return; }
     if (out.status === "ready") createDrawing(out.kind, out.points, styleFor(out.kind, out.points));
   }
@@ -219,16 +228,24 @@ export function createDrawings({ store, bus, host, config }) {
     if (state.tool === flowTool) return;
     flowTool = state.tool;
     flow.cancel(); // a tool switch drops the half-collected draft
+    preview.sync();
+    applyCursor();
   });
 
   // Escape (design-system R6): cancel a half-collected draft (the measure
   // cancels itself in measure.js). Bound once on the #chart container, which
   // survives a rebuild.
   const chartEl = document.getElementById("chart");
+  // R2 #222: crosshair while a tool is active, default when none is.
+  function applyCursor() {
+    if (chartEl && chartEl.style) chartEl.style.cursor = state.tool ? "crosshair" : "";
+  }
+  applyCursor();
   if (chartEl) {
     chartEl.addEventListener("keydown", function (e) {
       if (e.key === "Escape" && flow.active()) {
         flow.cancel();
+        preview.sync();
         e.preventDefault();
       }
     });
@@ -254,6 +271,7 @@ export function createDrawings({ store, bus, host, config }) {
     store.set({ tool: null });
     flowTool = state.tool;
     flow.reset();
+    preview.sync();
     pendingDialog = null;
     selectedId = null; // R14: selection clears with the drawings
     currentDrawings = [];

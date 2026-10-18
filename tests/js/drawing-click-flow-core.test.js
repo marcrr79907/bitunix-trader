@@ -7,7 +7,7 @@ import test from "node:test";
 import assert from "node:assert";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import { createFlow } from "../../web/market/templates/market/drawing-click-flow-core.js";
+import { createFlow, previewRow } from "../../web/market/templates/market/drawing-click-flow-core.js";
 
 const SRC = readFileSync(
   fileURLToPath(new URL("../../web/market/templates/market/drawing-click-flow-core.js", import.meta.url)),
@@ -145,4 +145,38 @@ test("drawing-click-flow-core is pure and imports cores only", () => {
   assert.ok(/from "\.\/drawing-tools-core\.js"/.test(SRC), "imports drawing-tools-core");
   assert.ok(!/from "(?!\.\/(drawing-tools-core|position-core)\.js)/.test(SRC), "no non-core imports");
   assert.ok(!/document\.|window\.|fetch\(/.test(SRC), "no DOM / no network");
+});
+
+// F9 R2 (#222): a pending draft exposes its collected clicks so the controller
+// can render a preview instead of clicking into a void.
+test("peek exposes the pending kind + anchors, and clears on finish/cancel", () => {
+  const flow = createFlow();
+  assert.strictEqual(flow.peek(), null, "no draft yet");
+  flow.collect("channel", at(1, 10));
+  assert.deepStrictEqual(flow.peek(), { kind: "channel", clicks: [at(1, 10)] });
+  flow.collect("channel", at(2, 20));
+  assert.deepStrictEqual(flow.peek(), { kind: "channel", clicks: [at(1, 10), at(2, 20)] });
+  const out = flow.collect("channel", at(3, 30));
+  assert.strictEqual(out.status, "ready");
+  assert.strictEqual(flow.peek(), null, "a finished draft has nothing pending");
+  flow.collect("ray", at(4, 40));
+  flow.cancel();
+  assert.strictEqual(flow.peek(), null, "cancel drops the preview");
+});
+
+// F9 R2 (#222): a pending click list -> a PARTIAL row the preview primitive can
+// draw. Missing anchors stay undefined so the geometry degrades (never throws).
+test("previewRow shapes partial anchors per kind", () => {
+  assert.deepStrictEqual(
+    previewRow("channel", [at(1, 10)]),
+    { kind: "channel", points: { p1: at(1, 10), p2: undefined, p3: undefined } },
+  );
+  assert.deepStrictEqual(previewRow("position", [at(1, 10), at(2, 20)]), {
+    kind: "position",
+    points: { entry: at(1, 10), stop: 20, take_profit: undefined },
+  });
+  assert.deepStrictEqual(previewRow("vline", [at(3, 30)]), {
+    kind: "vline", points: { time: 3 },
+  });
+  assert.strictEqual(previewRow("nope", []), null);
 });
