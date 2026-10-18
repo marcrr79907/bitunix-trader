@@ -1,0 +1,135 @@
+// Pure alert-markers-core tests — node --test (no DOM, no chart lib, no network).
+//
+// Spec chart-alerts R4 (armed/fired markers) + the frozen S4 precedence mirrored
+// from market/views.py:104-116 (fired > armed > inactive > none). The core is
+// pure and imports nothing; LWC v5 marker objects are plain data here.
+import test from "node:test";
+import assert from "node:assert";
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+import {
+  COLORS,
+  stateOf,
+  markersFor,
+} from "../../web/market/templates/market/alert-markers-core.js";
+
+const SRC = readFileSync(
+  fileURLToPath(new URL("../../web/market/templates/market/alert-markers-core.js", import.meta.url)),
+  "utf8",
+);
+
+const ANCHOR = 1729300000;
+
+// --- stateOf: the frozen S4 precedence --------------------------------------
+
+test("stateOf: null rule -> none", () => {
+  assert.strictEqual(stateOf(null), "none");
+  assert.strictEqual(stateOf(undefined), "none");
+});
+
+test("stateOf: fired wins over armed", () => {
+  assert.strictEqual(stateOf({ is_active: true, last_fired_at: 1 }), "fired");
+  assert.strictEqual(stateOf({ is_active: false, last_fired_at: 1 }), "fired");
+});
+
+test("stateOf: active without last_fired_at -> armed", () => {
+  assert.strictEqual(stateOf({ is_active: true, last_fired_at: null }), "armed");
+});
+
+test("stateOf: existing but inactive -> inactive", () => {
+  assert.strictEqual(stateOf({ is_active: false, last_fired_at: null }), "inactive");
+});
+
+test("stateOf: a non-object rule never throws", () => {
+  assert.doesNotThrow(() => stateOf("x"));
+  assert.doesNotThrow(() => stateOf(42));
+  assert.strictEqual(stateOf("x"), "inactive");
+});
+
+// --- markersFor: anchors, shape, text ---------------------------------------
+
+test("markersFor: one marker per active rule, fired anchored at last_fired_at", () => {
+  const rules = [{ condition: { level: 100.5 }, is_active: true, last_fired_at: 1729220400 }];
+  assert.deepStrictEqual(markersFor(rules, ANCHOR), [
+    {
+      time: 1729220400,
+      position: "aboveBar",
+      shape: "arrowDown",
+      text: "F 100.5",
+      color: COLORS.fired,
+    },
+  ]);
+});
+
+test("markersFor: armed anchored at the newest candle, below the bar", () => {
+  const rules = [{ condition: { level: 100.5 }, is_active: true, last_fired_at: null }];
+  assert.deepStrictEqual(markersFor(rules, ANCHOR), [
+    {
+      time: ANCHOR,
+      position: "belowBar",
+      shape: "circle",
+      text: "A 100.5",
+      color: COLORS.armed,
+    },
+  ]);
+});
+
+test("markersFor: armed and fired differ by shape AND text AND position", () => {
+  const [fired] = markersFor([{ condition: { level: 10 }, is_active: true, last_fired_at: 1 }], ANCHOR);
+  const [armed] = markersFor([{ condition: { level: 10 }, is_active: true }], ANCHOR);
+  assert.notStrictEqual(fired.shape, armed.shape);
+  assert.notStrictEqual(fired.position, armed.position);
+  assert.match(fired.text, /^F /);
+  assert.match(armed.text, /^A /);
+});
+
+test("markersFor: inactive rules are omitted", () => {
+  const rules = [{ condition: { level: 10 }, is_active: false, last_fired_at: null }];
+  assert.deepStrictEqual(markersFor(rules, ANCHOR), []);
+});
+
+test("markersFor: a rule without a numeric level is skipped", () => {
+  const rules = [
+    { condition: { level: "10" }, is_active: true, last_fired_at: null },
+    { condition: { level: null }, is_active: true, last_fired_at: null },
+    { condition: null, is_active: true, last_fired_at: null },
+    { condition: { level: 1 }, is_active: true, last_fired_at: null },
+  ];
+  const out = markersFor(rules, ANCHOR);
+  assert.strictEqual(out.length, 1);
+  assert.strictEqual(out[0].text, "A 1");
+});
+
+test("markersFor: a non-finite last_fired_at falls back to the anchor", () => {
+  const rules = [{ condition: { level: 10 }, is_active: true, last_fired_at: "nope" }];
+  const [marker] = markersFor(rules, ANCHOR);
+  assert.strictEqual(marker.time, ANCHOR);
+  assert.strictEqual(marker.text, "F 10");
+});
+
+test("markersFor: a missing/non-finite anchor drops armed rules", () => {
+  const rules = [{ condition: { level: 10 }, is_active: true, last_fired_at: null }];
+  assert.deepStrictEqual(markersFor(rules, null), []);
+  assert.deepStrictEqual(markersFor(rules, NaN), []);
+  assert.deepStrictEqual(markersFor(rules, Infinity), []);
+});
+
+test("markersFor: a non-array rules input -> []", () => {
+  assert.deepStrictEqual(markersFor(null, ANCHOR), []);
+  assert.deepStrictEqual(markersFor({}, ANCHOR), []);
+});
+
+test("markersFor: never throws and never mutates the input", () => {
+  const rules = [{ condition: { level: 10 }, is_active: true, last_fired_at: null }];
+  const snapshot = JSON.parse(JSON.stringify(rules));
+  assert.doesNotThrow(() => markersFor([null, 42, "x", ...rules], ANCHOR));
+  assert.deepStrictEqual(rules, snapshot);
+});
+
+// --- purity ------------------------------------------------------------------
+
+test("alert-markers-core is pure: no imports, no DOM, no network, no globals", () => {
+  assert.ok(!/\bimport\b/.test(SRC), "no imports");
+  assert.ok(!/\bexport\s+\{[^}]+\}\s+from\b/.test(SRC), "no re-exports");
+  assert.ok(!/document\.|window\.|fetch\(|XMLHttpRequest/.test(SRC), "no DOM / no network");
+});
