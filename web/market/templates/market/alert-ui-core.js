@@ -42,21 +42,55 @@ export function listUrl(base, symbol, interval) {
 // the elements, so this stays testable and keeps the controller thin. A fixed
 // horizontal anchor (not the cursor x) keeps the target still — an x that
 // tracked the pointer would move under it and no click could land.
+//
+// A native ``disabled`` button is removed from the tab order, so its
+// ``aria-describedby`` reason is never announced (F10 UI #234). The bell stays
+// a focusable ``aria-disabled`` button instead; the caller skips the action.
 export function paintBell(bell, cursor, interval, hovering, reasonEl) {
   if (!bell || hovering) return;
   bell.hidden = !cursor;
   if (!cursor) return;
   bell.style.top = cursor.y + "px";
   bell.setAttribute("aria-label", "Create price alert at " + fmtPrice(cursor.price));
-  bell.disabled = !eligible(interval);
+  bell.disabled = false;
   if (eligible(interval)) {
+    bell.removeAttribute("aria-disabled");
     bell.removeAttribute("aria-describedby");
     bell.removeAttribute("title");
     return;
   }
+  bell.setAttribute("aria-disabled", "true");
   bell.setAttribute("aria-describedby", "alert-interval-reason");
   bell.setAttribute("title", reasonText(interval));
   if (reasonEl) reasonEl.textContent = reasonText(interval);
+}
+
+// The bell's right offset, in px, so it clears the price scale instead of
+// covering the crosshair price tag and the axis' drag strip (F10 UI #234).
+// ``scaleWidth + sp-2`` where sp-2 is the shell's 8px gap token; a non-number or
+// non-positive width returns null so the caller keeps the CSS default.
+export function bellRight(scaleWidth) {
+  if (typeof scaleWidth !== "number" || !isFinite(scaleWidth) || scaleWidth <= 0) return null;
+  return Math.round(scaleWidth) + 8 + "px";
+}
+
+// Dialog cue for an edit-in-place write (F10 UI #234): ``nearRule`` silently
+// turned Apply into a PUT, so the dialog must say so. Null when there is no
+// target (a create needs no cue).
+export function editCueText(target) {
+  if (!target || !target.condition) return null;
+  const level = target.condition.level;
+  if (typeof level !== "number" || !isFinite(level)) return null;
+  return "Updates the existing " + fmtPrice(level) + " alert";
+}
+
+// Visible confirmation after a successful Apply (F10 UI #234): the dialog is
+// closed by then, so a static live region has to say what landed.
+export function successText(condition, target) {
+  if (!condition) return "";
+  const level = condition.level;
+  if (typeof level !== "number" || !isFinite(level)) return "";
+  return "Alert at " + fmtPrice(level) + (target ? " updated" : " armed");
 }
 
 // The existing price rule whose level is nearest ``pxY`` within ``nearPx``

@@ -217,7 +217,10 @@ def test_bell_is_disabled_on_a_non_evaluable_interval(seeded_5m_alert, browser_p
         timeout=10000,
     )
     bell = _hover_plot(page)
-    assert bell.is_disabled()
+    # #234: a native ``disabled`` button leaves the tab order, so the reason is
+    # never announced. The bell is inert via aria-disabled and stays focusable.
+    assert not bell.is_disabled()
+    assert bell.get_attribute("aria-disabled") == "true"
     assert bell.get_attribute("aria-describedby") == "alert-interval-reason"
     reason = page.locator("#alert-interval-reason").inner_text()
     assert "3d" in reason

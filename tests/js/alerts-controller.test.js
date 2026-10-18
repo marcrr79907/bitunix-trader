@@ -38,6 +38,12 @@ function makeEl(tag) {
     showModal() { this.open = true; },
     close(v) { this.open = false; this.returnValue = v || ""; this.fire("close", {}); },
     focus() { globalThis.document.activeElement = this; },
+    classList: {
+      _set: new Set(),
+      add(c) { this._set.add(c); },
+      remove(c) { this._set.delete(c); },
+      contains(c) { return this._set.has(c); },
+    },
     click() { this.fire("click", { preventDefault() {} }); },
   };
   return el;
@@ -60,6 +66,10 @@ function installDom() {
   const error = makeEl("p");
   const status = makeEl("p");
   const reason = makeEl("p");
+  const cue = makeEl("p");
+  cue.hidden = true;
+  const confirm = makeEl("p");
+  confirm.hidden = true;
   const els = {
     chart: chartEl,
     "alert-dialog": dialog,
@@ -68,6 +78,8 @@ function installDom() {
     "alert-error": error,
     "alert-status": status,
     "alert-interval-reason": reason,
+    "alert-cue": cue,
+    "alert-confirm": confirm,
   };
   const prevDoc = globalThis.document;
   const prevLwc = globalThis.LightweightCharts;
@@ -120,17 +132,22 @@ function installDom() {
   };
 }
 
-function makeHost(candles) {
+function makeHost(candles, scaleWidth) {
   let crosshair = null;
+  const series = {
+    coordinateToPrice: (y) => 200 - y, // 100 at y=100
+    priceToCoordinate: (p) => 200 - p,
+  };
   return {
     candles,
     subscribeCrosshairMove(fn) { crosshair = fn; },
     move(param) { if (crosshair) crosshair(param); },
     getCandles: () => candles,
-    getCandleSeries: () => ({
-      coordinateToPrice: (y) => 200 - y, // 100 at y=100
-      priceToCoordinate: (p) => 200 - p,
+    getCandleSeries: () => series,
+    getChart: () => ({
+      priceScale: () => ({ width: () => scaleWidth }),
     }),
+    setCandles(next) { candles = next; },
   };
 }
 
@@ -138,11 +155,11 @@ async function settle() {
   for (let i = 0; i < 8; i += 1) await Promise.resolve();
 }
 
-function fixture({ interval = "1h", candles = [{ time: 5, close: 90 }] } = {}) {
+function fixture({ interval = "1h", candles = [{ time: 5, close: 90 }], scaleWidth = 64 } = {}) {
   const dom = installDom();
   const bus = createBus();
   const store = makeStore({ symbol: "BTCUSDT", interval });
-  const host = makeHost(candles);
+  const host = makeHost(candles, scaleWidth);
   const alerts = createAlerts({
     store,
     bus,
@@ -170,21 +187,93 @@ test("bell follows the crosshair and hides without a point", async () => {
   } finally { f.dom.restore(); }
 });
 
-test("bell is disabled with a described reason on a non-evaluable interval", async () => {
+test("bell stays focusable with a described reason on a non-evaluable interval (#234)", async () => {
   const f = fixture({ interval: "3d" });
   try {
     const bell = f.dom.els.chart.children.find((c) => c.id === "chart-alert-bell");
     f.host.move({ point: { x: 10, y: 100 } });
-    assert.strictEqual(bell.disabled, true);
+    // A native ``disabled`` button leaves the tab order, so its reason is never
+    // announced. It must stay focusable and inert instead.
+    assert.notStrictEqual(bell.disabled, true);
+    assert.strictEqual(bell.getAttribute("aria-disabled"), "true");
     assert.strictEqual(bell.getAttribute("aria-describedby"), "alert-interval-reason");
     assert.match(f.dom.els["alert-interval-reason"].textContent, /3d/);
+
+    bell.click();
+    assert.strictEqual(f.dom.els["alert-dialog"].open, false, "the action is skipped");
 
     f.store.set({ interval: "1h" });
     await f.alerts.refresh(); // main.refresh() on a pair switch
     f.host.move({ point: { x: 10, y: 100 } });
-    assert.strictEqual(bell.disabled, false);
+    assert.strictEqual(bell.getAttribute("aria-disabled"), undefined);
     assert.strictEqual(bell.getAttribute("aria-describedby"), undefined);
     assert.strictEqual(f.dom.requests.length, 1, "the 3d fetch is skipped, 1h fetches");
+  } finally { f.dom.restore(); }
+});
+
+test("the bell is offset by the price-scale width so it clears the axis (#234)", async () => {
+  const f = fixture({ scaleWidth: 64 });
+  try {
+    const bell = f.dom.els.chart.children.find((c) => c.id === "chart-alert-bell");
+    assert.strictEqual(bell.style.right, "72px", "64px axis + the 8px gap");
+  } finally { f.dom.restore(); }
+});
+
+test("a stale bell hides when the pointer leaves it after the crosshair cleared (#234)", async () => {
+  const f = fixture();
+  try {
+    const bell = f.dom.els.chart.children.find((c) => c.id === "chart-alert-bell");
+    f.host.move({ point: { x: 10, y: 100 } });
+    assert.strictEqual(bell.hidden, false);
+    bell.fire("pointerenter", { type: "pointerenter" });
+    f.host.move({}); // LWC clears the crosshair while the pointer is on the bell
+    assert.strictEqual(bell.hidden, false, "the bell must survive the hover");
+    bell.fire("pointerleave", { type: "pointerleave" });
+    assert.strictEqual(bell.hidden, true, "leaving a stale bell hides it");
+  } finally { f.dom.restore(); }
+});
+
+test("the dialog names the alert a near rule would update (#234)", async () => {
+  const f = fixture();
+  f.dom.seed([
+    { id: 7, condition: { type: "price", op: "above", level: 100.5 }, is_active: true, last_fired_at: null },
+  ]);
+  try {
+    await settle();
+    f.host.move({ point: { x: 10, y: 100 } }); // 0.5px from 100.5
+    const bell = f.dom.els.chart.children.find((c) => c.id === "chart-alert-bell");
+    bell.click();
+    const cue = f.dom.els["alert-cue"];
+    assert.strictEqual(cue.hidden, false);
+    assert.match(cue.textContent, /Updates the existing 100\.5 alert/);
+  } finally { f.dom.restore(); }
+});
+
+test("a successful Apply flashes a visible confirmation (#234)", async () => {
+  const f = fixture();
+  try {
+    f.host.move({ point: { x: 10, y: 100 } });
+    const bell = f.dom.els.chart.children.find((c) => c.id === "chart-alert-bell");
+    bell.click();
+    f.dom.els["alert-dialog"].close("ok");
+    await settle();
+    const confirm = f.dom.els["alert-confirm"];
+    assert.strictEqual(confirm.hidden, false);
+    assert.strictEqual(confirm.textContent, "Alert at 100 armed");
+  } finally { f.dom.restore(); }
+});
+
+test("armed markers re-anchor when a candle closes (#234)", async () => {
+  const f = fixture({ candles: [{ time: 5, close: 90 }] });
+  f.dom.seed([
+    { id: 1, condition: { type: "price", op: "above", level: 100 }, is_active: true, last_fired_at: null },
+  ]);
+  try {
+    await settle();
+    assert.strictEqual(f.dom.handles[0].list[0].time, 5);
+    f.host.setCandles([{ time: 5, close: 90 }, { time: 60, close: 95 }]);
+    f.bus.emit("candle:closed", { time: 60 });
+    assert.strictEqual(f.dom.handles[0].list[0].time, 60, "re-anchored on the closed candle");
   } finally { f.dom.restore(); }
 });
 
