@@ -40,6 +40,9 @@ function priceRangeFor(row) {
 // ``selected``, strokes are thicker and the per-kind handle dots are drawn.
 function renderShape(ctx, size, row, map, selected) {
   const kind = row.kind;
+  // F9 #219: hand the live canvas width to the pure geometry (a ray needs its
+  // right edge); the map is shared, so refresh it on every draw.
+  if (map && size && typeof size.width === "number") map.right = size.width;
   ctx.save();
   // F5 S3 (R6): a hidden drawing stays attached but draws NOTHING. Reveal is a
   // requestUpdate only (the primitive reads ``row.visible`` live each render).
@@ -215,9 +218,13 @@ function makeDrawingPrimitive(row, selection) {
     return typeof s === "function" ? !!s(row) : !!s;
   };
   const c = { chart: null, series: null, requestUpdate: null };
+  // F9 #219: ``right`` is the live canvas right edge, refreshed per draw so a
+  // ray extends to the pane edge instead of stopping at p2 (trendline shape).
+  // The map is built before a media size exists, so it starts at null.
   const map = {
     x: function (time) { return c.chart ? c.chart.timeScale().timeToCoordinate(time) : null; },
     y: function (price) { return c.series ? c.series.priceToCoordinate(price) : null; },
+    right: null,
   };
   return {
     attached: function (p) { c.chart = p.chart; c.series = p.series; c.requestUpdate = p.requestUpdate; },

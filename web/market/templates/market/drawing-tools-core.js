@@ -11,14 +11,32 @@
 // pure and NEVER throws; a null row / off-bar map degrades to null/[]/false.
 import { FIB_RATIOS } from "./drawing-core.js";
 import { FIB_EXT_RATIOS, fibExtLevels, fibTimePath, fibZoneBands } from "./fib-tools-core.js";
+import { token } from "./theme-core.js";
 
 const NEW_KINDS = [
   "ray", "vline", "channel", "price", "callout", "fib_ext", "fib_time", "fib_zone",
 ];
+// F9 #221: each kind owns a distinct --draw-* shell token so the canvas follows
+// the light/dark palette. The literals below are the DOM-less fallback (node
+// tests, unthemed shell) and match the dark set in theme.css.
 const COLORS = {
-  ray: "#ff6d00", vline: "#2962ff", channel: "#26a69a", price: "#ef5350",
-  callout: "#e6edf3", fib_ext: "#7e57c2", fib_time: "#7e57c2", fib_zone: "#7e57c2",
+  ray: "#ffb74d", vline: "#82b1ff", channel: "#80cbc4", price: "#ff8a80",
+  callout: "#e6edf3", fib_ext: "#b388ff", fib_time: "#4dd0e1", fib_zone: "#ce93d8",
 };
+const TOKENS = {
+  ray: "--draw-ray", vline: "--draw-vline", channel: "--draw-channel",
+  price: "--draw-price", callout: "--draw-callout", fib_ext: "--draw-fib-ext",
+  fib_time: "--draw-fib-time", fib_zone: "--draw-fib-zone",
+};
+
+// A descriptor style whose colour is resolved at READ time, so a theme switch
+// repaints without re-seeding rows (the core stays pure; token() is DOM-guarded).
+function styleFor(kind) {
+  return {
+    get color() { return token(TOKENS[kind], COLORS[kind]); },
+    lineWidth: 1,
+  };
+}
 const R = 4; // body hit radius (px), mirrors drawing-interaction-core BODY_RADIUS
 
 // --- helpers ----------------------------------------------------------------
@@ -111,9 +129,11 @@ const calloutPath = (row, map) => ({
   a: P(row.points.p1, map), b: P(row.points.p2, map), text: row.points.text,
 });
 
+// F9 #220: p1..p3 span the drawn extent — p3 is a live handle and feeds
+// autoscale, so leaving it out of the geometry made the third click invisible.
 const fibExtPath = (row, map) => ({
   x1: map.x(row.points.p1 && row.points.p1.time),
-  x2: map.x(row.points.p2 && row.points.p2.time),
+  x2: map.x((row.points.p3 && row.points.p3.time) ?? (row.points.p2 && row.points.p2.time)),
   levels: fibExtLevels(row.points, map, FIB_EXT_RATIOS),
 });
 
@@ -136,13 +156,13 @@ const segHit = (pathFn) => (pts, x, y, map) => {
 
 const TOOL_SPECS = {
   ray: {
-    clicks: 2, style: { color: COLORS.ray, lineWidth: 1 }, path: rayPath,
+    clicks: 2, style: styleFor("ray"), path: rayPath,
     handles: handlesOf(["p1", "p2"]),
     bodyHit: segHit(rayPath),
     drag: dragOf(["p1", "p2"]),
   },
   vline: {
-    clicks: 1, style: { color: COLORS.vline, lineWidth: 1 }, path: vlinePath,
+    clicks: 1, style: styleFor("vline"), path: vlinePath,
     handles: (pts, map) => {
       const x = map.x(pts.time);
       return x === null || x === undefined ? [] : [{ id: "time", x: x, y: 0 }];
@@ -151,7 +171,7 @@ const TOOL_SPECS = {
     drag: (pts, target, dx, dy, map) => ({ time: mv(map.x(pts.time), dx, map.time, pts.time) }),
   },
   channel: {
-    clicks: 3, style: { color: COLORS.channel, lineWidth: 1 }, path: channelPath,
+    clicks: 3, style: styleFor("channel"), path: channelPath,
     handles: handlesOf(["p1", "p2", "p3"]),
     bodyHit: (pts, x, y, map) => {
       const v = channelPath({ points: pts }, map);
@@ -160,7 +180,7 @@ const TOOL_SPECS = {
     drag: dragOf(["p1", "p2", "p3"]),
   },
   price: {
-    clicks: 1, style: { color: COLORS.price, lineWidth: 1 }, path: pricePath,
+    clicks: 1, style: styleFor("price"), path: pricePath,
     handles: (pts, map) => {
       const y = map.y(pts.price);
       return y === null || y === undefined ? [] : [{ id: "price", x: 0, y: y }];
@@ -169,7 +189,7 @@ const TOOL_SPECS = {
     drag: (pts, target, dx, dy, map) => ({ price: mv(map.y(pts.price), dy, map.price, pts.price) }),
   },
   callout: {
-    clicks: 2, style: { color: COLORS.callout, lineWidth: 1 }, path: calloutPath,
+    clicks: 2, style: styleFor("callout"), path: calloutPath,
     handles: handlesOf(["p1", "p2"]),
     bodyHit: (pts, x, y, map) => {
       const a = P(pts.p1, map);
@@ -179,7 +199,7 @@ const TOOL_SPECS = {
     drag: dragOf(["p1", "p2"]),
   },
   fib_ext: {
-    clicks: 3, style: { color: COLORS.fib_ext, lineWidth: 1 }, path: fibExtPath,
+    clicks: 3, style: styleFor("fib_ext"), path: fibExtPath,
     handles: handlesOf(["p1", "p2", "p3"]),
     bodyHit: (pts, x, y, map) => {
       const v = fibExtPath({ points: pts }, map);
@@ -192,7 +212,7 @@ const TOOL_SPECS = {
     drag: dragOf(["p1", "p2", "p3"]),
   },
   fib_time: {
-    clicks: 2, style: { color: COLORS.fib_time, lineWidth: 1 }, path: fibTimePathFor,
+    clicks: 2, style: styleFor("fib_time"), path: fibTimePathFor,
     handles: handlesOf(["p1", "p2"]),
     bodyHit: (pts, x, y, map) => {
       const v = fibTimePath(pts, map);
@@ -201,7 +221,7 @@ const TOOL_SPECS = {
     drag: dragOf(["p1", "p2"]),
   },
   fib_zone: {
-    clicks: 2, style: { color: COLORS.fib_zone, lineWidth: 1 }, path: fibZonePath,
+    clicks: 2, style: styleFor("fib_zone"), path: fibZonePath,
     handles: handlesOf(["p1", "p2"]),
     bodyHit: (pts, x, y, map) => {
       const v = fibZonePath({ points: pts }, map);

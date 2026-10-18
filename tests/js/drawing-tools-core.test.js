@@ -185,8 +185,130 @@ test("toolDrag never throws and returns fresh points on an unknown kind", () => 
   assert.deepStrictEqual(toolDrag("ray", null, "p1", 1, 1, MAP), {});
 });
 
-test("drawing-tools-core imports only pure cores (drawing-core/fib-tools-core)", () => {
+test("drawing-tools-core imports only pure cores + the DOM-guarded token read", () => {
   assert.ok(/from "\.\/fib-tools-core\.js"/.test(SRC), "imports fib-tools-core");
-  assert.ok(!/from "(?!\.\/(drawing-core|fib-tools-core)\.js)/.test(SRC), "no other imports");
+  // #221: theme-core.token is the one DOM-touching import, guarded to a fallback.
+  assert.ok(/from "\.\/theme-core\.js"/.test(SRC), "imports theme-core token()");
+  assert.ok(!/from "(?!\.\/(drawing-core|fib-tools-core|theme-core)\.js)/.test(SRC),
+    "no other imports");
   assert.ok(!/document\.|window\.|fetch\(/.test(SRC), "no DOM / no network");
+});
+
+// --- F9 #221: per-kind palette resolves theme tokens -------------------------
+
+// DOM shim: theme-core.token reads getComputedStyle on the document element.
+function withTokens(values, fn) {
+  const prevDoc = globalThis.document;
+  const prevGcs = globalThis.getComputedStyle;
+  globalThis.document = { documentElement: {} };
+  globalThis.getComputedStyle = () => ({ getPropertyValue: (n) => values[n] || "" });
+  try {
+    return fn();
+  } finally {
+    if (prevDoc === undefined) delete globalThis.document;
+    else globalThis.document = prevDoc;
+    if (prevGcs === undefined) delete globalThis.getComputedStyle;
+    else globalThis.getComputedStyle = prevGcs;
+  }
+}
+
+const TOKEN_OF = {
+  ray: "--draw-ray", vline: "--draw-vline", channel: "--draw-channel",
+  price: "--draw-price", callout: "--draw-callout", fib_ext: "--draw-fib-ext",
+  fib_time: "--draw-fib-time", fib_zone: "--draw-fib-zone",
+};
+
+test("defaultToolStyle resolves each kind's --draw-* token, not the literal (#221)", () => {
+  // Deliberately NON-palette values so a hard-coded literal fails.
+  const stub = {};
+  Object.keys(TOKEN_OF).forEach((k, i) => { stub[TOKEN_OF[k]] = `#00000${i}`; });
+  withTokens(stub, () => {
+    Object.keys(TOKEN_OF).forEach((k) => {
+      assert.strictEqual(defaultToolStyle(k).color, stub[TOKEN_OF[k]], k);
+    });
+  });
+});
+
+test("defaultToolStyle falls back to a per-kind literal without a DOM (#221)", () => {
+  Object.keys(TOKEN_OF).forEach((k) => {
+    const c = defaultToolStyle(k).color;
+    assert.match(c, /^#[0-9a-f]{6}$/i, k + " literal fallback");
+  });
+  // Every kind seeds a DISTINCT colour (ray != trendline, vline != hline, fibs differ).
+  const all = NEW_KINDS.map((k) => defaultToolStyle(k).color);
+  assert.strictEqual(new Set(all).size, NEW_KINDS.length, "distinct per kind: " + all);
+});
+
+// F9 #221: the LIGHT theme drawing tokens must be legible on the white canvas.
+// WCAG 2.x relative luminance (same helper as theme-core.test.js).
+function srgbChannel(c) {
+  const v = c / 255;
+  return v <= 0.03928 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4);
+}
+function luminance(hex) {
+  const h = hex.replace("#", "");
+  return (
+    0.2126 * srgbChannel(parseInt(h.slice(0, 2), 16)) +
+    0.7152 * srgbChannel(parseInt(h.slice(2, 4), 16)) +
+    0.0722 * srgbChannel(parseInt(h.slice(4, 6), 16))
+  );
+}
+function contrastRatio(a, b) {
+  const la = luminance(a);
+  const lb = luminance(b);
+  return (Math.max(la, lb) + 0.05) / (Math.min(la, lb) + 0.05);
+}
+
+// Parse the two theme.css blocks into {dark, light} token maps.
+function themeTokens() {
+  const css = readFileSync(
+    fileURLToPath(new URL(
+      "../../web/accounts/templates/registration/theme.css", import.meta.url)),
+    "utf8",
+  );
+  const block = (sel) => {
+    const m = css.match(new RegExp(sel + "\\{([^}]*)\\}"));
+    const out = {};
+    if (m) {
+      m[1].replace(/\/\*[\s\S]*?\*\//g, "").split(";").forEach((decl) => {
+        const i = decl.indexOf(":");
+        if (i > 0) out[decl.slice(0, i).trim()] = decl.slice(i + 1).trim();
+      });
+    }
+    return out;
+  };
+  return { dark: block(":root"), light: block('\\[data-theme="light"\\]') };
+}
+
+test("every --draw-* token exists in BOTH theme sets (#221)", () => {
+  const { dark, light } = themeTokens();
+  const names = Object.values(TOKEN_OF);
+  names.forEach((n) => {
+    assert.ok(dark[n], `${n} missing from :root`);
+    assert.ok(light[n], `${n} missing from [data-theme="light"]`);
+  });
+});
+
+test("light --draw-* tokens meet WCAG contrast on the white canvas (#221)", () => {
+  const { light } = themeTokens();
+  const CANVAS = "#ffffff";
+  Object.keys(TOKEN_OF).forEach((kind) => {
+    const v = light[TOKEN_OF[kind]];
+    const ratio = contrastRatio(v, CANVAS);
+    // 11px canvas labels (fib ratios, price tags) need 4.5:1; strokes 3:1.
+    const min = ["fib_ext", "fib_time", "fib_zone", "price", "callout"].includes(kind)
+      ? 4.5 : 3;
+    assert.ok(ratio >= min, `${kind} ${v} on ${CANVAS} = ${ratio.toFixed(2)}:1 < ${min}`);
+  });
+});
+
+test("dark --draw-* tokens are legible on the dark canvas (#221)", () => {
+  const { dark } = themeTokens();
+  const CANVAS = "#0e1117";
+  Object.keys(TOKEN_OF).forEach((kind) => {
+    const ratio = contrastRatio(dark[TOKEN_OF[kind]], CANVAS);
+    const min = ["fib_ext", "fib_time", "fib_zone", "price", "callout"].includes(kind)
+      ? 4.5 : 3;
+    assert.ok(ratio >= min, `${kind} ${dark[TOKEN_OF[kind]]} = ${ratio.toFixed(2)}:1 < ${min}`);
+  });
 });

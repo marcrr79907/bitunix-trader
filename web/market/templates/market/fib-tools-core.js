@@ -38,7 +38,8 @@ function swingPrices(points) {
 }
 
 // A 3-point fib_ext swing -> [{ratio, price, y}]. ratio 0 == p2; ratio 1 sits at
-// 2*p2 - p1 (the leg projected BEYOND p2); p3 provides x extent only (unused here).
+// 2*p2 - p1 (the leg projected BEYOND p2). The x extent comes from p1..p3 and is
+// owned by drawing-tools-core.fibExtPath, not by these price levels.
 function fibExtLevels(points, map, ratios) {
   try {
     var sp = swingPrices(points);

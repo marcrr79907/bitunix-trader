@@ -16,11 +16,12 @@ function recordingCtx() {
   const ctx = {
     calls,
     fills: [], // fillStyle captured at each fillRect (F6 UI #193 zone colours)
+    lines: [], // lineTo end points ({x,y}) for geometry assertions
     save: () => calls.push("save"),
     restore: () => calls.push("restore"),
     beginPath: () => calls.push("beginPath"),
     moveTo: () => calls.push("moveTo"),
-    lineTo: () => calls.push("lineTo"),
+    lineTo: (x, y) => { calls.push("lineTo"); ctx.lines.push({ x, y }); },
     stroke: () => calls.push("stroke"),
     strokeRect: () => calls.push("strokeRect"),
     fillRect: () => { calls.push("fillRect"); ctx.fills.push(ctx.fillStyle); },
@@ -155,6 +156,15 @@ test("position zones fall back to the literals with no DOM (R9)", () => {
 // --- F9 kinds render dispatch (F9 S3 R6) -------------------------------------
 
 const MAPR = { x: (t) => t, y: (p) => p, right: 1000 };
+
+// Render one row through renderShape and return every line end point (lineTo),
+// so a test can assert the real drawn extent rather than a pure-core return.
+function renderShapeLines(row) {
+  const ctx = recordingCtx();
+  renderShape(ctx, { width: 300, height: 300 }, row, MAPR, false);
+  return ctx.lines;
+}
+
 
 // One representative row per F9 kind.
 const F9_ROWS = {
@@ -299,4 +309,45 @@ test("an F9 primitive never calls setData/update (option-only, #68/#217)", () =>
     prim.requestUpdate();
     assert.strictEqual(updates, 1, `${kind} redraws via requestUpdate only`);
   }
+});
+
+// F9 #219: the PRIMITIVE's real map (not the synthetic MAPR) must carry the
+// canvas right edge, or rayPath falls back to p1->p2 and a ray renders like a
+// trendline. Drive the real paneView/draw path with a 1000px-wide media space.
+test("ray extends to the real media right edge through the primitive map (#219)", () => {
+  const ctx = recordingCtx();
+  const row = {
+    id: 2, kind: "ray",
+    points: { p1: { time: 0, price: 0 }, p2: { time: 10, price: 10 } },
+    style: { color: "#2962ff", lineWidth: 1 },
+  };
+  const chart = { timeScale: () => ({ timeToCoordinate: (t) => t }) };
+  const series = { priceToCoordinate: (p) => p };
+  const prim = makeDrawingPrimitive(row, {});
+  prim.attached({ chart, series, requestUpdate() {} });
+  prim.paneViews()[0].renderer().draw({
+    useMediaCoordinateSpace: (fn) => fn({ context: ctx, mediaSize: { width: 1000, height: 400 } }),
+  });
+  assert.strictEqual(ctx.lines.length, 1, "one ray segment");
+  // slope 1 through (0,0): the tip is at x=1000, y=1000 — NOT p2's x=10.
+  assert.deepStrictEqual(ctx.lines[0], { x: 1000, y: 1000 });
+});
+
+// F9 #220: fib_ext's third click is a draggable handle and feeds autoscale, so
+// it MUST also bound the drawn x extent. Before the fix only p1/p2 sized the
+// levels, so dragging p3 changed nothing on screen.
+test("fib_ext uses p3 as its right x extent, so dragging p3 moves it (#220)", () => {
+  const base = {
+    id: 3, kind: "fib_ext", style: {},
+    points: { p1: { time: 0, price: 0 }, p2: { time: 10, price: 10 }, p3: { time: 20, price: 20 } },
+  };
+  const near = renderShapeLines(base);
+  assert.ok(near.length > 0, "fib_ext draws its levels");
+  assert.ok(near.every((l) => l.x === 20), `right extent is p3.time: ${JSON.stringify(near)}`);
+
+  // Drag p3 one bar to the right: the extent follows; p1 still anchors the left.
+  const dragged = { ...base, points: { ...base.points, p3: { time: 30, price: 20 } } };
+  const far = renderShapeLines(dragged);
+  assert.ok(far.every((l) => l.x === 30), `right extent follows p3: ${JSON.stringify(far)}`);
+  assert.notDeepStrictEqual(far, near, "the drawn extent actually moved");
 });
