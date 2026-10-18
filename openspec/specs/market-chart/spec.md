@@ -603,7 +603,9 @@ Modules MUST follow a frozen inventory: entry `chart.js` (thin: Django-injected
 `smc-overlay-core.js`/`legend-core.js`/`indicator-settings-core.js`/
 `chart-types-core.js`/`theme-core.js`/`tool-icons-core.js`/`chart-registry-core.js`/
 `add-indicator-core.js`/`measure-core.js`/`position-core.js`/`position-draft-core.js`/
-`readout-coalesce-core.js`/`history-core.js`/`context-menu-core.js`,
+`readout-coalesce-core.js`/`history-core.js`/`context-menu-core.js`/
+`drawing-tools-core.js`/`fib-tools-core.js`/`drawing-click-flow-core.js`/
+`tool-render-core.js`/`object-tree-dom-core.js`,
 `chart-store.js` (UI/config state ONLY — MUST NOT hold candle data; its vocabulary
 is `symbol, interval, indicators, params, styles, smc, scaleMode, chartType, theme,
 tool, indicatorVisible`), `chart-bus.js`, `chart-host.js` (chart/series/panes/
@@ -613,31 +615,38 @@ the candle series, the raw `candles` array, and the incremental HA state;
 factory `createCandles(chart, chartType) -> {getCandleSeries, getCandles,
 setCandles, updateCandle, remove}`),
 `controllers/{indicators,history,stream,drawings,drawing-interaction,smc,toolbar,
-legend,draw-toolbar,object-tree,preference,measure,position-seed,undo,context-menu}.js`,
+legend,draw-toolbar,object-tree,preference,measure,position-seed,undo,context-menu,
+draft-preview}.js`,
 and `main.js` (ALL orchestration + boot/switch). No module MUST exceed ~300 lines.
 Controllers MUST import host/store/bus directly but MUST NOT import `main`;
 commands MUST travel the bus, so `main.js` has no circular imports. Every imported
 module MUST be served same-origin under `/market/` via its Django route (core →
 `MODULE_ALLOWLIST`, controller → `CONTROLLER_ALLOWLIST`); `MODULE_ALLOWLIST`
-(`views.py:44-65`) MUST include `measure-core`, `position-core`,
-`position-draft-core`, `readout-coalesce-core`, `history-core`, and
-`context-menu-core`; `CONTROLLER_ALLOWLIST`
-(`views.py:66-81`) MUST include `measure`, `position-seed`, `undo`, and
-`context-menu` (15 entries total). The size rule
+(`views.py:44-75`, 28 entries) MUST include `measure-core`, `position-core`,
+`position-draft-core`, `readout-coalesce-core`, `history-core`, `context-menu-core`,
+`drawing-tools-core`, `fib-tools-core`, `drawing-click-flow-core`,
+`tool-render-core`, and `object-tree-dom-core`; `CONTROLLER_ALLOWLIST`
+(`views.py:76-95`, **16** entries) MUST include `measure`, `position-seed`, `undo`,
+`context-menu`, and `draft-preview`. The size rule
 MUST be enforced by the committed guard `tests/web/test_module_size_guard.py`
 (`CEILING = 300`; scans `web/market/templates/market/**/*.js` via `rglob` +
 `splitlines()`). The guard's `ALLOWLIST` MUST be empty — no module is exempt.
 `chart-host.js` MUST be ≤ ~300 lines. Any module above `CEILING` MUST fail the
-guard.
+guard. `controllers/smc.js` (300) MUST stay byte-untouched; `controllers/
+object-tree.js` (299 before F9) SHRINKS to 263 by moving its row-DOM factories to
+`object-tree-dom-core.js`, giving the ceiling back its headroom.
 (Previously: the pure-core list had no `measure-core`/`position-core`/
 `position-draft-core`/`readout-coalesce-core`; the controller inventory had 11
 entries and no `measure`/`position-seed`.)
 (Previously: the pure-core list had no `history-core`/`context-menu-core`; the
 controller inventory had 13 entries and no `undo`/`context-menu`.)
+(Previously: the pure-core list had no `drawing-tools-core`/`fib-tools-core`/
+`drawing-click-flow-core`/`tool-render-core`/`object-tree-dom-core`; the
+controller inventory had 15 entries and no `draft-preview`.)
 
 #### Scenario: Inventory and no-cycle
 
-- GIVEN the delivered modules, WHEN imports resolve, THEN the inventory (including `tool-icons-core.js`, `chart-registry-core.js`, `chart-host-candles.js`, `theme-core.js`, `history-core.js`, `context-menu-core.js`, `controllers/undo.js`, and `controllers/context-menu.js`) exists, `theme-core.js` imports nothing, no controller imports `main`, and `main.js` has no cycles
+- GIVEN the delivered modules, WHEN imports resolve, THEN the inventory (including `drawing-tools-core.js`, `fib-tools-core.js`, `drawing-click-flow-core.js`, `tool-render-core.js`, `object-tree-dom-core.js`, `theme-core.js`, `history-core.js`, `context-menu-core.js`, and `controllers/undo.js`/`controllers/context-menu.js`/`controllers/draft-preview.js`) exists, `theme-core.js` imports nothing, no controller imports `main`, and `main.js` has no cycles (`test_market_ux.py::test_import_graph_routes_resolve`)
 
 #### Scenario: Store never holds candles
 
@@ -646,47 +655,36 @@ controller inventory had 13 entries and no `undo`/`context-menu`.)
 #### Scenario: Size ceiling with empty allowlist
 
 - GIVEN every module, WHEN `tests/web/test_module_size_guard.py` reads line counts
-- THEN it passes at `CEILING = 300` with an EMPTY `ALLOWLIST` (no exemption), `chart-host.js` stays ≤ ~300 lines, and any module above the ceiling fails
+- THEN it passes at `CEILING = 300` with an EMPTY `ALLOWLIST`, `drawings.js` SHRINKS (click flow extracted; 298→282), `object-tree.js` SHRINKS (299→263), `smc.js` is byte-untouched, and any module above the ceiling fails
 
-#### Scenario: New cores and controllers are served
+#### Scenario: New cores are served
 
-- GIVEN `measure-core`, `position-core`, `position-draft-core`,
-  `readout-coalesce-core`, `history-core`, `context-menu-core`,
-  `controllers/measure`, `controllers/position-seed`, `controllers/undo`, and
-  `controllers/context-menu`
+- GIVEN `drawing-tools-core`, `fib-tools-core`, `drawing-click-flow-core`, `tool-render-core`, and `object-tree-dom-core`
 - WHEN requested under `/market/` with a JS MIME type
-- THEN each is served 200 (present in the matching allowlist; missing → 404 → blank chart; `test_market_ux.py::test_f6_cores_and_measure_controller_are_served`, `::test_f7_cores_and_controllers_are_served`)
+- THEN each is served 200 (present in `MODULE_ALLOWLIST`; missing → 404 → blank chart; `test_market_ux.py::test_f9_cores_are_served`)
 
-#### Scenario: Controller allowlist count grows
+#### Scenario: Controller allowlist count is 16
 
 - GIVEN `CONTROLLER_ALLOWLIST`
 - WHEN inspected
-- THEN it holds **15** entries and `tests/web/test_market_ux.py` asserts the count
-  `== 15` and passes unedited elsewhere — the 13 prior entries plus `undo` (F7 S2)
-  and `context-menu` (F7 S3).
-
-#### Scenario: New theme core is served
-
-- GIVEN `theme-core`, WHEN requested under `/market/` with a JS MIME type, THEN it is served 200 (missing from the allowlist → 404 → blank chart)
-
-#### Scenario: New candle sub-module is served
-
-- GIVEN `chart-host-candles`, WHEN requested under `/market/` with a JS MIME type, THEN it is served 200 (the name MUST be in `MODULE_ALLOWLIST`; missing → import 404 → blank chart)
+- THEN it holds **16** entries and `tests/web/test_market_ux.py:146,195` asserts the count `== 16` and passes — F9's click flow is a pure core and its draft preview is the one new controller (`draft-preview`, extraction R2 #222)
 
 #### Scenario: No behavior change
 
 - GIVEN the change, WHEN the node tests and the E2E suite run
-- THEN they pass with NO behavior-assertion edits, the 8-key seam
-  (`window.marketChart`) is unchanged, the C1 same-bucket HA fix is preserved
-  verbatim, and the HA contract (`chart-types-core`) is untouched
+- THEN they pass with no behavior-assertion edits beyond the added F9 cases, the 8-key seam (`window.marketChart`) is unchanged, and the HA contract (`chart-types-core`) is untouched
 
-> **Reconciliation note (verify W1, archive 2026-10-16).** The `market-chart` R14
-> delta originally stated the controller count grew `8→10`; the delivered F5 change
-> landed at **11** because of the `preference` extraction. F6 then grew it to
-> **13** (`measure`, `position-seed`), and F7 to **15** (`undo`, `context-menu`).
-> The canonical clause above matches reality (`views.py:66-81`,
-> `test_market_ux.py:146`). Functional invariant holds: every entry is served 200
-> and the import graph resolves (`test_import_graph_routes_resolve`).
+> **Reconciliation note (verify W1, archive 2026-10-16; F9 archive 2026-10-18).**
+> The `market-chart` R14 delta originally stated the controller count grew `8→10`;
+> the delivered F5 change landed at **11** because of the `preference` extraction.
+> F6 grew it to **13** (`measure`, `position-seed`), F7 to **15** (`undo`,
+> `context-menu`), and F9 to **16** (`draft-preview`, added by the R2 rework slice
+> that extracted the pending-draft preview out of `drawings.js`). `MODULE_ALLOWLIST`
+> is **28** entries in the delivered tree (F9 added `drawing-tools-core`,
+> `fib-tools-core`, `drawing-click-flow-core`, and — in the R2 rework —
+> `tool-render-core`/`object-tree-dom-core`). The canonical clause above matches
+> reality (`views.py:44-95`, `test_market_ux.py:146,195`). Functional invariant
+> holds: every entry is served 200 and the import graph resolves.
 
 ### Requirement: R15 — ESM loading and module serving
 
@@ -766,11 +764,14 @@ The refactor MUST expose `window.marketChart` with frozen keys `{chart,
 candleSeries, panes, ready, drawings, smc, smcCounts, smcToggles}` and equivalent
 update-timing, and MUST re-expose `window.SmcOverlayCore` as the sanctioned test
 seam. The toolbar, the object tree, indicator visibility, the F5 vertical toolbar,
-and the F6 measure/position tools MUST NOT add a 9th key; the measure readout MUST
-be asserted via its DOM node (`#measure-readout`) and the position via
-`window.marketChart.drawings` (existing) plus the captured POST/PUT, never via a
-new seam key. The F7 undo layer MUST be asserted via captured POST/PUT/DELETE and
-the F7 context menu via its DOM `role="menu"`, never via a new seam key.
+the F6 measure/position tools, the F7 undo/context-menu layer, and the F9 drawing
+tools MUST NOT add a 9th key; the measure readout MUST be asserted via its DOM node
+(`#measure-readout`) and the position via `window.marketChart.drawings` (existing)
+plus the captured POST/PUT, never via a new seam key. The F7 undo layer MUST be
+asserted via captured POST/PUT/DELETE and the F7 context menu via its DOM
+`role="menu"`, never via a new seam key. The F9 kinds MUST be asserted via
+`window.marketChart.drawings` (existing) plus the captured POST/PUT/DELETE and
+their rendered DOM/canvas, never via a new seam key.
 `tests/web/test_market_e2e.py` MUST stay green except for the
 assertions that covered the DOM this change removes (`#drawing-list`, the
 indicators `fieldset`); each such assertion MUST be replaced by equivalent
@@ -782,12 +783,13 @@ capability (issue #176, slice S5) — so there is no unreplaced coverage gap.
 by the slice that deletes the DOM — reconciled here per verify W2 / issue #177.
 The F6 clause was added for the measure/position tools.)
 (Previously: the clause was silent on the F7 undo/context-menu layer.)
+(Previously: the clause was silent on the F9 drawing tools.)
 
 #### Scenario: Seam shape frozen
 
-- GIVEN a booted chart after the toolbar and tree exist with the measure, position, undo, and context-menu layers
+- GIVEN a booted chart after the toolbar and tree exist with the measure, position, undo, context-menu, and F9 drawing layers
 - WHEN `window.marketChart` is read
-- THEN all eight keys exist and update as before, with no toolbar/tree/visibility/measure/position/undo/menu key added
+- THEN all eight keys exist and update as before, with no toolbar/tree/visibility/measure/position/undo/menu/F9 key added
 
 #### Scenario: Measure has no seam key
 
@@ -801,6 +803,12 @@ The F6 clause was added for the measure/position tools.)
 - WHEN it is observed
 - THEN it is asserted via captured POST/PUT/DELETE and the DOM `role="menu"`, and `window.marketChart` still has exactly 8 keys
 
+#### Scenario: F9 kinds assert without a seam key
+
+- GIVEN an F9 drawing created, moved, then deleted
+- WHEN it is observed
+- THEN it is asserted via `window.marketChart.drawings` and the captured POST/PUT/DELETE, and `window.marketChart` still has exactly 8 keys (E2E `test_f9_tools_create_their_kind_and_drag_is_one_put`)
+
 #### Scenario: SMC core reachable
 
 - GIVEN the ESM entry loaded
@@ -811,7 +819,7 @@ The F6 clause was added for the measure/position tools.)
 
 - GIVEN the existing E2E assertions
 - WHEN the suite runs after the change
-- THEN it passes except for the assertions covering the removed `#drawing-list`/`fieldset` DOM, each replaced by equivalent coverage and documented in `test_market_e2e.py:582-620`
+- THEN it passes except for the assertions covering the removed `#drawing-list`/`fieldset` DOM, each replaced by equivalent coverage and documented in `test_market_e2e.py:582-620` (and the F9 toolbar count assertion moved 7→15)
 
 ### Requirement: R19 — Host crosshair subscription seam
 
@@ -833,9 +841,10 @@ on a prior chart MUST be considered dead; consumers MUST re-subscribe after each
 
 The `autoSize: true` host option, the `#chart` markup change, the F8 chart-type
 and scale controls, the theme control, the F5 vertical toolbar, the object tree,
-the indicator-visibility toggle, the F6 measure/position tools, and the F7
-undo/context-menu layer MUST stay within R14 (host owns construction)
-and MUST NOT add a `window.marketChart` key. `window.marketChart` MUST keep
+the indicator-visibility toggle, the F6 measure/position tools, the F7
+undo/context-menu layer, and the F9 drawing tools MUST stay within R14
+(host owns construction) and MUST NOT add a `window.marketChart` key.
+`window.marketChart` MUST keep
 exactly its 8 frozen keys `{chart, candleSeries, panes, ready, drawings, smc,
 smcCounts, smcToggles}` and `window.SmcOverlayCore` MUST be untouched. The E2E
 seam shape and timing (R18) and the single-write-path invariants (R17) MUST be
@@ -853,22 +862,33 @@ existing `drawing:changed`/`drawing:delete` commands, and the F7 drawing events
 `drawing:duplicate`/`drawing:restore`/`drawing:created`/`drawing:create-failed`
 are STRING LITERALS handled in `drawings.js` (the same literal convention as
 `drawing:changed`/`drawing:delete`) — they are NOT `EVENTS` members. No
-`history:*`/`undo:*`/`menu:*` event exists.
+`history:*`/`undo:*`/`menu:*` event exists. The F9 tools MUST add NO bus event and
+NO store key: activating an F9 tool writes the existing `store.tool` value;
+creating reuses `createDrawing` (#68) and the existing `drawing:created` literal;
+`STORE_KEYS` MUST stay 11. No `history:*`/`undo:*`/`menu:*`/`tool:*`/`fib:*`/
+`channel:*` event exists.
 (Previously: the envelope covered type/scale/theme and forbade a second event; F5
 adds exactly one, `indicator:visibility`; the F6 clause was added.)
 (Previously: the envelope was silent on the F7 undo/context-menu layer.)
+(Previously: the envelope was silent on the F9 drawing tools.)
 
 #### Scenario: Seam stays 8 keys
 
-- GIVEN a booted chart after the toolbar and tree with the measure, position, undo, and menu layers
+- GIVEN a booted chart after the toolbar and tree with the measure, position, undo, menu, and F9 layers
 - WHEN `window.marketChart` is read
-- THEN exactly the 8 frozen keys exist and no toolbar/tree/visibility/measure/position/undo/menu key was added
+- THEN exactly the 8 frozen keys exist and no toolbar/tree/visibility/measure/position/undo/menu/F9 key was added
 
 #### Scenario: Exactly one new bus event (unchanged set)
 
 - GIVEN the change
 - WHEN the bus events are inspected
-- THEN the only `EVENTS` members are the pre-existing set plus `scale:changed` plus `indicator:visibility`; the position tool reuses `drawing:changed`/`drawing:selected`, the measure tool adds none, and the F7 `drawing:duplicate`/`drawing:restore`/`drawing:created`/`drawing:create-failed` are string literals (not `EVENTS` members) — no `history:*`/`undo:*`/`menu:*` event, no `measure:*`/`position:*` event, no `drawing:visibility`/`drawing:lock` event, and no new `EVENTS` entry exist
+- THEN the only `EVENTS` members are the pre-existing set plus `scale:changed` plus `indicator:visibility`; the position tool reuses `drawing:changed`/`drawing:selected`, the measure tool adds none, the F9 tools add none (the F9 create reuses the `drawing:created` string literal), and the F7 `drawing:duplicate`/`drawing:restore`/`drawing:created`/`drawing:create-failed` are string literals (not `EVENTS` members) — no `history:*`/`undo:*`/`menu:*`/`tool:*`/`fib:*`/`channel:*` event, no `measure:*`/`position:*` event, no `drawing:visibility`/`drawing:lock` event, and no new `EVENTS` entry exist
+
+#### Scenario: STORE_KEYS stays 11
+
+- GIVEN `chart-store.js` after F9
+- WHEN its keys are inspected
+- THEN it holds exactly the 11 frozen keys — F9 adds none (new tools reuse `tool`; `chart-store.test.js` asserts `length === 11`)
 
 #### Scenario: Visibility toggle is option-only
 
@@ -887,6 +907,12 @@ adds exactly one, `indicator:visibility`; the F6 clause was added.)
 - GIVEN a built chart with the `setData`/`update` spies installed
 - WHEN an undo replays or a menu command runs
 - THEN neither spy is called (replay reuses the HTTP verbs; menu reuses the bus commands)
+
+#### Scenario: F9 render is option-only
+
+- GIVEN a built chart with the `setData`/`update` spies installed
+- WHEN an F9 drawing is created or dragged
+- THEN it renders via `requestUpdate` (primitive) and neither `setData` nor `update` is called (issue #217; `drawing-primitive.test.js::an F9 primitive never calls setData/update (option-only, #68/#217)` — the throwing-stub proof added in the R1 fix slice)
 
 #### Scenario: Existing E2E stays green except replaced assertions
 

@@ -22,23 +22,29 @@ a native `<button type="button">` with an accessible `aria-label` and a
 (`drawing-core.js:13`) for the drawing tools, or `"measure"` for the ephemeral
 measure tool (the ONLY `data-kind` that is not a `DRAWING_KINDS` member). Each
 tool button MUST additionally carry an `aria-keyshortcuts` attribute advertising
-its per-tool shortcut letter (`TOOL_KEYS`: `H`/`T`/`F`/`R`/`X`/`M`/`P`) and a
-VISIBLE `<span class="tool-key">` showing that letter, so the attribute is honest
-to sighted users; the letter MUST NOT be a global binding — it MUST fire only when
-focus is inside `#chart` (the object tree owns `v`/`l`/`s`; see R3).
-`tool-icons-core.js` `TOOL_GROUPS` MUST
-group the seven instruments as `2/1/1/1/1/1` (`Lines`=`hline,trendline`, `Fib`,
-`Shapes`, `Text`, `Measure`=`["measure"]`, `Positions`=`["position"]`), with a
-matching `TOOL_LABELS` entry in `draw-toolbar.js` for `measure`/`position` and an
-`ICON_BODIES` entry for each kind (`tool-icons-core.js`). The two new icons MUST be
-JS-built inline SVG strings carrying NO `on*` attribute. Activating a tool MUST set
+its per-tool shortcut letter and a VISIBLE `<span class="tool-key">` showing that
+letter; the letter MUST NOT be a global binding — it MUST fire only when focus is
+inside `#chart` (the object tree owns `v`/`l`/`s`; see R3). `tool-icons-core.js`
+`TOOL_GROUPS` MUST group the **fifteen** instruments as
+`Lines`=`[hline,trendline,ray,vline,channel,price]`, `Fib`=`[fib,fib_ext,fib_time,
+fib_zone]`, `Shapes`=`[rect]`, `Text`=`[text,callout]`,
+`Measure`=`["measure"]`, `Positions`=`["position"]` (`6/4/1/2/1/1`), with a
+matching `TOOL_LABELS` entry for every kind and an `ICON_BODIES` entry for each
+kind (`tool-icons-core.js`). `TOOL_LABELS` is the SINGLE human-name source used
+for the toolbar's `aria-label`/`title` and the object tree's row label, so a slug
+(`fib_ext`) never reaches the user. The eight F9 icons MUST be JS-built inline SVG
+strings carrying NO `on*` attribute. `draw-toolbar.js` `TOOL_KEYS` MUST gain the
+eight F9 letters `ray=A`, `vline=I`, `channel=C`, `price=U`, `callout=O`,
+`fib_ext=E`, `fib_time=W`, `fib_zone=Z`, which MUST NOT collide with
+`H/T/F/R/X/M/P` or the object tree's `v`/`l`/`s`. Activating a tool MUST set
 `store.tool` and emit the SAME command the legacy `.draw-tool` buttons used
-(`drawings.js`); it MUST NOT introduce a new bus event — activating `position`
-writes `store.tool="position"` through the existing command, and `measure` is a
-tool value with no drawing kind. A singleton group (one tool) MAY be rendered.
+(`drawings.js`); it MUST NOT introduce a new bus event. A singleton group MAY be
+rendered.
 (Previously: groups were lines/fib/shapes/text only; five kinds.)
 (Previously: tool buttons carried no `aria-keyshortcuts` and per-tool letter
 firing was not scoped.)
+(Previously: `TOOL_GROUPS` grouped seven instruments `2/1/1/1/1/1` with seven
+letters `H/T/F/R/X/M/P`; no F9 tools.)
 
 #### Scenario: Toolbar and groups render
 
@@ -62,7 +68,7 @@ firing was not scoped.)
 
 - GIVEN `tool-icons-core` includes a `Measure` group and a `Positions` group
 - WHEN the toolbar renders
-- THEN both groups appear, each with a labelled button whose `data-kind` is `measure` / `position` and which carries an icon (`tool-icons-core.test.js::TOOL_GROUPS: F6 groups the 7 instruments 2/1/1/1/1/1`)
+- THEN both groups appear, each with a labelled button whose `data-kind` is `measure` / `position` and which carries an icon
 
 #### Scenario: Activating position writes store.tool with no new event
 
@@ -72,9 +78,27 @@ firing was not scoped.)
 
 #### Scenario: Singleton group allowed
 
-- GIVEN `tool-icons-core` groups the 7 kinds into 2/1/1/1/1/1
+- GIVEN `tool-icons-core` groups the 15 kinds into 6/4/1/2/1/1
 - WHEN the toolbar renders
 - THEN each group renders regardless of member count and no fault occurs
+
+#### Scenario: Eight F9 tools render in the extended groups
+
+- GIVEN `tool-icons-core` groups the 15 instruments `6/4/1/2/1/1`
+- WHEN the toolbar renders
+- THEN the eight F9 buttons appear with `data-kind` ∈ `{ray,vline,channel,price,callout,fib_ext,fib_time,fib_zone}`, each with an icon and an accessible name (`tool-icons-core.test.js::TOOL_GROUPS: F9 groups the 15 instruments 6/4/1/2/1/1`)
+
+#### Scenario: F9 letters are non-colliding
+
+- GIVEN the eight F9 `TOOL_KEYS` letters
+- WHEN compared to `H/T/F/R/X/M/P` and `v/l/s`
+- THEN no collision exists and each F9 button advertises its own `aria-keyshortcuts` (`draw-toolbar.test.js::TOOL_KEYS gains the eight F9 letters with no collision`)
+
+#### Scenario: Activating an F9 tool writes store.tool with no new event
+
+- GIVEN the vertical toolbar
+- WHEN the `channel` tool button is activated
+- THEN `store.tool === "channel"` and no bus event beyond the pre-existing set is emitted (the toolbar writes `store.tool` uniformly for every kind)
 
 ### Requirement: R2 — Active state via aria-pressed
 
@@ -100,14 +124,16 @@ toolbar. State MUST NOT rely on color alone (design-system R6).
 Tool buttons MUST be keyboard-focusable with a single roving `tabindex="0"`
 (all others `-1`). Up/Down MUST move focus between tool buttons; Home/End MUST
 jump to first/last. Enter/Space MUST activate the focused tool natively. A
-per-tool **letter** shortcut (`H`/`T`/`F`/`R`/`X`/`M`/`P`, the inverse of
-`TOOL_KEYS`) MUST activate its tool ONLY while focus is inside `#chart`
+per-tool **letter** shortcut (`H`/`T`/`F`/`R`/`X`/`M`/`P` for the pre-F9 kinds plus
+`A`/`I`/`C`/`U`/`O`/`E`/`W`/`Z` for the F9 kinds — the inverse of `TOOL_KEYS`)
+MUST activate its tool ONLY while focus is inside `#chart`
 (`draw-toolbar.js` binds the letter `keydown` on the `#chart` element); when
 focus is elsewhere in the page the letter MUST NOT fire, so the object tree's
 `v`/`l`/`s` (`object-tree.js:137-142,201-205`) are never stolen. The letter router
 MUST ignore modifiers (`meta`/`ctrl`/`alt`) and MUST not fire for a focused text
 input/textarea/select/contenteditable. Behavior MUST mirror the interval-chip
 pattern (`toolbar.js:63-71`).
+(Previously: the letter set was `H/T/F/R/X/M/P` only.)
 
 #### Scenario: Arrows move focus
 
@@ -140,13 +166,19 @@ pattern (`toolbar.js:63-71`).
 
 - GIVEN the page loaded
 - WHEN a tool letter is pressed while focus is OUTSIDE `#chart` (e.g. a tree row)
-- THEN no tool activates (the tree owns `v`/`l`/`s`)
+- THEN no tool activates (the tree owns `v`/`l`/`s`; `draw-toolbar.test.js::a tool letter outside #chart does nothing`, E2E `test_tool_letter_fires_only_inside_chart`)
 
 #### Scenario: Letter fires inside the chart
 
 - GIVEN focus inside `#chart`
 - WHEN the `hline` letter (`h`) is pressed
 - THEN the `hline` tool activates (its `store.tool` is set) — the letter router is `#chart`-scoped (`draw-toolbar.js`)
+
+#### Scenario: F9 letter activates its tool
+
+- GIVEN focus inside `#chart`
+- WHEN the `channel` letter (`c`) is pressed
+- THEN `store.tool === "channel"` (the letter router is `#chart`-scoped; `draw-toolbar.test.js::an F9 letter fires inside #chart and activates its tool`)
 
 ### Requirement: R4 — Icons from the pure core (CSP-clean)
 

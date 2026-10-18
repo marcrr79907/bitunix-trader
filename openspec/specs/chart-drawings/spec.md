@@ -24,22 +24,25 @@ Visual annotations only — never order execution.
 NOT carry a unique constraint on that tuple. No owner-less rows MAY exist.
 `DRAWING_KINDS` MUST include `position` — a `Drawing.Kind.POSITION` choice in
 `web/trading/models.py` (`models.py:244-250`), surfaced through
-`drawing-core.js` `DRAWING_KINDS` (`drawing-core.js:13`). Migration `0012` MUST
-remove the old `(user, symbol, interval)` index BEFORE dropping `interval`, then
-add the `(user, symbol)` index (SQLite-safe order). It MUST keep ALL rows and MUST
-NOT dedupe (no unique constraint means nothing collides; dedupe would destroy user
-data). Its reverse MUST be lossy — it re-adds `interval` defaulted to `"1m"`; the
-original per-interval split is NOT recoverable (documented rollback contract).
-Migration `0014` MUST be a purely additive AddField pair
-(`0013_chartpreference_smc.py:17-21` precedent): it MUST add `visible` (default
-True) and `locked` (default False) and MUST be reversible with zero data loss; its
-reverse MUST drop both fields leaving every row intact. Migration `0015` MUST be a
-choices-only `AlterField` on `kind` (`0015_drawing_kind_position.py`, deps
-`0014_drawing_visible_locked`) that widens the choices with `position` and MUST be
-reversible to `0014` with zero data loss (reverse restores the prior choices;
-every stored row keeps its `kind`). The delivered migration chain is
-`0012 → 0013 → 0014 → 0015`.
-(Previously: no `position` kind; no `0015`; `DRAWING_KINDS` had no `position`.)
+`drawing-core.js` `DRAWING_KINDS` (`drawing-core.js:13`). `DRAWING_KINDS` MUST
+also include the eight F9 kinds — `Drawing.Kind` gains `RAY`/`VLINE`/`CHANNEL`/
+`PRICE`/`CALLOUT`/`FIB_EXT`/`FIB_TIME`/`FIB_ZONE` (`models.py:244-249`) and
+`drawing-core.js` `DRAWING_KINDS` (`drawing-core.js:13`) gains the matching
+strings. Migration `0012` MUST remove the old `(user, symbol, interval)` index
+BEFORE dropping `interval`, then add the `(user, symbol)` index (SQLite-safe
+order). It MUST keep ALL rows and MUST NOT dedupe. Its reverse MUST be lossy
+(re-adds `interval` defaulted to `"1m"`). Migration `0014` MUST be a purely
+additive AddField pair adding `visible`/`locked`, reversible with zero data loss.
+Migration `0015` MUST be a choices-only `AlterField` on `kind` (deps
+`0014_drawing_visible_locked`) widening choices with `position`, reversible to
+`0014`. Migration `0016_drawing_kind_tools` MUST be a choices-only `AlterField` on
+`kind` (deps `0015_drawing_kind_position`) that widens the choices with all eight
+F9 kinds at once (mirrors `0015_drawing_kind_position.py`) and MUST be reversible
+to `0015` with zero data loss — reverse restores the prior choices and every
+stored row keeps its `kind`; it MUST touch no column and no row (SQLite-safe —
+`choices` lives in Django state). The delivered migration chain is
+`0012 → 0013 → 0014 → 0015 → 0016`, and `makemigrations --check` MUST be green.
+(Previously: six kinds and no `0016`; the chain ended at `0015`.)
 
 #### Scenario: Many drawings coexist on one chart
 
@@ -82,6 +85,18 @@ every stored row keeps its `kind`). The delivered migration chain is
 - GIVEN a `Drawing` row with `kind="position"`
 - WHEN `DRAWING_KINDS` is read
 - THEN `"position"` is a member (`test_market_api.py::test_position_kind_is_a_member_of_drawing_kinds`)
+
+#### Scenario: The eight F9 kinds are valid members
+
+- GIVEN the eight new kind strings
+- WHEN `DRAWING_KINDS` (`quotes.py:402`) and `drawing-core.js` `DRAWING_KINDS` are read
+- THEN each of `ray`/`vline`/`channel`/`price`/`callout`/`fib_ext`/`fib_time`/`fib_zone` is a member of both (`test_market_api.py::test_f9_kinds_are_members_of_drawing_kinds`)
+
+#### Scenario: 0016 is choices-only and reversible
+
+- GIVEN existing drawings of every prior kind
+- WHEN `0016` runs forward then reverse
+- THEN every row keeps its kind and data, all eight F9 kinds are selectable after forward, and reverse restores the prior choices with no row lost (`test_migration_0016.py::test_0016_adds_eight_kinds_forward_then_reverses_without_data_loss`; `makemigrations --check` green)
 
 #### Scenario: 0015 is choices-only and reversible
 
@@ -263,8 +278,12 @@ the kind's schema MUST yield 400 `{"error":"..."}` and MUST NOT create a row.
 `interval` is NO LONGER part of the drawing contract: its presence or value MUST
 NOT yield 400 (accept-and-ignore). Validation MUST live in a pure
 `parse_drawing(kind, points, style)` (raise `ValueError`) in `quotes.py`; the view
-maps it to 400.
+maps it to 400. `parse_drawing` MUST gain one branch per F9 kind
+(`quotes.py:427-461`) so a valid F9 payload passes and a malformed one 400s before
+any write (the `position` `elif` at `:445-460` is the precedent). A new kind with
+no branch here MUST 400.
 (Previously: an `interval` outside `INTERVALS` yielded 400.)
+(Previously: no F9 branch existed.)
 
 #### Scenario: Unknown kind → 400 before write
 
@@ -276,13 +295,19 @@ maps it to 400.
 
 - GIVEN POST with `interval="7m"` (or any value)
 - WHEN handled
-- THEN no 400 is raised for the `interval` key
+- THEN no 400 is raised for the `interval` key (`test_market_api.py::test_drawings_f9_interval_key_ignored_not_400`)
 
 #### Scenario: Bad shape for kind → 400
 
 - GIVEN POST `kind="trendline"` with a single point
 - WHEN handled
 - THEN 400 and no row is written
+
+#### Scenario: F9 kind matrix validates per kind
+
+- GIVEN each F9 kind's valid payload and each of its malformed variants (wrong point count, missing `time`/`price`, missing `text`, non-numeric `price`)
+- WHEN POST
+- THEN the valid payload is 201 and each malformed payload is 400 with no row written (`test_market_api.py::test_drawings_f9_kind_post_get_put_round_trip`, `::test_drawings_f9_invalid_points_is_400_and_writes_nothing` — 24 variants)
 
 ### Requirement: R5 — Kind-specific point and style schemas
 
@@ -293,10 +318,16 @@ Each `kind` MUST enforce its schema: `hline` = exactly 1 point `{time,price}`
 `style {color}`; `position` = `points` `{entry:{time,price}, stop:number,
 take_profit:number}` with numeric `entry.price`, `stop`, `take_profit`, and MUST
 reject a missing field, a non-numeric level, or a degenerate `entry.price==stop`
-with 400. `DRAWING_KINDS` MUST auto-include `position` so a `position` payload
-passes the kind check before the schema branch runs. A count or shape mismatch
-MUST be rejected with 400.
+with 400. The eight F9 kinds MUST enforce: `ray` = exactly 2 points
+`{time,price}`; `callout` = exactly 2 points `{time,price}` plus a non-empty
+`points.text`; `fib_time` = exactly 2 points; `fib_zone` = exactly 2 points;
+`channel` = exactly 3 points `{p1,p2,p3}`; `fib_ext` = exactly 3 points
+`{p1,p2,p3}`; `vline` = 1 point `{time}` only (no `price`); `price` = 1 point
+`{price}` only (no `time`). A count or shape mismatch MUST be rejected with 400.
+`DRAWING_KINDS` MUST auto-include every F9 kind so a payload passes the kind check
+before the schema branch runs (it is derived from `Drawing.Kind.values`).
 (Previously: no `position` schema branch.)
+(Previously: no F9 schema branches.)
 
 #### Scenario: hline accepts one point
 
@@ -328,6 +359,42 @@ MUST be rejected with 400.
 - WHEN handled
 - THEN 400 and no row is written (`test_market_api.py::test_drawings_position_post_invalid_points_is_400_and_writes_nothing`)
 
+#### Scenario: vline accepts a time-only point
+
+- GIVEN POST `kind="vline"`, `points={time:1700000000}`
+- WHEN handled
+- THEN 201 and the row persists; a `vline` payload missing `time` is 400
+
+#### Scenario: price accepts a price-only point
+
+- GIVEN POST `kind="price"`, `points={price:50000.0}`
+- WHEN handled
+- THEN 201 and the row persists; a `price` payload missing `price` is 400
+
+#### Scenario: channel requires three points
+
+- GIVEN POST `kind="channel"` with `{p1,p2,p3}` each `{time,price}`
+- WHEN handled
+- THEN 201; a 2-point or a 4-point `channel` is 400 with no write
+
+#### Scenario: fib_ext requires three points
+
+- GIVEN POST `kind="fib_ext"` with `{p1,p2,p3}` each `{time,price}`
+- WHEN handled
+- THEN 201; a 2-point `fib_ext` is 400 with no write
+
+#### Scenario: ray and fib kinds require two points
+
+- GIVEN POST `kind` in `{ray, fib_time, fib_zone}` with exactly 2 `{time,price}` points
+- WHEN handled
+- THEN 201; a 1-point or 3-point payload for any of them is 400 with no write
+
+#### Scenario: callout requires two points plus text
+
+- GIVEN POST `kind="callout"` with 2 `{time,price}` points and a non-empty `points.text`
+- WHEN handled
+- THEN 201; a `callout` missing `text` is 400 with no write
+
 #### Scenario: Validation error matrix
 
 | Input | Result |
@@ -338,6 +405,8 @@ MUST be rejected with 400.
 | wrong point count for kind | 400, no write |
 | malformed point (missing `price`) | 400, no write |
 | `position` with degenerate `entry.price==stop` | 400, no write |
+| `vline` point carrying `price` only | 400, no write |
+| `callout` missing `text` | 400, no write |
 | valid payload | 201, row written |
 
 ### Requirement: R6 — Render contract (Lightweight Charts v5 primitive)
@@ -364,8 +433,33 @@ SAME primitive; a drag MUST re-render via `requestUpdate` and MUST NEVER call
 its primitive attached but render nothing, and its `autoscaleInfo` MUST return
 `null`; a toggle from hidden back to visible MUST re-render via `requestUpdate`
 only. A `locked:true` drawing MUST render but MUST NOT be pointer-grabbable.
+The eight F9 kinds MUST each draw their geometry in the same primitive, with the
+per-kind canvas switch extracted to `tool-render-core.js` (so
+`drawing-primitive.js` stays ≤300): `ray` a line from `p1` through `p2` extended
+to the RIGHT canvas edge only (the live pane width is passed to the pure geometry
+as `map.right`); `vline` a full-height vertical line at its `time`; `channel` two
+parallel lines (base `p1→p2`, plus an offset line through `p3` translated by
+`p2−p1`); `price` a horizontal line **plus a right-axis price label formatted
+with the series' `priceFormatter()`** (never a raw number); `callout` an anchor
+point, an arrowhead, and a rounded text balloon filled with the `--surface` token;
+`fib_ext` the `FIB_EXT_RATIOS` extension levels projected from the 3-point swing
+and bounded by `p3` (x1=`p1.time`, x2=`p3.time`); `fib_time` vertical lines at
+`FIB_RATIOS` over the bar span; `fib_zone` coloured bands between consecutive
+`FIB_RATIOS` levels. `fib_ext`/`fib_time`/`fib_zone` MUST show ratio labels (as
+`fib` does, `drawing-primitive.js:64`) and `price` MUST show a price tag, so no F9
+kind is distinguished by color alone. Labels MUST use ONE font
+(`tool-render-core.LABEL_FONT`, 11px) with a `--bg` halo stroke, so a label stays
+legible over candles. An off-bar x anchor MUST skip the whole body for
+`fib_ext`/`fib_zone` (never coerce `null` to pixel 0). Each F9 kind's stroke
+colour MUST resolve through its own `--draw-<kind>` token (via
+`theme-core.token()`, with a dark-set literal fallback) so it follows the
+light/dark theme. `autoscaleInfo` MUST include ALL of a kind's anchors
+(`p1`,`p2`,`p3` for `channel`/`fib_ext`; the `price` for `price`/`vline`'s time is
+x-only) so pan/zoom does not clip them; a transient draft preview MUST NOT
+contribute to autoscale.
 (Previously: no `position` render branch; `autoscaleInfo` did not include position
 levels; no band-degrade-to-null clause.)
+(Previously: no F9 render branch; `autoscaleInfo` included no `p3`.)
 
 #### Scenario: Attach one primitive per drawing
 
@@ -445,11 +539,35 @@ levels; no band-degrade-to-null clause.)
 - WHEN the renderer draws
 - THEN `positionBox` returns `null`, every leg is skipped, and nothing is thrown (`drawing-primitive.test.js::renderShape position degrades (no throw) when the entry is off-bar`)
 
-#### Scenario: Drag never touches the series data path
+#### Scenario: Each F9 kind draws its geometry
 
-- GIVEN a position drag in progress
-- WHEN the shape re-renders
-- THEN it uses `requestUpdate` only and no `setData`/`update` reaches the series
+- GIVEN a saved drawing of each F9 kind
+- WHEN its primitive redraws
+- THEN it draws the kind's geometry per the render contract (ray extension, vline, parallel channel, labelled price line, callout balloon, fib_ext/time/zone levels via their cores), asserted by `drawing-primitive.test.js::renderShape dispatches each F9 kind to renderTool without throwing` plus the per-kind shape/label cases
+
+#### Scenario: F9 autoscale includes all anchors
+
+- GIVEN a `channel`/`fib_ext` whose `p3` sits outside the current price range
+- WHEN `autoscaleInfo` is queried
+- THEN the returned price range includes `p1`, `p2`, and `p3` (`drawing-primitive.test.js::autoscaleInfo of a channel/fib_ext includes p3`)
+
+#### Scenario: Off-bar x leg is skipped for fib_ext and fib_zone
+
+- GIVEN a `fib_ext` or `fib_zone` whose `p1`/`p2` time maps to `null`
+- WHEN the kind renders
+- THEN the whole body is skipped and nothing is drawn at pixel 0 (`tool-render-core` x guard, issue #216)
+
+#### Scenario: Ray extends to the canvas edge
+
+- GIVEN a `ray` whose `p2` sits inside the visible range
+- WHEN its primitive redraws
+- THEN the line continues from `p1` through `p2` to the right canvas edge with the same slope (issue #219)
+
+#### Scenario: F9 stroke colour follows the theme tokens
+
+- GIVEN the light theme applied via `[data-theme="light"]`
+- WHEN an F9 kind renders
+- THEN its stroke resolves through `--draw-<kind>` (light set), not a hard-coded dark literal (issue #221)
 
 ### Requirement: R7 — Load and restore on boot and switch
 
@@ -591,8 +709,16 @@ only `price`. Dragging a position level handle MUST move only that level's `pric
 (y only); dragging the position body MUST translate `entry`, `stop`, and
 `take_profit` together. `bodyHit` MUST treat the entry→stop ∪ entry→take_profit
 span as the box body. The core MUST be deterministic, chart-lib-free, and MUST
-clamp/guard null coordinates.
+clamp/guard null coordinates. For the F9 kinds `handlesFor` MUST return `ray` 2,
+`callout` 2, `fib_time` 2, `fib_zone` 2, `channel` 3, `fib_ext` 3, `vline` 1,
+`price` 1 handle(s); dragging a handle MUST move ONLY its anchor (`p1`/`p2`/`p3`,
+or `vline`'s `time`, or `price`'s `price`), and dragging the body MUST shift the
+whole shape by the same mapped delta. `drawing-interaction-core.js:31,107,162`
+MUST each gain ONE guard dispatching F9 kinds to the `drawing-tools-core`
+descriptor map (`Tools.toolHandles`/`toolBodyHit`/`toolDrag`); off-bar anchors are
+omitted from the returned handle list.
 (Previously: no `position` cases in `handlesFor`/`applyDrag`/`bodyHit`.)
+(Previously: no F9 cases.)
 
 #### Scenario: Drag a trendline endpoint
 
@@ -629,6 +755,30 @@ clamp/guard null coordinates.
 - GIVEN a selected `position`
 - WHEN its body is dragged
 - THEN `entry`, `stop`, and `take_profit` all shift by the same mapped delta (`drawing-interaction-core.test.js::applyDrag position body shifts all three levels + the anchor column`)
+
+#### Scenario: F9 handle counts resolve per kind
+
+- GIVEN each F9 kind
+- WHEN `handlesFor` runs
+- THEN it returns exactly ray 2 / callout 2 / fib_time 2 / fib_zone 2 / channel 3 / fib_ext 3 / vline 1 / price 1 handle(s) (`drawing-interaction-core.test.js::handlesFor resolves the F9 per-kind counts 2/2/2/2/3/3/1/1`)
+
+#### Scenario: Drag an F9 anchor moves only it
+
+- GIVEN a selected `channel`
+- WHEN its `p3` handle is dragged
+- THEN only `p3` changes; `p1` and `p2` are unchanged (`drawing-interaction-core.test.js::applyDrag moves ONLY the dragged F9 anchor (channel p3)`)
+
+#### Scenario: Drag a vline moves time only
+
+- GIVEN a selected `vline`
+- WHEN its handle is dragged
+- THEN `points.time` updates and no `price` is added
+
+#### Scenario: Move an F9 shape body
+
+- GIVEN a selected `fib_ext` (or `ray`/`callout`)
+- WHEN its body is dragged
+- THEN every anchor shifts by the same mapped delta (`drawing-interaction-core.test.js::applyDrag F9 body translates every anchor (fib_ext)`)
 
 ### Requirement: R11 — Keyboard delete and deselect
 

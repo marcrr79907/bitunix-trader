@@ -136,7 +136,16 @@ and `Escape` closing it and returning focus to `#chart`. The F7 undo/redo MUST
 announce each operation ("Undo"/"Redo") in a polite `aria-live` region
 (`#history-status`), and the F5 tool buttons MUST surface their advertised
 shortcut letter visibly (`.tool-key`), so the `aria-keyshortcuts` is honest to
-sighted users.
+sighted users. The eight F9 tool buttons MUST follow the same toolbar model: each
+MUST have a visible focus state, an accessible name (its human `TOOL_LABELS`
+name — never the slug), and a visible `.tool-key`, and MUST NOT be distinguished
+by color alone — `price` MUST show a right-axis price label formatted like the
+axis, `callout` MUST show its text in a rounded balloon with an arrowhead,
+`fib_ext`/`fib_time`/`fib_zone` MUST show ratio labels (as `fib` does) with a
+contrasting halo, and `ray`/`vline`/`channel` MUST differ by shape
+(line/extension/parallel geometry). A pending 2/3-click draft MUST be previewed
+on the canvas and the chart cursor MUST be a crosshair while a tool is active, so
+a partial gesture is visible rather than silent.
 (Previously: AA contrast was required against the dark theme only.)
 (Previously: focus state covered nav links and form controls only; no focusable
 chart canvas, dialog, or toolbar/tree contract.)
@@ -145,6 +154,8 @@ node and Escape-cancels-draft behavior were verify CRITICALs C1/C2, remediated i
 the F6 S4/UI slices — the rule now matches the delivered behavior.)
 (Previously: the rule was silent on the F7 context menu, undo announcement, and
 the visible tool shortcut letter.)
+(Previously: the rule was silent on the F9 drawing tools, their human labels, the
+draft preview, and the crosshair.)
 
 #### Scenario: Visible focus
 - GIVEN a keyboard user
@@ -206,6 +217,21 @@ the visible tool shortcut letter.)
 - WHEN a tool button is inspected
 - THEN it shows a visible `.tool-key` letter alongside its `aria-keyshortcuts`
 
+#### Scenario: F9 kinds are not color-only
+- GIVEN a rendered `price`, `callout`, and each fib kind
+- WHEN their rendering is inspected
+- THEN `price` shows a right-axis price label formatted like the axis, `callout` shows its text in a balloon with an arrowhead, the fib kinds show ratio labels with a contrasting halo, and `ray`/`vline`/`channel` differ by shape — so each is distinguishable without color (`tool-render-core.js`; `drawing-primitive.test.js` price label / callout balloon / fib ratio cases)
+
+#### Scenario: F9 tool labels are human names
+- GIVEN a rendered F9 tool button and its object-tree row
+- WHEN the accessible name and the row label are read
+- THEN each shows the human `TOOL_LABELS` name ("Fibonacci extension", not `fib_ext`; `tool-icons-core.labelFor`)
+
+#### Scenario: A pending draft is previewed
+- GIVEN a 2/3-click tool with one or two anchors placed
+- WHEN the chart renders
+- THEN the partial shape is previewed on its own primitive (never POSTed, never in autoscale) and the chart cursor is a crosshair while the tool is active (`controllers/draft-preview.js`; `drawings.js` cursor)
+
 #### Scenario: AA holds in the light theme
 - GIVEN the light token set applied via `[data-theme="light"]`
 - WHEN shell text is measured against its background
@@ -224,10 +250,20 @@ color reads MUST resolve theme tokens through the shared `theme-core.js` `token(
 helper (with a fallback literal) rather than writing hard-coded palette hex — so a
 future token change flows through and the measure/position canvas colors stay
 on-palette in BOTH the dark and light theme (folding in the /impeccable HIGH #193).
-The properties `<dialog>` MUST be styled with the same tokens as the
-existing indicator-settings dialog.
+Each F9 kind MUST own a distinct `--draw-<kind>` token (`--draw-ray`,
+`--draw-vline`, `--draw-channel`, `--draw-price`, `--draw-callout`,
+`--draw-fib-ext`, `--draw-fib-time`, `--draw-fib-zone`) declared in BOTH the dark
+(`:root`) and light (`[data-theme="light"]`) token sets — no token name missing
+from either — and `drawing-tools-core.js` MUST resolve its stroke colour through
+`token("--draw-<kind>", <dark literal>)` at read time so a theme flip repaints
+without re-seeding a row. In the light set every stroke MUST reach ≥3:1 against
+`#ffffff` and every fib/price label ≥4.5:1. Canvas labels MUST use ONE shared font
+(`tool-render-core.LABEL_FONT`, 11px) with a `--bg` halo stroke so a label stays
+legible over candles. The properties `<dialog>` MUST be styled with the same
+tokens as the existing indicator-settings dialog.
 (Previously: the rule covered generic drawings; the position handle set did not
 exist; canvas colors were hard-coded literals.)
+(Previously: no per-kind F9 palette, no label halo, no shared label font.)
 
 #### Scenario: Selection is not color-only
 
@@ -252,6 +288,18 @@ exist; canvas colors were hard-coded literals.)
 - GIVEN `drawing-primitive.js` and `controllers/measure.js` canvas color paths
 - WHEN inspected
 - THEN each color resolves via `token("--…")` (e.g. `--dn`/`--up`/`--muted`/`--accent`) rather than an inline hex, so a token change (dark or light theme) flows through
+
+#### Scenario: F9 palette follows the per-kind tokens
+
+- GIVEN the eight F9 kinds in the light and dark themes
+- WHEN their strokes render
+- THEN each resolves through its own `--draw-<kind>` token (light strokes ≥3:1 on `#ffffff`; fib/price labels ≥4.5:1) and a theme flip repaints without re-seeding rows (`theme.css` both token sets; `drawing-tools-core.js` `TOKENS`; issue #221)
+
+#### Scenario: Canvas labels share one font and a halo
+
+- GIVEN a rendered `fib_ext`, `fib_time`, `fib_zone`, or `price`
+- WHEN its label is drawn
+- THEN it uses `tool-render-core.LABEL_FONT` (11px) with a `--bg` halo stroke, so it reads over candles (issue #223)
 
 #### Scenario: Dialog uses tokens
 
