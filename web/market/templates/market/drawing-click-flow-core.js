@@ -28,12 +28,23 @@ function shape(kind, pts) {
   const a = pts[0];
   const b = pts[1];
   const c = pts[2];
-  if (kind === "position") return { entry: a, stop: b.price, take_profit: c.price };
+  // R2 #222: partial drafts (preview) may lack b/c — read them tolerantly.
+  const bp = b ? b.price : undefined;
+  const cp = c ? c.price : undefined;
+  if (kind === "position") return { entry: a, stop: bp, take_profit: cp };
   if (kind === "vline") return { time: a.time };
   if (kind === "price" || kind === "hline") return { price: a.price };
   if (kind === "text") return { time: a.time, price: a.price };
   if (kind === "channel" || kind === "fib_ext") return { p1: a, p2: b, p3: c };
   return { p1: a, p2: b };
+}
+
+// R2 #222: the PENDING clicks -> a partial row the controller's preview
+// primitive can draw (missing anchors stay undefined; the geometry degrades).
+// Never POSTed — a client-side draft only. Unknown kind / no clicks -> null.
+export function previewRow(kind, clicks) {
+  if (!kind || countFor(kind) <= 0 || !clicks || !clicks.length) return null;
+  return { kind: kind, points: shape(kind, clicks) };
 }
 
 export function createFlow() {
@@ -70,5 +81,11 @@ export function createFlow() {
     cancel();
   }
 
-  return { collect, cancel, active, reset };
+  // R2 #222: the half-collected draft, so the controller can DRAW it while the
+  // shape is still pending (null when there is nothing to preview).
+  function peek() {
+    return clicks.length ? { kind: kind, clicks: clicks.slice() } : null;
+  }
+
+  return { collect, cancel, active, reset, peek };
 }
