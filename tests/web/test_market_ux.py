@@ -143,7 +143,7 @@ def test_controller_allowlist_routes_serve_javascript(logged_in_client):
     # ``market/controllers/`` as JS (a missing route = import 404 = blank chart).
     from market import views
 
-    assert len(views.CONTROLLER_ALLOWLIST) == 15
+    assert len(views.CONTROLLER_ALLOWLIST) == 16
     for name in views.CONTROLLER_ALLOWLIST:
         response = logged_in_client.get(f"/market/controllers/{name}.js")
         assert response.status_code == 200, name
@@ -192,7 +192,7 @@ def test_f9_cores_are_served(logged_in_client):
         assert response.status_code == 200, name
         assert response["Content-Type"] == "text/javascript", name
 
-    assert len(views.CONTROLLER_ALLOWLIST) == 15
+    assert len(views.CONTROLLER_ALLOWLIST) == 16
 
 
 def test_market_page_preloads_f9_cores(logged_in_client):
