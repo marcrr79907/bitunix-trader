@@ -11,7 +11,7 @@
 // a native button — no inline handler, no inline script. Keyboard: a single
 // roving ``tabindex`` with Up/Down/Home/End, mirroring the interval chips
 // (toolbar.js:63-71); Enter/Space activate the native button.
-import { TOOL_GROUPS, iconFor, groupLabel } from "../tool-icons-core.js";
+import { TOOL_GROUPS, TOOL_LABELS, iconFor, groupLabel } from "../tool-icons-core.js";
 
 // F7 (R1 delta): the per-tool shortcut letter each button ADVERTISES via
 // ``aria-keyshortcuts``. Advisory only — no global letter router is bound (D8);
@@ -37,25 +37,6 @@ export const TOOL_KEYS = {
   fib_zone: "Z",
 };
 
-// Accessible name per kind (the SVG is aria-hidden, so the button carries it).
-const TOOL_LABELS = {
-  hline: "Horizontal line",
-  trendline: "Trend line",
-  fib: "Fibonacci retracement",
-  rect: "Rectangle",
-  text: "Text",
-  measure: "Measure",
-  position: "Position",
-  // F9 S3.
-  ray: "Ray",
-  vline: "Vertical line",
-  channel: "Parallel channel",
-  price: "Price line",
-  callout: "Callout",
-  fib_ext: "Fibonacci extension",
-  fib_time: "Fibonacci time zones",
-  fib_zone: "Fibonacci zone",
-};
 
 export function createDrawToolbar({ store }) {
   const mount = document.getElementById("draw-tools");
@@ -104,6 +85,12 @@ export function createDrawToolbar({ store }) {
     const g = document.createElement("div");
     g.setAttribute("role", "group");
     g.setAttribute("aria-label", groupLabel(group));
+    // R2 #223: a visible muted caption — an icon wall with no group names is
+    // unreadable at 18px.
+    const caption = document.createElement("span");
+    caption.className = "tool-group-label";
+    caption.textContent = groupLabel(group);
+    g.appendChild(caption);
     group.kinds.forEach(function (kind) {
       const btn = document.createElement("button");
       btn.type = "button";
@@ -111,6 +98,7 @@ export function createDrawToolbar({ store }) {
       btn.dataset.kind = kind;
       btn.setAttribute("aria-pressed", "false");
       btn.setAttribute("aria-label", TOOL_LABELS[kind] || kind);
+      btn.setAttribute("title", TOOL_LABELS[kind] || kind); // hover name (R2 #223)
       // F7 (R1 delta): advertise the per-tool letter (no router — D8).
       if (TOOL_KEYS[kind]) btn.setAttribute("aria-keyshortcuts", TOOL_KEYS[kind]);
       const icon = iconFor(kind);

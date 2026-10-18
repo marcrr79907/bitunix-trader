@@ -183,9 +183,12 @@ code{font-family:var(--mono); background:var(--surface); padding:1px 5px; border
 /* drawings vertical icon toolbar (F5 S2) */
 .draw-tools{display:flex; flex-direction:column; gap:var(--sp-2);
   margin:0; border:1px solid var(--border); border-radius:var(--r); padding:var(--sp-2)}
-.draw-tools [role=group]{display:flex; gap:var(--sp-1)}
+/* R2 #223: groups wrap instead of overflowing a 300px panel, and each carries a
+   muted caption line so an icon wall reads as named sections. */
+.draw-tools [role=group]{display:flex; flex-wrap:wrap; align-items:center; gap:var(--sp-1)}
+.tool-group-label{flex-basis:100%; color:var(--muted); font-size:var(--fs-3)}
 .draw-tool{display:inline-flex; align-items:center; justify-content:center;
-  min-width:36px; min-height:36px; padding:var(--sp-1);
+  min-width:40px; min-height:40px; padding:var(--sp-1);
   background:var(--surface); border:1px solid var(--border); color:var(--text); border-radius:var(--r)}
 .draw-tool svg{display:block}
 /* F7 UI #206: the per-tool shortcut letter surfaced visually (muted, small) so

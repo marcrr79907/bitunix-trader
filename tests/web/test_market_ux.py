@@ -338,6 +338,25 @@ def test_ui_audit_undo_hint_uses_tokens(logged_in_client):
     assert not re.search(r"#[0-9a-fA-F]{3,8}\b", hint), "no hard-coded hex in the hint"
 
 
+def test_f9_toolbar_groups_wrap_and_targets_are_touch_sized(logged_in_client):
+    # R2 #223: a 15-icon wall in a 300px panel needs wrapping group rows, a
+    # visible muted caption per group and 40-44px targets (the old 36px was
+    # under the touch floor). Tokens only — no literal palette.
+    import re
+
+    css = logged_in_client.get("/theme.css").content.decode()
+    group = css[css.index(".draw-tools [role=group]") :].split("}")[0]
+    assert "flex-wrap:wrap" in group
+    caption = css[css.index(".tool-group-label") :].split("}")[0]
+    assert "var(--muted)" in caption and "var(--fs-3)" in caption
+    button = css[css.index(".draw-tool{") :].split("}")[0]
+    target = int(re.search(r"min-height:(\d+)px", button).group(1))
+    assert 40 <= target <= 44, target
+    assert int(re.search(r"min-width:(\d+)px", button).group(1)) == target
+    for rule in (group, caption, button):
+        assert not re.search(r"#[0-9a-fA-F]{3,8}\b", rule), "no hard-coded hex"
+
+
 def test_ui_audit_menu_never_writes_empty_keyshortcut(logged_in_client):
     # F7 UI #206: the served context-menu controller must guard the
     # aria-keyshortcuts attribute — an empty value is a misleading attribute.

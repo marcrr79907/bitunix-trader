@@ -10,6 +10,7 @@
 // the ONE new event ``indicator:visibility`` -> option-only host setter (#68).
 import {
   TREE_GROUPS,
+  labelFor,
   EYE_ON,
   EYE_OFF,
   LOCK_ON,
@@ -104,7 +105,8 @@ export function createObjectTree({ store, bus, onIndicatorSettings }) {
   // --- rows -------------------------------------------------------------------
 
   function drawingRow(row) {
-    const eye = action("row-eye", "Toggle " + row.kind + " visibility",
+    const label = labelFor(row.kind); // R2 #223: a human name, never the slug
+    const eye = action("row-eye", "Toggle " + label + " visibility",
       "", function () {
         row.visible = !row.visible;
         syncEye(eye, row.visible !== false);
@@ -112,14 +114,14 @@ export function createObjectTree({ store, bus, onIndicatorSettings }) {
       }, "v");
     syncEye(eye, row.visible !== false);
 
-    const lock = action("row-lock", "Toggle " + row.kind + " lock", "", function () {
+    const lock = action("row-lock", "Toggle " + label + " lock", "", function () {
       row.locked = !row.locked;
       syncLock(lock, row.locked === true);
       bus.emit("drawing:changed", { id: row.id, locked: row.locked, persist: true });
     }, "l");
     syncLock(lock, row.locked === true);
 
-    const del = action("row-delete", "Delete " + row.kind + " #" + row.id, TRASH, function () {
+    const del = action("row-delete", "Delete " + label + " #" + row.id, TRASH, function () {
       bus.emit("drawing:delete", { id: row.id });
     }, "Delete");
 
@@ -127,7 +129,7 @@ export function createObjectTree({ store, bus, onIndicatorSettings }) {
     li.dataset.id = String(row.id);
     li.setAttribute("aria-selected", row.id === selectedDrawingId ? "true" : "false");
     const name = el("span", "tree-row-name", {});
-    name.textContent = row.kind + " #" + row.id;
+    name.textContent = label + " #" + row.id;
     li.appendChild(eye);
     li.appendChild(name);
     li.appendChild(lock);
@@ -158,8 +160,7 @@ export function createObjectTree({ store, bus, onIndicatorSettings }) {
     btn.innerHTML = on ? onIcon : offIcon;
     btn.setAttribute("aria-pressed", on ? "true" : "false");
   }
-  const syncEye = (b, v) => syncBtn(b, v, EYE_ON, EYE_OFF);
-  const syncLock = (b, l) => syncBtn(b, l, LOCK_ON, LOCK_OFF);
+  const syncEye = (b, v) => syncBtn(b, v, EYE_ON, EYE_OFF), syncLock = (b, l) => syncBtn(b, l, LOCK_ON, LOCK_OFF);
 
   function indicatorRow(token) {
     const visible = !(state.indicatorVisible && state.indicatorVisible[token] === false);

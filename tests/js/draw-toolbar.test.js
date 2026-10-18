@@ -59,9 +59,10 @@ const { TOOL_GROUPS } = await import(
 function buttonsOf(mount) {
   // mount > toolbar > group > button*  -> flatten every .draw-tool
   const out = [];
+  // A group also carries its caption span, so filter to the buttons.
   mount.children.forEach((toolbar) =>
     toolbar.children.forEach((group) =>
-      group.children.forEach((b) => out.push(b)),
+      group.children.filter((c) => c.className === "draw-tool").forEach((b) => out.push(b)),
     ),
   );
   return out;
@@ -282,5 +283,35 @@ test("every F9 tool button shows its own letter (R1)", () => {
       assert.strictEqual(b.getAttribute("aria-keyshortcuts"), TOOL_KEYS[kind], kind);
       assert.strictEqual(toolKeyOf(b).textContent, TOOL_KEYS[kind], kind);
     }
+  } finally { restore(); }
+});
+
+// --- F9 R2 (#223): hover names + group captions ------------------------------
+
+test("every tool button carries a title (hover name) equal to its aria-label", () => {
+  const mount = makeEl("div");
+  const restore = installDom(mount);
+  try {
+    createDrawToolbar({ store: makeStore({ tool: null }) });
+    for (const b of buttonsOf(mount)) {
+      assert.strictEqual(b.getAttribute("title"), b.getAttribute("aria-label"), b.dataset.kind);
+    }
+    // #223: fib_zone is named "bands", not a homonym of fib_time.
+    const zone = buttonsOf(mount).find((b) => b.dataset.kind === "fib_zone");
+    assert.strictEqual(zone.getAttribute("title"), "Fibonacci bands");
+  } finally { restore(); }
+});
+
+test("each role=group carries a visible muted caption with its label", () => {
+  const mount = makeEl("div");
+  const restore = installDom(mount);
+  try {
+    createDrawToolbar({ store: makeStore({ tool: null }) });
+    const toolbar = mount.children[0];
+    toolbar.children.forEach((group) => {
+      const caption = group.children.find((c) => c.className === "tool-group-label");
+      assert.ok(caption, "every group has a caption");
+      assert.strictEqual(caption.textContent, group.getAttribute("aria-label"));
+    });
   } finally { restore(); }
 });
