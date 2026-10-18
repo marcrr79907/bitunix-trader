@@ -69,6 +69,8 @@ MODULE_ALLOWLIST = frozenset(
         "alert-markers-core",
         "alert-condition-core",
         "alert-ui-core",
+        "alert-markers-view",
+        "alert-bell-view",
         "chart-store",
         "chart-bus",
         "chart-host",

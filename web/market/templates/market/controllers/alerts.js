@@ -4,17 +4,19 @@
 // ``{attach, refresh, clearForSwitch}``. LEAF module — never imports main.
 //
 // Owns a bell pinned to the crosshair, a native ``<dialog>`` seeded from that
-// price, and ONE ``createSeriesMarkers`` handle for the caller's rules on the
-// active pair. Markers are NOT series data: this controller never calls
-// ``setData``/``update`` (#68). All mapping lives in the two pure cores
-// (alert-condition-core, alert-markers-core); this file is DOM/fetch glue.
+// price, and the marker view (alert-markers-view) for the active pair's rules.
+// Markers are NOT series data: this controller never calls
+// ``setData``/``update`` (#68). All mapping lives in the pure cores
+// (alert-condition-core, alert-markers-core, alert-ui-core); this file is
+// DOM/fetch glue.
 //
 // Reuse, no new seam: the chart is recreated on every build, so the crosshair
 // subscription is re-bound on the existing ``chart:built`` event (the
 // legend.js precedent); no bus event, no store key, no 9th ``marketChart`` key.
 // ``for_user`` is resolved server-side — the client never invents a rule.
 import * as Cond from "../alert-condition-core.js";
-import * as Markers from "../alert-markers-core.js";
+import { createMarkersView } from "../alert-markers-view.js";
+import { createBellView } from "../alert-bell-view.js";
 import {
   eligible,
   reasonText,
@@ -23,11 +25,10 @@ import {
   listUrl,
   writeRequest,
   nearestRule,
-  paintBell,
+  editCueText,
+  successText,
 } from "../alert-ui-core.js";
-import { token } from "../theme-core.js";
 
-// Interval eligibility mirrors the worker's persisted set (trading/candles.py
 // Edit detection (D7): px distance to an existing price rule's level.
 const NEAR_PX = 10;
 
@@ -45,78 +46,55 @@ export function createAlerts({ store, bus, host, config }) {
   const errorEl = document.getElementById("alert-error");
   const statusEl = document.getElementById("alert-status");
   const reasonEl = document.getElementById("alert-interval-reason");
+  const cueEl = document.getElementById("alert-cue");
+  const confirmEl = document.getElementById("alert-confirm");
 
-  let bell = null; // the single #chart-alert-bell (JS-built, CSP-clean)
-  let markers = null; // the LightweightCharts marker handle we own
+  const markers = createMarkersView({ host, statusEl, confirmEl });
+  const bellView = createBellView({ container, host, onOpen: openDialog });
   let rules = []; // rows for the active pair (server-shaped)
   let cursor = null; // {x, y, price} of the last crosshair point, or null
+  let target = null; // the near rule the open dialog would PUT, or null
   let gen = 0; // invalidates an in-flight fetch after a switch
   let bound = false; // attach() runs once
   // Hovering the bell takes the pointer off the canvas (LWC clears the
   // crosshair), so the flag stops it vanishing just as it is reached.
   let hovering = false;
+  // The crosshair cleared while the pointer was on the bell; the point was kept
+  // for the dialog, but leaving must not leave a bell with no cursor behind.
+  let stale = false;
 
   function isEligible() { return eligible(state.interval); }
 
   // --- bell -----------------------------------------------------------------
 
-  // JS-built (createElement/setAttribute) — CSP ``script-src 'self'`` forbids
-  // an inline handler; the click listener is attached here.
-  function buildBell() {
-    if (!container || bell) return;
-    bell = document.createElement("button");
-    bell.type = "button";
-    bell.id = "chart-alert-bell";
-    bell.className = "chart-alert-bell";
-    bell.setAttribute("aria-label", "Create price alert");
-    bell.textContent = "+"; // the visible glyph; the bell is the aria-label
-    bell.hidden = true;
-    bell.addEventListener("click", openDialog);
-    bell.addEventListener("pointerenter", setHovering);
-    bell.addEventListener("pointerleave", setHovering);
-    container.appendChild(bell);
+  // Leaving a bell whose crosshair point is gone must hide it (F10 UI #234):
+  // the flag suppressed the clear while hovered, so the deferred clear lands
+  // here and the bell is re-placed for the now-empty state.
+  function setHovering(e) {
+    hovering = e.type === "pointerenter";
+    if (hovering) return;
+    if (stale) cursor = null;
+    stale = false;
+    placeBell();
   }
-
-  function setHovering(e) { hovering = e.type === "pointerenter"; }
 
   // Move the crosshair on: the last price stays usable while the pointer is on
   // the bell (a leave with no point must not erase what the dialog will seed).
-  function clearCursor() { if (!hovering) cursor = null; }
+  function clearCursor() {
+    if (hovering) { stale = true; return; }
+    cursor = null;
+  }
 
   // Show the bell at the crosshair, or hide it when the pointer leaves the plot
-  // (mirrors legend.js onMove). The interval guard disables it with a reason.
+  // (mirrors legend.js onMove). The interval guard marks it inert with a reason.
   function placeBell() {
-    paintBell(bell, cursor, state.interval, hovering, reasonEl);
+    bellView.render(cursor, state.interval, hovering, reasonEl);
   }
 
   // --- dialog ---------------------------------------------------------------
 
   function lastClosePrice() {
     return lastClose(host.getCandles());
-  }
-
-  // Seed the dialog from the crosshair price; the op defaults off the last
-  // close (opFor owns that rule, so the default cannot drift).
-  function seedAt(price) {
-    if (!dialog || !isEligible()) return false;
-    if (opInput) opInput.value = Cond.opFor(price, lastClosePrice());
-    if (levelInput) levelInput.value = fmtPrice(price);
-    if (errorEl) errorEl.hidden = true;
-    dialog.showModal();
-    return true;
-  }
-
-  function openDialog() {
-    if (!cursor) return;
-    seedAt(cursor.price);
-  }
-
-  // F10 UI #235: the keyboard path. The bell needs a pointer-produced crosshair
-  // point, which Tab never makes, so the context menu's "Add alert" opens the
-  // dialog seeded from the newest close instead.
-  function openFromLastClose() {
-    const close = lastClosePrice();
-    return close === null ? false : seedAt(close);
   }
 
   // The existing price rule whose level is nearest the cursor, within NEAR_PX
@@ -128,6 +106,43 @@ export function createAlerts({ store, bus, host, config }) {
     return nearestRule(rules, cursor.y, NEAR_PX, function (level) {
       return series.priceToCoordinate(level);
     });
+  }
+
+  // A silent PUT is a silent edit (F10 UI #234): the dialog says what it will
+  // do, and Apply's outcome is named in the visible confirmation.
+  function paintCue() {
+    if (!cueEl) return;
+    const text = editCueText(target);
+    cueEl.textContent = text || "";
+    cueEl.hidden = !text;
+  }
+
+  // Seed the dialog from the crosshair price; the op defaults off the last
+  // close (opFor owns that rule, so the default cannot drift).
+  function seedAt(price) {
+    if (!dialog || !isEligible()) return false;
+    target = nearRule();
+    if (opInput) opInput.value = Cond.opFor(price, lastClosePrice());
+    if (levelInput) levelInput.value = fmtPrice(price);
+    if (errorEl) errorEl.hidden = true;
+    paintCue();
+    dialog.showModal();
+    return true;
+  }
+
+  function openDialog() {
+    if (!cursor || !isEligible()) return; // aria-disabled: skip the action
+    seedAt(cursor.price);
+  }
+
+  // F10 UI #235: the keyboard path. The bell needs a pointer-produced crosshair
+  // point, which Tab never makes, so the context menu's "Add alert" opens the
+  // dialog seeded from the newest close instead.
+  function openFromLastClose() {
+    const close = lastClosePrice();
+    if (close === null) return false;
+    cursor = null; // no cursor: the dialog is a create from the last close
+    return seedAt(close);
   }
 
   // Apply runs inside the dialog's ``close`` handler, so the dialog is already
@@ -151,16 +166,17 @@ export function createAlerts({ store, bus, host, config }) {
       fail("Enter a price above 0");
       return;
     }
-    const target = nearRule();
-    const req = writeRequest(config.urls.alerts, state, condition, target);
+    const edit = target;
+    const req = writeRequest(config.urls.alerts, state, condition, edit);
     fetch(req.url, {
-      method: target ? "PUT" : "POST",
+      method: edit ? "PUT" : "POST",
       headers: { "Content-Type": "application/json", "X-CSRFToken": csrfToken() },
       body: JSON.stringify(req.body),
     })
       .then(function (r) {
         return r.json().then(function (b) {
           if (!r.ok) return fail((b && b.error) || "Could not save the alert");
+          markers.flash(successText(condition, edit));
           return refresh();
         });
       })
@@ -179,39 +195,6 @@ export function createAlerts({ store, bus, host, config }) {
     });
   }
 
-  // --- markers + status -----------------------------------------------------
-  // The accessible state: markers are canvas, so the count/fired/armed summary
-  // lives in #alert-status[aria-live="polite"] (design-system R6).
-  function announce() {
-    if (!statusEl) return;
-    statusEl.textContent = Markers.summaryOf(rules) || "No alerts on this chart";
-  }
-
-  // The newest loaded candle is the armed anchor (a marker time MUST be a real
-  // data point). Re-projected after every history page — no synthetic bars.
-  // F10 UI #232: the shell palette is resolved at RENDER time so a theme flip
-  // can repaint. ``--alert-armed`` is a dedicated token (the brand --accent is
-  // 3.86:1 on the dark bg, under the small-text floor); fired reuses --dn. The
-  // core's literals stay the fallback for a DOM-less caller.
-  function renderMarkers() {
-    const series = host.getCandleSeries();
-    if (!series) return;
-    const bars = host.getCandles();
-    const anchor = Array.isArray(bars) && bars.length ? bars[bars.length - 1].time : null;
-    const colors = {
-      armed: token("--alert-armed", Markers.COLORS.armed),
-      fired: token("--dn", Markers.COLORS.fired),
-    };
-    const list = Markers.markersFor(rules, anchor, colors);
-    if (!markers) markers = LightweightCharts.createSeriesMarkers(series, list);
-    else markers.setMarkers(list);
-    announce();
-  }
-
-  // main's onTheme calls this AFTER host.setTheme (option-only, no rebuild): the
-  // resolved palette changed, so the canvas markers must be repainted.
-  function refreshTheme() { renderMarkers(); }
-
   // --- fetch ----------------------------------------------------------------
 
   // Refetch the ACTIVE pair's rules. A non-evaluable interval cannot have a
@@ -219,8 +202,7 @@ export function createAlerts({ store, bus, host, config }) {
   function refresh() {
     if (!container || !isEligible()) {
       rules = [];
-      if (markers) markers.setMarkers([]);
-      announce();
+      markers.clear();
       return Promise.resolve();
     }
     const mine = ++gen;
@@ -229,13 +211,12 @@ export function createAlerts({ store, bus, host, config }) {
       .then(function (body) {
         if (mine !== gen) return;
         rules = Array.isArray(body.alerts) ? body.alerts : [];
-        renderMarkers();
+        markers.render(rules);
       })
       .catch(function () {
         if (mine !== gen) return;
         rules = [];
-        if (markers) markers.setMarkers([]);
-        announce();
+        markers.clear();
       });
   }
 
@@ -250,30 +231,29 @@ export function createAlerts({ store, bus, host, config }) {
 
   // --- lifecycle ------------------------------------------------------------
 
-  // The marker handle dies with its series: a rebuild must let it go, never
-  // reuse it across charts (LWC throws on a detached handle).
-  function detachMarkers() {
-    if (markers) markers.detach();
-    markers = null;
-  }
-
   function attach() {
     if (bound) return;
     bound = true;
-    buildBell();
+    bellView.build();
+    bellView.onPointer(setHovering);
     if (reasonEl) reasonEl.textContent = reasonText(state.interval);
     // build() recreates the chart, so the handler is re-bound to the NEW chart
     // on every chart:built (its predecessor died with chart.remove()).
     bus.on("chart:built", function () {
-      detachMarkers();
+      markers.detach();
       host.subscribeCrosshairMove(onMove);
       cursor = null;
+      bellView.build();
+      bellView.placeRight();
       placeBell();
       refresh();
     });
     // Armed markers anchor on the newest candle, which only exists after the
     // history page lands — re-project then (no refetch: the rules are current).
-    bus.on("history:loaded", renderMarkers);
+    bus.on("history:loaded", function () { markers.render(rules); });
+    // A closed candle becomes the new newest bar, so the anchor must move with
+    // it (F10 UI #234). Same no-refetch rule: the rule rows did not change.
+    bus.on("candle:closed", function () { markers.render(rules); });
   }
 
   // Called by main on switchTo: the previous pair's markers must never cross
@@ -281,11 +261,11 @@ export function createAlerts({ store, bus, host, config }) {
   function clearForSwitch() {
     gen += 1;
     rules = [];
-    detachMarkers();
+    markers.detach();
     cursor = null;
     placeBell();
     if (dialog && dialog.open) dialog.close("");
-    announce();
+    markers.clear();
   }
 
   return {
@@ -293,6 +273,6 @@ export function createAlerts({ store, bus, host, config }) {
     refresh: refresh,
     clearForSwitch: clearForSwitch,
     openFromLastClose: openFromLastClose,
-    refreshTheme: refreshTheme,
+    refreshTheme: function () { markers.render(rules); },
   };
 }

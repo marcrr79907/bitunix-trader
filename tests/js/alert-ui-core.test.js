@@ -12,6 +12,9 @@ import {
   writeRequest,
   nearestRule,
   paintBell,
+  editCueText,
+  successText,
+  bellRight,
 } from "../../web/market/templates/market/alert-ui-core.js";
 
 test("EVALUABLE mirrors the server CANDLE_INTERVALS (8 intervals, no 1m)", () => {
@@ -91,12 +94,41 @@ test("paintBell keeps a hovered bell visible and describes an ineligible interva
   assert.strictEqual(bell.hidden, false, "hovering does not hide the bell");
 
   paintBell(bell, { y: 1, price: 5 }, "3d", false, reason);
-  assert.strictEqual(bell.disabled, true);
+  assert.strictEqual(bell.disabled, false, "a disabled button is not focusable (#234)");
+  assert.strictEqual(bell.attrs["aria-disabled"], "true");
   assert.strictEqual(bell.attrs["aria-describedby"], "alert-interval-reason");
   assert.match(reason.textContent, /3d/);
   paintBell(bell, { y: 1, price: 5 }, "1h", false, reason);
-  assert.strictEqual(bell.disabled, false);
+  assert.strictEqual(bell.attrs["aria-disabled"], undefined);
   assert.strictEqual(bell.attrs["aria-describedby"], undefined);
+});
+
+test("bellRight offsets the bell by the price-scale width (#234)", () => {
+  // The bell sits over the right axis and covers the crosshair price tag, so it
+  // is pushed left by the axis width computed at build time. An unusable width
+  // returns null (the caller keeps the CSS default).
+  assert.strictEqual(bellRight(64), "72px", "axis width + the sp-2 gap");
+  assert.strictEqual(bellRight(0), null);
+  assert.strictEqual(bellRight(NaN), null);
+  assert.strictEqual(bellRight("64"), null);
+  assert.strictEqual(bellRight(null), null);
+});
+
+test("editCueText names the level a near-rule write would update (#234)", () => {
+  assert.strictEqual(
+    editCueText({ id: 7, condition: { type: "price", level: 100.5 } }),
+    "Updates the existing 100.5 alert",
+  );
+  assert.strictEqual(editCueText(null), null);
+  assert.strictEqual(editCueText({ id: 1, condition: null }), null);
+});
+
+test("successText confirms the armed/updated level after Apply (#234)", () => {
+  const cond = { type: "price", op: "above", level: 100.5 };
+  assert.strictEqual(successText(cond, null), "Alert at 100.5 armed");
+  assert.strictEqual(successText(cond, { id: 7 }), "Alert at 100.5 updated");
+  assert.strictEqual(successText(null, null), "");
+  assert.strictEqual(successText({ type: "price", level: NaN }, null), "");
 });
 
 test("nearestRule picks the closest price rule within the px window", () => {

@@ -165,28 +165,41 @@ code{font-family:var(--mono); background:var(--surface); padding:1px 5px; border
 #drawing-settings-dialog button{grid-column:1/-1}
 
 /* F10 alert bell: pinned at the crosshair inside #chart (legend overlay
-   precedent). Hidden stays display:none so it is not focusable. */
+   precedent). Hidden stays display:none so it is not focusable. The right
+   offset is set inline from the measured price-scale width (#234) so the bell
+   never covers the crosshair price tag or the axis drag strip; the fallback
+   below only clears a typical axis. */
 .chart-alert-bell{
   /* above LWC's canvases, which paint later in #chart (same-DOM rebuild) */
-  position:absolute; right:var(--sp-2); z-index:10; transform:translate(0,-50%);
-  min-width:28px; min-height:28px; padding:0 var(--sp-1);
+  position:absolute; right:72px; z-index:10; transform:translate(0,-50%);
+  min-width:40px; min-height:40px; padding:0 var(--sp-1);
   background:var(--surface); color:var(--accent);
   border:1px solid var(--border); border-radius:50%;
   font-size:var(--fs-3); line-height:1; cursor:pointer;
 }
 .chart-alert-bell[hidden]{display:none}
-.chart-alert-bell:hover:not(:disabled){border-color:var(--accent)}
-.chart-alert-bell:disabled{color:var(--muted); cursor:not-allowed}
+.chart-alert-bell:hover:not([aria-disabled="true"]){border-color:var(--accent)}
+/* #234: an inert bell stays focusable (aria-disabled, not disabled) so its
+   aria-describedby reason is announced. It only LOOKS and ACTS disabled. */
+.chart-alert-bell[aria-disabled="true"]{color:var(--muted); cursor:not-allowed}
 .chart-alert-bell:focus-visible{outline:2px solid var(--accent); outline-offset:2px}
+@media (pointer:coarse){.chart-alert-bell{min-width:44px; min-height:44px}}
 #alert-dialog{max-width:min(320px,calc(100vw - 2*var(--sp-4)))}
 #alert-dialog::backdrop{background:rgba(0,0,0,.55)}
 #alert-dialog form{display:grid; grid-template-columns:auto 1fr;
   align-items:center; gap:var(--sp-2)}
 #alert-dialog button{grid-column:1/-1}
-#alert-dialog .alert-hint,#alert-dialog .alert-error{grid-column:1/-1; margin:0;
+#alert-dialog .alert-hint,#alert-dialog .alert-error,#alert-dialog .alert-cue{grid-column:1/-1; margin:0;
   color:var(--muted); font-size:var(--fs-3)}
 #alert-dialog .alert-error{color:var(--dn)}
-#alert-dialog .alert-error[hidden]{display:none}
+#alert-dialog .alert-error[hidden],#alert-dialog .alert-cue[hidden]{display:none}
+/* #234: a silent PUT becomes an announced edit — the cue names the target. */
+#alert-dialog .alert-cue{color:var(--accent)}
+/* #234: Apply's success confirmation, revealed for a few seconds. */
+#alert-confirm{margin:var(--sp-1) 0 0; padding:var(--sp-1) var(--sp-2);
+  border:1px solid var(--border); border-radius:var(--r);
+  background:var(--surface); color:var(--text); font-size:var(--fs-3)}
+#alert-confirm[hidden]{display:none}
 
 /* #chart is keyboard-focusable for Delete/Escape (R11): a visible focus ring. */
 #chart:focus-visible{outline:2px solid var(--accent); outline-offset:-2px}

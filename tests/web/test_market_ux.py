@@ -201,8 +201,14 @@ def test_f10_alerts_are_served(logged_in_client):
     # import 404s and blanks the chart.
     from market import views
 
-    assert len(views.MODULE_ALLOWLIST) == 31
-    for name in ("alert-markers-core", "alert-condition-core", "alert-ui-core"):
+    assert len(views.MODULE_ALLOWLIST) == 33
+    for name in (
+        "alert-markers-core",
+        "alert-condition-core",
+        "alert-ui-core",
+        "alert-markers-view",
+        "alert-bell-view",
+    ):
         assert name in views.MODULE_ALLOWLIST, name
         response = logged_in_client.get(f"/market/{name}.js")
         assert response.status_code == 200, name
@@ -224,11 +230,20 @@ def test_f10_alert_ui_is_markup_only(logged_in_client):
         'id="alert-dialog"',
         'id="alert-status"',
         'id="alert-interval-reason"',
+        'id="alert-cue"',
+        'id="alert-confirm"',
         'aria-live="polite"',
     ):
         assert marker in body, marker
 
-    for name in ("alert-markers-core", "alert-condition-core", "controllers/alerts"):
+    for name in (
+        "alert-markers-core",
+        "alert-condition-core",
+        "alert-ui-core",
+        "alert-markers-view",
+        "alert-bell-view",
+        "controllers/alerts",
+    ):
         assert f'href="/market/{name}.js"' in body, name
 
     smc = logged_in_client.get("/market/controllers/smc.js").content
@@ -480,6 +495,39 @@ def test_f10_alert_marker_tokens_meet_contrast(logged_in_client):
         for token in ("--alert-armed", "--dn"):
             ratio = _contrast(t[token], t["--bg"])
             assert ratio >= 4.5, f"{name} {token} on --bg is {ratio:.2f}:1 < 4.5:1"
+
+
+def test_f10_bell_clears_the_price_axis_and_is_touch_sized(logged_in_client):
+    """#234: the bell must not cover the crosshair price tag, and its target must
+    clear the 40px touch floor on coarse pointers."""
+    import re
+
+    css = logged_in_client.get("/theme.css").content.decode()
+    bell = css[css.index(".chart-alert-bell{") :].split("}")[0]
+    # The offset is computed at build time into an inline style; the CSS default
+    # only has to leave room for a typical axis, never sit at 8px.
+    assert "right:var(--sp-2)" not in bell, "the bell must not sit on the axis"
+    # aria-disabled is the inert state now, so the :disabled rule is dead weight.
+    bell_block = css[css.index(".chart-alert-bell") : css.index("#alert-dialog")]
+    assert ":disabled" not in bell_block
+    assert '[aria-disabled="true"]' in css
+    # Coarse pointers get the touch floor (the desktop stays compact).
+    coarse = css[css.index("@media (pointer:coarse)") :]
+    coarse = coarse[: coarse.index("}}") + 1] if "}}" in coarse else coarse
+    target = int(re.search(r"min-width:(\d+)px", coarse).group(1))
+    assert 40 <= target <= 44, target
+    assert f"min-height:{target}px" in coarse
+
+
+def test_f10_alert_dialog_cue_and_confirm_are_token_only(logged_in_client):
+    """#234: the silent-edit cue and the success confirmation reuse shell tokens."""
+    import re
+
+    css = logged_in_client.get("/theme.css").content.decode()
+    for selector in ("#alert-dialog .alert-cue", "#alert-confirm"):
+        rule = css[css.index(selector + "{") :].split("}")[0]
+        assert "var(--" in rule, selector
+        assert not re.search(r"#[0-9a-fA-F]{3,8}\b", rule), selector
 
 
 def test_f10_alert_marker_token_is_declared_in_both_palettes(logged_in_client):
