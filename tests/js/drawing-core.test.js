@@ -2,15 +2,16 @@
 import test from "node:test";
 import assert from "node:assert";
 import * as core from "../../web/market/templates/market/drawing-core.js";
+import * as Tools from "../../web/market/templates/market/drawing-tools-core.js";
 
 // A coordinate mapper stub: identity-ish, so expected pixels are obvious.
 const mapper = (x, y) => ({ x: () => x, y: () => y });
 
-test("DRAWING_KINDS exposes the six kinds", () => {
-  assert.deepStrictEqual(
-    core.DRAWING_KINDS.slice().sort(),
-    ["fib", "hline", "position", "rect", "text", "trendline"],
-  );
+test("DRAWING_KINDS exposes the six legacy kinds plus the eight F9 kinds", () => {
+  assert.deepStrictEqual(core.DRAWING_KINDS.slice().sort(), [
+    "callout", "channel", "fib", "fib_ext", "fib_time", "fib_zone",
+    "hline", "position", "price", "ray", "rect", "text", "trendline", "vline",
+  ]);
 });
 
 test("hlinePath maps price to y, ignores time", () => {
@@ -162,6 +163,13 @@ test("fromApi carries visible/locked flags (absent -> visible, unlocked)", () =>
   assert.strictEqual(noFlags.locked, false);
 });
 
+test("fromApi accepts each F9 kind (F9 S3)", () => {
+  for (const kind of ["ray", "vline", "channel", "price", "callout", "fib_ext", "fib_time", "fib_zone"]) {
+    const row = core.fromApi({ id: 1, kind: kind, points: {}, style: {} });
+    assert.strictEqual(row && row.kind, kind, kind);
+  }
+});
+
 test("toApi builds the POST body shape", () => {
   assert.deepStrictEqual(core.toApi("hline", { price: 1 }, { color: "#f00" }), {
     kind: "hline",
@@ -183,4 +191,15 @@ test("defaultStyle gives position a color + lineWidth (F6)", () => {
   assert.strictEqual(typeof style.color, "string");
   assert.match(style.color, /^#[0-9a-f]{6}$/i);
   assert.strictEqual(style.lineWidth, 1);
+});
+
+test("defaultStyle delegates each F9 kind to drawing-tools-core (F9 S3)", () => {
+  for (const kind of ["ray", "vline", "channel", "price", "callout", "fib_ext", "fib_time", "fib_zone"]) {
+    const style = core.defaultStyle(kind);
+    // The delegate returns exactly the descriptor style (not the hline fallback).
+    assert.deepStrictEqual(style, {
+      color: Tools.TOOL_SPECS[kind].style.color,
+      lineWidth: Tools.TOOL_SPECS[kind].style.lineWidth,
+    }, kind);
+  }
 });

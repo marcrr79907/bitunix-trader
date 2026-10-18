@@ -317,3 +317,66 @@ test("grabHandle resolves a position level handle", () => {
   // stop handle sits at (right=130, y=45).
   assert.deepStrictEqual(core.grabHandle([position()], 130, 45, ident), { id: 9, target: 2 });
 });
+
+// --- F9 kinds: handlesFor / bodyHit / applyDrag dispatch (F9 S3 R10) ----------
+
+const F9_POINTS = {
+  ray: { p1: { time: 0, price: 0 }, p2: { time: 10, price: 10 } },
+  vline: { time: 42 },
+  channel: { p1: { time: 0, price: 0 }, p2: { time: 10, price: 10 }, p3: { time: 0, price: 20 } },
+  price: { price: 50 },
+  callout: { p1: { time: 0, price: 0 }, p2: { time: 10, price: 10 }, text: "OB" },
+  fib_ext: { p1: { time: 0, price: 0 }, p2: { time: 10, price: 10 }, p3: { time: 20, price: 20 } },
+  fib_time: { p1: { time: 0, price: 0 }, p2: { time: 10, price: 10 } },
+  fib_zone: { p1: { time: 0, price: 0 }, p2: { time: 10, price: 10 } },
+};
+const F9_COUNT = {
+  ray: 2, callout: 2, fib_time: 2, fib_zone: 2, channel: 3, fib_ext: 3, vline: 1, price: 1,
+};
+
+test("handlesFor resolves the F9 per-kind counts 2/2/2/2/3/3/1/1 (F9 S3 R10)", () => {
+  for (const kind of Object.keys(F9_COUNT)) {
+    assert.strictEqual(
+      core.handlesFor(kind, F9_POINTS[kind], ident).length,
+      F9_COUNT[kind],
+      kind,
+    );
+  }
+});
+
+test("applyDrag moves ONLY the dragged F9 anchor (channel p3) (F9 S3 R10)", () => {
+  const row = { kind: "channel", points: F9_POINTS.channel };
+  const out = core.applyDrag(row, 2, 3, 4, ident); // index 2 = p3
+  assert.deepStrictEqual(out.p1, { time: 0, price: 0 });
+  assert.deepStrictEqual(out.p2, { time: 10, price: 10 });
+  assert.deepStrictEqual(out.p3, { time: 3, price: 24 });
+});
+
+test("applyDrag F9 body translates every anchor (fib_ext) (F9 S3 R10)", () => {
+  const out = core.applyDrag({ kind: "fib_ext", points: F9_POINTS.fib_ext }, "body", 2, 3, ident);
+  assert.deepStrictEqual(out.p1, { time: 2, price: 3 });
+  assert.deepStrictEqual(out.p2, { time: 12, price: 13 });
+  assert.deepStrictEqual(out.p3, { time: 22, price: 23 });
+});
+
+test("applyDrag vline moves time only and adds no price (F9 S3 R10)", () => {
+  assert.deepStrictEqual(
+    core.applyDrag({ kind: "vline", points: { time: 42 } }, "body", 5, 9, ident),
+    { time: 47 },
+  );
+});
+
+test("applyDrag price moves price only and adds no time (F9 S3 R10)", () => {
+  assert.deepStrictEqual(
+    core.applyDrag({ kind: "price", points: { price: 50 } }, "body", 7, 5, ident),
+    { price: 55 },
+  );
+});
+
+test("bodyHit dispatches F9 kinds to the descriptor (ray/price) (F9 S3 R10)", () => {
+  assert.strictEqual(core.bodyHit({ kind: "ray", points: F9_POINTS.ray }, 500, 500, {
+    ...ident, right: 1000,
+  }), true);
+  assert.strictEqual(core.bodyHit({ kind: "price", points: { price: 50 } }, 999, 51, ident), true);
+  assert.strictEqual(core.bodyHit({ kind: "price", points: { price: 50 } }, 999, 90, ident), false);
+});

@@ -7,9 +7,11 @@
 // primitive reads ``isSelected`` LIVE on every render, so a selection change
 // needs no re-attach (R6/#68: redraw via ``requestUpdate`` only).
 import * as Draw from "./drawing-core.js";
+import * as Tools from "./drawing-tools-core.js";
 import { handlesFor, HANDLE_RADIUS } from "./drawing-interaction-core.js";
 import { positionBox } from "./position-core.js";
 import { token } from "./theme-core.js";
+import { label, renderTool } from "./tool-render-core.js";
 
 // Price range so a full-width ray / rect / position box is not clipped (R6).
 function priceRangeFor(row) {
@@ -22,6 +24,9 @@ function priceRangeFor(row) {
     const p = row.points[k];
     if (p && typeof p.price === "number") prices.push(p.price);
   });
+  // F9 S3 (R6): a channel/fib_ext's ``p3`` anchor must be in range too.
+  const p3 = row.points.p3;
+  if (p3 && typeof p3.price === "number") prices.push(p3.price);
   if (!prices.length) return null;
   return {
     priceRange: {
@@ -36,6 +41,9 @@ function priceRangeFor(row) {
 // ``selected``, strokes are thicker and the per-kind handle dots are drawn.
 function renderShape(ctx, size, row, map, selected) {
   const kind = row.kind;
+  // F9 #219: hand the live canvas width to the pure geometry (a ray needs its
+  // right edge); the map is shared, so refresh it on every draw.
+  if (map && size && typeof size.width === "number") map.right = size.width;
   ctx.save();
   // F5 S3 (R6): a hidden drawing stays attached but draws NOTHING. Reveal is a
   // requestUpdate only (the primitive reads ``row.visible`` live each render).
@@ -57,11 +65,10 @@ function renderShape(ctx, size, row, map, selected) {
     }
   } else if (kind === "fib") {
     const f = Draw.fibPath(row, map, row.style.levels);
-    ctx.font = "11px sans-serif";
     f.levels.forEach(function (l) {
       if (l.y === null || l.y === undefined) return;
       ctx.beginPath(); ctx.moveTo(f.x1, l.y); ctx.lineTo(f.x2, l.y); ctx.stroke();
-      ctx.fillText(l.ratio + "  " + l.price, f.x1, l.y - 2);
+      label(ctx, l.ratio + "  " + l.price, f.x1, l.y - 2);
     });
   } else if (kind === "rect") {
     const r = Draw.rectPath(row, map);
@@ -77,10 +84,13 @@ function renderShape(ctx, size, row, map, selected) {
     const tx = Draw.textPath(row, map);
     if (tx.x !== null && tx.x !== undefined && tx.y !== null && tx.y !== undefined) {
       ctx.font = (row.style.fontSize || 14) + "px sans-serif";
-      ctx.fillText(tx.text, tx.x, tx.y);
+      label(ctx, tx.text, tx.x, tx.y, (row.style.fontSize || 14) + "px sans-serif");
     }
   } else if (kind === "position") {
     renderPosition(ctx, row, map);
+  } else if (Tools.NEW_KINDS.indexOf(kind) !== -1) {
+    // F9 S3 (R6): ONE guard — the eight new kinds draw via their descriptors.
+    renderTool(ctx, size, row, map);
   }
   if (selected) drawHandles(ctx, row, map);
   ctx.restore();
@@ -105,20 +115,19 @@ function renderPosition(ctx, row, map) {
   fill(box.rewardBand, token("--up", "#26a69a")); // reward (entry -> tp)
   ctx.strokeStyle = row.style.color || token("--muted", "#787b86");
   ctx.fillStyle = row.style.color || token("--muted", "#787b86");
-  ctx.font = "11px sans-serif";
   box.levels.forEach(function (l) {
     if (l.y === null || l.y === undefined) return;
     ctx.beginPath();
     ctx.moveTo(box.left, l.y);
     ctx.lineTo(box.right, l.y);
     ctx.stroke();
-    ctx.fillText(l.label + " " + l.price, box.left + 2, l.y - 2);
+    label(ctx, l.label + " " + l.price, box.left + 2, l.y - 2);
   });
   const dir = box.long ? "LONG" : "SHORT";
   const arrow = box.long ? "\u25b2" : "\u25bc";
-  ctx.fillText(arrow + " " + dir, box.left + 2, box.rewardBand.top - 4);
+  label(ctx, arrow + " " + dir, box.left + 2, box.rewardBand.top - 4);
   if (box.rr !== null && box.rr !== undefined) {
-    ctx.fillText("R:R " + box.rr.toFixed(2), box.left + 2, box.riskBand.bottom + 12);
+    label(ctx, "R:R " + box.rr.toFixed(2), box.left + 2, box.riskBand.bottom + 12);
   }
 }
 
@@ -145,9 +154,17 @@ function makeDrawingPrimitive(row, selection) {
     return typeof s === "function" ? !!s(row) : !!s;
   };
   const c = { chart: null, series: null, requestUpdate: null };
+  // F9 #219: ``right`` is the live canvas right edge, refreshed per draw so a
+  // ray extends to the pane edge instead of stopping at p2 (trendline shape).
+  // The map is built before a media size exists, so it starts at null.
   const map = {
     x: function (time) { return c.chart ? c.chart.timeScale().timeToCoordinate(time) : null; },
     y: function (price) { return c.series ? c.series.priceToCoordinate(price) : null; },
+    // R2 #223: the series' own price format, so a price tag reads like the axis.
+    format: function (price) {
+      try { return c.series.priceFormatter().format(price); } catch (e) { return String(price); }
+    },
+    right: null,
   };
   return {
     attached: function (p) { c.chart = p.chart; c.series = p.series; c.requestUpdate = p.requestUpdate; },
@@ -169,8 +186,9 @@ function makeDrawingPrimitive(row, selection) {
       }];
     },
     // F5 S3 (R6): a hidden full-width ray MUST NOT influence autoscale.
+    // A transient draft preview never moves the price scale (R2 #222).
     autoscaleInfo: function () {
-      return row.visible === false ? null : priceRangeFor(row);
+      return row.visible === false || sel.preview ? null : priceRangeFor(row);
     },
   };
 }

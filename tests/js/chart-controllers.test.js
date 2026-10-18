@@ -383,6 +383,262 @@ test("a duplicate of an unknown id POSTs nothing", async () => {
   } finally { f.restore(); }
 });
 
+// --- drawings click flow (F9 S3b / design D6) --------------------------------
+//
+// The 1/2/3-click machine moved into the pure drawing-click-flow-core; the
+// controller is now a thin delegate. These tests pin the CONTROLLER contract:
+// clicks -> exactly ONE POST with the kind-shaped points, a dialog for
+// text/callout, and cancel on tool switch / Escape / symbol switch.
+function drawingsClickFixture() {
+  const prevDoc = globalThis.document;
+  const prevWin = globalThis.window;
+  const prevFetch = globalThis.fetch;
+  const prevGcs = globalThis.getComputedStyle;
+  const posts = [];
+  const dialog = makeEl("dialog");
+  dialog.showModal = () => { dialog.open = true; };
+  dialog.returnValue = "";
+  const input = { value: "" };
+  const chartEl = makeEl("div");
+  globalThis.document = {
+    getElementById: (id) => {
+      if (id === "text-dialog") return dialog;
+      if (id === "text-dialog-input") return input;
+      if (id === "chart") return chartEl;
+      return null;
+    },
+    querySelector: () => null,
+    documentElement: { style: {} },
+  };
+  globalThis.getComputedStyle = () => ({ getPropertyValue: () => "" });
+  globalThis.window = { marketChart: { drawings: [] } };
+  globalThis.fetch = (url, opts) => {
+    const method = (opts && opts.method) || "GET";
+    const body = JSON.parse((opts && opts.body) || "{}");
+    if (method !== "GET") posts.push({ url, method, body });
+    if (method === "GET") {
+      return Promise.resolve({ ok: true, json: () => Promise.resolve({ drawings: [] }) });
+    }
+    return Promise.resolve({
+      ok: true,
+      json: () => Promise.resolve({ id: 900 + posts.length, kind: body.kind, points: body.points, style: body.style }),
+    });
+  };
+  const bus = createBus();
+  const store = makeStore({ symbol: "BTCUSDT", interval: "1m", tool: null });
+  const host = { getCandleSeries: () => ({ coordinateToPrice: (y) => y }) };
+  const d = createDrawings({ store, bus, host, config: { urls: { drawings: "/market/api/drawings" } } });
+  return {
+    d, bus, posts, store, dialog, input, chartEl,
+    tool: (kind) => store.set({ tool: kind }),
+    click(time, price) { d.onChartClick({ time, point: { y: price } }); },
+    closeDialog(text) {
+      dialog.returnValue = "ok";
+      input.value = text;
+      dialog.fire("close", {});
+    },
+    restore() {
+      if (prevDoc === undefined) delete globalThis.document; else globalThis.document = prevDoc;
+      if (prevWin === undefined) delete globalThis.window; else globalThis.window = prevWin;
+      if (prevFetch === undefined) delete globalThis.fetch; else globalThis.fetch = prevFetch;
+      if (prevGcs === undefined) delete globalThis.getComputedStyle; else globalThis.getComputedStyle = prevGcs;
+    },
+  };
+}
+
+test("a 1-click kind (hline) POSTs its price on the first click", () => {
+  const f = drawingsClickFixture();
+  try {
+    f.tool("hline");
+    f.click(undefined, 42);
+    assert.strictEqual(f.posts.length, 1);
+    assert.strictEqual(f.posts[0].body.kind, "hline");
+    assert.deepStrictEqual(f.posts[0].body.points, { price: 42 });
+  } finally { f.restore(); }
+});
+
+test("a 2-click kind (ray) POSTs once, after the second click", () => {
+  const f = drawingsClickFixture();
+  try {
+    f.tool("ray");
+    f.click(1, 10);
+    assert.deepStrictEqual(f.posts, [], "the first click only sets an anchor");
+    f.click(2, 20);
+    assert.strictEqual(f.posts.length, 1);
+    assert.strictEqual(f.posts[0].body.kind, "ray");
+    assert.deepStrictEqual(f.posts[0].body.points, {
+      p1: { time: 1, price: 10 }, p2: { time: 2, price: 20 },
+    });
+  } finally { f.restore(); }
+});
+
+test("a 3-click kind (channel) POSTs once, after the third click", () => {
+  const f = drawingsClickFixture();
+  try {
+    f.tool("channel");
+    f.click(1, 10);
+    f.click(2, 20);
+    assert.deepStrictEqual(f.posts, []);
+    f.click(3, 30);
+    assert.strictEqual(f.posts.length, 1);
+    assert.strictEqual(f.posts[0].body.kind, "channel");
+    assert.deepStrictEqual(f.posts[0].body.points, {
+      p1: { time: 1, price: 10 }, p2: { time: 2, price: 20 }, p3: { time: 3, price: 30 },
+    });
+  } finally { f.restore(); }
+});
+
+test("position still collects entry/stop/tp and POSTs ONE drawing", () => {
+  const f = drawingsClickFixture();
+  try {
+    f.tool("position");
+    f.click(1, 10);
+    f.click(2, 20);
+    assert.deepStrictEqual(f.posts, []);
+    f.click(3, 30);
+    assert.strictEqual(f.posts.length, 1);
+    assert.strictEqual(f.posts[0].body.kind, "position");
+    assert.deepStrictEqual(f.posts[0].body.points, {
+      entry: { time: 1, price: 10 }, stop: 20, take_profit: 30,
+    });
+    // The style is the DERIVED direction colour, not Draw.defaultStyle("position").
+    assert.strictEqual(typeof f.posts[0].body.style.color, "string");
+    assert.strictEqual(f.posts[0].body.style.lineWidth, 1);
+  } finally { f.restore(); }
+});
+
+test("a position's derived colour follows the direction (long vs short)", () => {
+  const long = drawingsClickFixture();
+  try {
+    long.tool("position");
+    long.click(1, 10);
+    long.click(2, 5);
+    long.click(3, 30);
+  } finally { long.restore(); }
+  const longColor = long.posts[0].body.style.color;
+  const short = drawingsClickFixture();
+  try {
+    short.tool("position");
+    short.click(1, 10);
+    short.click(2, 20);
+    short.click(3, 5);
+    assert.strictEqual(short.posts.length, 1);
+  } finally { short.restore(); }
+  assert.notStrictEqual(short.posts[0].body.style.color, longColor);
+});
+
+test("a tool switch drops the half-collected draft", () => {
+  const f = drawingsClickFixture();
+  try {
+    f.tool("ray");
+    f.click(1, 10);
+    f.tool("trendline");
+    f.click(2, 20);
+    assert.deepStrictEqual(f.posts, [], "the ray anchor must not become the trendline p1");
+    f.click(3, 30);
+    assert.strictEqual(f.posts.length, 1);
+    assert.strictEqual(f.posts[0].body.kind, "trendline");
+    assert.deepStrictEqual(f.posts[0].body.points.p1, { time: 2, price: 20 });
+  } finally { f.restore(); }
+});
+
+test("Escape cancels a half-collected draft (no POST)", () => {
+  const f = drawingsClickFixture();
+  try {
+    f.tool("position");
+    f.click(1, 10);
+    f.click(2, 20);
+    f.chartEl.fire("keydown", { key: "Escape", preventDefault() {} });
+    f.click(3, 30);
+    assert.deepStrictEqual(f.posts, [], "the draft was cancelled, not resumed");
+    f.click(4, 40);
+    f.click(5, 50);
+    assert.strictEqual(f.posts.length, 1, "a fresh 3-click draft finalizes");
+    assert.deepStrictEqual(f.posts[0].body.points.entry, { time: 3, price: 30 });
+  } finally { f.restore(); }
+});
+
+test("clearForSwitch cancels the draft and the next symbol starts fresh", () => {
+  const f = drawingsClickFixture();
+  try {
+    f.tool("ray");
+    f.click(1, 10);
+    f.d.clearForSwitch();
+    f.tool("ray");
+    f.click(2, 20);
+    assert.deepStrictEqual(f.posts, []);
+    f.click(3, 30);
+    assert.strictEqual(f.posts.length, 1);
+    assert.deepStrictEqual(f.posts[0].body.points.p1, { time: 2, price: 20 });
+  } finally { f.restore(); }
+});
+
+test("text opens #text-dialog and merges the typed text into ONE POST", () => {
+  const f = drawingsClickFixture();
+  try {
+    f.tool("text");
+    f.click(1, 10);
+    assert.deepStrictEqual(f.posts, []);
+    assert.strictEqual(f.dialog.open, true, "the text dialog opens");
+    f.closeDialog("hello");
+    assert.strictEqual(f.posts.length, 1);
+    assert.strictEqual(f.posts[0].body.kind, "text");
+    assert.deepStrictEqual(f.posts[0].body.points, { time: 1, price: 10, text: "hello" });
+  } finally { f.restore(); }
+});
+
+test("callout collects 2 points then merges the dialog text into ONE POST", () => {
+  const f = drawingsClickFixture();
+  try {
+    f.tool("callout");
+    f.click(1, 10);
+    assert.strictEqual(f.dialog.open, undefined, "the dialog waits for the second click");
+    f.click(2, 20);
+    assert.strictEqual(f.dialog.open, true);
+    f.closeDialog("watch this");
+    assert.strictEqual(f.posts.length, 1);
+    assert.strictEqual(f.posts[0].body.kind, "callout");
+    assert.deepStrictEqual(f.posts[0].body.points, {
+      p1: { time: 1, price: 10 }, p2: { time: 2, price: 20 }, text: "watch this",
+    });
+  } finally { f.restore(); }
+});
+
+test("a cancelled dialog POSTs nothing and drops the pending shape", () => {
+  const f = drawingsClickFixture();
+  try {
+    f.tool("callout");
+    f.click(1, 10);
+    f.click(2, 20);
+    f.dialog.returnValue = "cancel";
+    f.dialog.fire("close", {});
+    assert.deepStrictEqual(f.posts, []);
+  } finally { f.restore(); }
+});
+
+test("a 2-click kind ignores an off-bar click (no time)", () => {
+  const f = drawingsClickFixture();
+  try {
+    f.tool("ray");
+    f.click(null, 10);
+    assert.deepStrictEqual(f.posts, []);
+    f.click(2, 20);
+    assert.deepStrictEqual(f.posts, [], "the off-bar click must not have set the anchor");
+    f.click(3, 30);
+    assert.strictEqual(f.posts.length, 1);
+    assert.deepStrictEqual(f.posts[0].body.points.p1, { time: 2, price: 20 });
+  } finally { f.restore(); }
+});
+
+test("measure is ephemeral and never POSTs through the click flow", () => {
+  const f = drawingsClickFixture();
+  try {
+    f.tool("measure");
+    f.click(1, 10);
+    assert.deepStrictEqual(f.posts, []);
+  } finally { f.restore(); }
+});
+
 //
 // The controller's chart peers need a browser (E2E), but its gesture +
 // ephemeral-readout contract is DOM + a stubbed host/series: it owns the
@@ -397,6 +653,7 @@ function makeEl(tag) {
   const el = {
     tagName: tag,
     _listeners: {},
+    style: {},
     textContent: "",
     setAttribute() {},
     addEventListener(type, fn) { (this._listeners[type] = this._listeners[type] || []).push(fn); },
@@ -1000,4 +1257,104 @@ test("measure stroke paints with the resolved --accent token, not a literal (R9)
     if (prevGcs === undefined) delete globalThis.getComputedStyle; else globalThis.getComputedStyle = prevGcs;
     f.restore();
   }
+});
+
+// --- F9 R2 (#222): a pending draft is VISIBLE + the cursor is a crosshair ----
+//
+// A 2/3-click draft used to draw nothing until the final click: the user clicked
+// into a void. The controller now attaches a TRANSIENT preview primitive after
+// every pending click (a primitive + requestUpdate, never a POST, #68), and
+// #chart shows a crosshair while a tool is active.
+function draftsPreviewFixture() {
+  const prevDoc = globalThis.document;
+  const prevWin = globalThis.window;
+  const prevFetch = globalThis.fetch;
+  const prevGcs = globalThis.getComputedStyle;
+  const attached = [];
+  const posts = [];
+  const chartEl = makeEl("div");
+  globalThis.document = {
+    getElementById: (id) => (id === "chart" ? chartEl : null),
+    querySelector: () => null,
+    documentElement: { style: {} },
+  };
+  globalThis.getComputedStyle = () => ({ getPropertyValue: () => "" });
+  globalThis.window = { marketChart: { drawings: [] } };
+  globalThis.fetch = (url, opts) => {
+    const method = (opts && opts.method) || "GET";
+    const body = JSON.parse((opts && opts.body) || "{}");
+    if (method !== "GET") posts.push({ url, method, body });
+    return Promise.resolve({
+      ok: true,
+      json: () => Promise.resolve({ drawings: [], id: 1, kind: body.kind, points: body.points }),
+    });
+  };
+  const chart = { timeScale: () => ({ timeToCoordinate: (t) => t }) };
+  const series = {
+    // Mirror v5: attaching hands the primitive its chart/series/requestUpdate.
+    attachPrimitive(prim) {
+      attached.push(prim);
+      prim.attached({ chart: chart, series: series, requestUpdate() {} });
+    },
+    detachPrimitive() {},
+    coordinateToPrice: (y) => y,
+    priceToCoordinate: (p) => p,
+  };
+  const bus = createBus();
+  const store = makeStore({ symbol: "BTCUSDT", interval: "1m", tool: null });
+  const host = { getChart: () => chart, getCandleSeries: () => series };
+  const d = createDrawings({ store, bus, host, config: { urls: { drawings: "/market/api/drawings" } } });
+  return {
+    d, store, chartEl, attached, posts,
+    tool: (kind) => store.set({ tool: kind }),
+    click(time, price) { d.onChartClick({ time, point: { y: price } }); },
+    restore() {
+      if (prevDoc === undefined) delete globalThis.document; else globalThis.document = prevDoc;
+      if (prevWin === undefined) delete globalThis.window; else globalThis.window = prevWin;
+      if (prevFetch === undefined) delete globalThis.fetch; else globalThis.fetch = prevFetch;
+      if (prevGcs === undefined) delete globalThis.getComputedStyle; else globalThis.getComputedStyle = prevGcs;
+    },
+  };
+}
+
+test("the first click of a channel attaches a preview primitive, no POST (#222)", () => {
+  const f = draftsPreviewFixture();
+  try {
+    f.tool("channel");
+    f.click(1, 10);
+    assert.strictEqual(f.attached.length, 1, "a preview primitive is attached");
+    assert.deepStrictEqual(f.posts, [], "a pending draft never POSTs");
+    // The preview row carries the first anchor and renders a stroke/point.
+    const drawn = [];
+    const ctx = {
+      save() {}, restore() {}, beginPath() {}, moveTo() {}, lineTo() {}, stroke() {},
+      arc(x, y) { drawn.push({ x, y }); }, fill() {}, setLineDash() {},
+      strokeRect() {}, fillRect() {}, fillText() {},
+      strokeStyle: "", fillStyle: "", lineWidth: 1, globalAlpha: 1, font: "",
+    };
+    f.attached[0].paneViews()[0].renderer().draw({
+      useMediaCoordinateSpace: (fn) => fn({ context: ctx, mediaSize: { width: 100, height: 100 } }),
+    });
+    assert.deepStrictEqual(drawn, [{ x: 1, y: 10 }], "the first anchor is drawn at its pixel");
+  } finally { f.restore(); }
+});
+
+test("#chart shows a crosshair cursor while a tool is active (#222)", () => {
+  const f = draftsPreviewFixture();
+  try {
+    assert.strictEqual(f.chartEl.style.cursor, "", "no tool -> no cursor override");
+    f.tool("ray");
+    assert.strictEqual(f.chartEl.style.cursor, "crosshair");
+    f.tool(null);
+    assert.strictEqual(f.chartEl.style.cursor, "", "the cursor is restored");
+  } finally { f.restore(); }
+});
+
+test("the draft preview never moves the price scale (#222/#68)", () => {
+  const f = draftsPreviewFixture();
+  try {
+    f.tool("channel");
+    f.click(1, 10);
+    assert.strictEqual(f.attached[0].autoscaleInfo(), null, "a preview must not rescale");
+  } finally { f.restore(); }
 });

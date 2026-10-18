@@ -248,6 +248,14 @@ class Drawing(UserOwnedModel):
         RECT = "rect"
         TEXT = "text"
         POSITION = "position"
+        RAY = "ray"
+        VLINE = "vline"
+        CHANNEL = "channel"
+        PRICE = "price"
+        CALLOUT = "callout"
+        FIB_EXT = "fib_ext"
+        FIB_TIME = "fib_time"
+        FIB_ZONE = "fib_zone"
 
     symbol = models.CharField(max_length=32)
     kind = models.CharField(max_length=16, choices=Kind.choices)

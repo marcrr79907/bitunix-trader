@@ -7,6 +7,8 @@
 // project's no-new-dependency rule and the draw-toolbar test precedent.
 import test from "node:test";
 import assert from "node:assert";
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import { createBus, EVENTS } from "../../web/market/templates/market/chart-bus.js";
 
 // --- minimal DOM shim -------------------------------------------------------
@@ -471,4 +473,44 @@ test("Left/Right collapse/expand a focused group parent (R3)", () => {
     group.keydown("ArrowRight");
     assert.strictEqual(group.getAttribute("aria-expanded"), "true");
   } finally { restore(); }
+});
+
+// --- F9 R2 (#223): human row labels ----------------------------------------
+
+test("drawing rows show a human label, not the raw kind slug (#223)", () => {
+  const { mount, restore, bus } = setup({
+    indicators: [],
+    indicatorVisible: {},
+    params: {},
+  });
+  try {
+    bus.emit("drawings:changed", {
+      rows: [
+        { id: 12, kind: "fib_ext", visible: true, locked: false },
+        { id: 13, kind: "fib_zone", visible: true, locked: false },
+      ],
+    });
+    const names = byClass(mount, "tree-row-name").map((e) => e.textContent);
+    assert.deepStrictEqual(names, ["Fibonacci extension #12", "Fibonacci bands #13"]);
+    // The delete action name follows the same human label.
+    const row = rowsWith(mount, "id").find((r) => r.dataset.id == 12);
+    assert.strictEqual(
+      byClass(row, "row-delete")[0].getAttribute("aria-label"),
+      "Delete Fibonacci extension #12",
+    );
+  } finally { restore(); }
+});
+
+test("object-tree.js stays within the R14 300-line ceiling (#223)", () => {
+  // The label map lives in tool-icons-core; this controller only calls labelFor.
+  const src = readFileSync(
+    fileURLToPath(
+      new URL("../../web/market/templates/market/controllers/object-tree.js", import.meta.url),
+    ),
+    "utf8",
+  );
+  // Mirrors the Python guard's splitlines() semantics (a trailing newline is not
+  // a line), so this and test_module_size_guard.py can never disagree.
+  const count = src.replace(/\n$/, "").split("\n").length;
+  assert.ok(count <= 300, `object-tree.js is ${count} lines`);
 });

@@ -1013,6 +1013,176 @@ def test_click_with_tool_fires_post(seeded_5m_candles, browser_page):
 
 
 @p
+def test_f9_tools_create_their_kind_and_drag_is_one_put(
+    seeded_5m_candles, browser_page
+):
+    # F9 S3b: the click-flow core generalizes the 1/2/3-click machine, so a
+    # representative subset (ray=2, channel=3, price=1, fib_zone=2) MUST POST its
+    # kind-shaped points exactly once, and a drag MUST still be ONE PUT.
+    # Readiness-gated, DOM+network only (no pixels, #149). The exchange socket is
+    # mocked (as the F6 position test does) so the price scale cannot drift under
+    # the click coordinates between two gestures.
+    page, base_url = browser_page
+    page.route_web_socket("wss://fapi.bitunix.com/**", lambda ws: None)
+    posts = []
+    puts = []
+    page.on(
+        "request",
+        lambda r: (
+            posts.append(r)
+            if r.method == "POST" and "/market/api/drawings" in r.url
+            else None
+        ),
+    )
+    page.on(
+        "request",
+        lambda r: (
+            puts.append(r)
+            if r.method == "PUT" and "/market/api/drawings/" in r.url
+            else None
+        ),
+    )
+    page.goto(f"{base_url}/market/")
+    _wait_ready(page)
+    page.select_option("#interval", "5m")
+    page.wait_for_function(
+        "() => window.marketChart && window.marketChart.candleSeries &&"
+        " window.marketChart.candleSeries.data().length > 0",
+        timeout=10000,
+    )
+    # Settle: the series is replaced when history lands, so wait until the last
+    # bar time stops changing — clicking mid-swap would map y against two
+    # different price scales (the failure mode the single-click hline test misses).
+    for _ in range(20):
+        before_time = page.evaluate(
+            "() => window.marketChart.candleSeries.data().at(-1).time"
+        )
+        page.wait_for_timeout(250)
+        after_time = page.evaluate(
+            "() => window.marketChart.candleSeries.data().at(-1).time"
+        )
+        if before_time == after_time:
+            break
+
+    canvas = page.locator("#chart canvas").first
+    canvas.scroll_into_view_if_needed()
+    box = canvas.bounding_box()
+    cx = box["x"] + box["width"] / 2
+
+    def click(dx, frac):
+        # >500ms apart: two rapid clicks in the same pane are a double-click and
+        # the second one never reaches the click flow.
+        page.mouse.click(cx + dx, box["y"] + box["height"] * frac)
+        page.wait_for_timeout(600)
+
+    # (kind, [(dx from centre, y fraction)], expected points keys)
+    cases = (
+        ("ray", [(-80, 0.55), (40, 0.40)], {"p1", "p2"}),
+        ("channel", [(-100, 0.60), (0, 0.48), (100, 0.38)], {"p1", "p2", "p3"}),
+        ("price", [(0, 0.50)], {"price"}),
+        ("fib_zone", [(-60, 0.58), (60, 0.42)], {"p1", "p2"}),
+    )
+    for kind, clicks, keys in cases:
+        before = len(posts)
+        page.locator(f'.draw-tool[data-kind="{kind}"]').click()
+        for dx, frac in clicks:
+            click(dx, frac)
+        page.wait_for_function(
+            "(n) => window.marketChart.drawings.length === n",
+            arg=before + 1,
+            timeout=10000,
+        )
+        assert len(posts) == before + 1, [r.url for r in posts]
+        body = json.loads(posts[-1].post_data or "{}")
+        assert body["kind"] == kind
+        assert set(body["points"]) == keys, (kind, body["points"])
+        # Toggle the tool off so no later gesture creates another shape.
+        page.locator(f'.draw-tool[data-kind="{kind}"]').click()
+        page.wait_for_timeout(150)
+
+
+@pytest.fixture
+def seeded_ray(e2e_user):
+    """One ray at known prices (seeded BEFORE the Playwright context starts)."""
+    from trading.models import Drawing
+
+    return Drawing.objects.create(
+        user=e2e_user,
+        symbol="BTCUSDT",
+        kind="ray",
+        # Anchors sit in the LAST seeded bars so both map inside the initial
+        # visible window (a bar near the seed start is scrolled off to the left).
+        points={
+            "p1": {"time": _SEED_BASE + 200 * 300, "price": 98.0},
+            "p2": {"time": _SEED_BASE + 235 * 300, "price": 102.0},
+        },
+        style={"color": "#ff6d00", "lineWidth": 1},
+    )
+
+
+@p
+def test_drag_f9_kind_is_one_put(seeded_5m_candles, seeded_ray, browser_page):
+    # F9 S3b: a new kind's handle drag persists exactly ONE PUT (one write per
+    # gesture, #68) — the interaction core's toolDrag path. A SEEDED ray at known
+    # prices keeps the handle inside the visible price range; DOM+network only,
+    # readiness-gated (no pixels, #149).
+    page, base_url = browser_page
+    puts = []
+    page.on(
+        "request",
+        lambda r: (
+            puts.append(r)
+            if r.method == "PUT" and "/market/api/drawings/" in r.url
+            else None
+        ),
+    )
+    page.goto(f"{base_url}/market/")
+    _wait_ready(page)
+    page.wait_for_function(
+        "() => window.marketChart.drawings && window.marketChart.drawings.length === 1",
+        timeout=10000,
+    )
+    page.select_option("#interval", "5m")
+    page.wait_for_function(
+        "() => window.marketChart.candleSeries &&"
+        " window.marketChart.candleSeries.data().length > 0",
+        timeout=10000,
+    )
+    handle = page.evaluate(
+        """() => {
+            const row = window.marketChart.drawings[0];
+            const ts = window.marketChart.chart.timeScale();
+            const cs = window.marketChart.candleSeries;
+            for (const key of ['p1', 'p2']) {
+                const p = row.points[key];
+                const x = ts.timeToCoordinate(p.time);
+                const y = cs.priceToCoordinate(p.price);
+                if (x !== null && y !== null) {
+                    return { key: key, price: p.price, x: x, y: y };
+                }
+            }
+            return null;
+        }"""
+    )
+    assert handle is not None, "no mapped ray handle"
+    chart = page.locator("#chart")
+    box = chart.bounding_box()
+    start_x = box["x"] + handle["x"]
+    start_y = box["y"] + handle["y"]
+    page.mouse.move(start_x, start_y)
+    page.mouse.down()
+    page.mouse.move(start_x, start_y - 30, steps=8)
+    page.mouse.up()
+    page.wait_for_function(
+        """([key, before]) => window.marketChart.drawings[0]
+            .points[key].price !== before""",
+        arg=[handle["key"], handle["price"]],
+        timeout=5000,
+    )
+    assert len(puts) == 1, [r.url for r in puts]
+
+
+@p
 def test_draw_toolbar_renders_groups_and_sets_store(browser_page):
     # F5 S2 (R1/R2/R3): the vertical grouped icon toolbar replaces the flat text
     # buttons; activating a tool writes store.tool and moves aria-pressed, and
@@ -1026,17 +1196,18 @@ def test_draw_toolbar_renders_groups_and_sets_store(browser_page):
     assert toolbar.get_attribute("aria-orientation") == "vertical"
     # F6: the F5 four groups plus Measure + Positions.
     assert page.locator('.draw-tools [role="group"]').count() == 6
-    assert page.locator(".draw-tool").count() == 7
+    # F9 S3: the six F5/F6 tools plus the eight new instruments.
+    assert page.locator(".draw-tool").count() == 15
     # The legacy flat text buttons are gone (labels H-line/Trend/Box no longer exist).
     assert page.locator(".drawings .draw-tool").count() == 0
     # Icons injected by JS (no inline handler); each button names itself.
-    assert page.locator(".draw-tools .draw-tool svg").count() == 7
+    assert page.locator(".draw-tools .draw-tool svg").count() == 15
     assert (
         page.locator('.draw-tool[data-kind="fib"]').get_attribute("aria-label")
         == "Fibonacci retracement"
     )
     # F7 UI #206: the advertised letter is surfaced visually on every button.
-    assert page.locator(".draw-tools .draw-tool .tool-key").count() == 7
+    assert page.locator(".draw-tools .draw-tool .tool-key").count() == 15
     assert page.locator('.draw-tool[data-kind="fib"] .tool-key').text_content() == "F"
 
     # No tool active at boot: nothing pressed.

@@ -50,6 +50,7 @@ MODULE_ALLOWLIST = frozenset(
         "drawing-core",
         "drawing-interaction-core",
         "drawing-primitive",
+        "tool-render-core",
         "tool-icons-core",
         "smc-overlay-core",
         "legend-core",
@@ -61,6 +62,10 @@ MODULE_ALLOWLIST = frozenset(
         "readout-coalesce-core",
         "history-core",
         "context-menu-core",
+        "drawing-tools-core",
+        "fib-tools-core",
+        "drawing-click-flow-core",
+        "object-tree-dom-core",
         "chart-store",
         "chart-bus",
         "chart-host",
@@ -85,6 +90,7 @@ CONTROLLER_ALLOWLIST: frozenset[str] = frozenset(
         "position-seed",
         "undo",
         "context-menu",
+        "draft-preview",
     }
 )
 

@@ -467,6 +467,33 @@ def parse_drawing(
             raise ValueError("invalid position take_profit")
         if points["stop"] == points["entry"]["price"]:
             raise ValueError("position stop must differ from entry")
+    elif kind in ("ray", "fib_time", "fib_zone"):
+        if set(points) != {"p1", "p2"}:
+            raise ValueError(f"{kind} requires exactly two points")
+        _parse_point(points["p1"], require_time=True, where=f"{kind} p1")
+        _parse_point(points["p2"], require_time=True, where=f"{kind} p2")
+    elif kind in ("channel", "fib_ext"):
+        if set(points) != {"p1", "p2", "p3"}:
+            raise ValueError(f"{kind} requires exactly three points")
+        for name in ("p1", "p2", "p3"):
+            _parse_point(points[name], require_time=True, where=f"{kind} {name}")
+    elif kind == "vline":
+        if set(points) != {"time"}:
+            raise ValueError("vline requires exactly one time")
+        if not isinstance(points["time"], int):
+            raise ValueError("invalid vline time")
+    elif kind == "price":
+        if set(points) != {"price"}:
+            raise ValueError("price requires exactly one price")
+        if not _is_number(points["price"]):
+            raise ValueError("invalid price")
+    elif kind == "callout":
+        if set(points) != {"p1", "p2", "text"}:
+            raise ValueError("callout requires p1, p2, text")
+        _parse_point(points["p1"], require_time=True, where="callout p1")
+        _parse_point(points["p2"], require_time=True, where="callout p2")
+        if not isinstance(points["text"], str) or not points["text"].strip():
+            raise ValueError("callout requires a label")
     return points, style, visible, locked
 
 

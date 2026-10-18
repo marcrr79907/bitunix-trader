@@ -16,17 +16,22 @@ function recordingCtx() {
   const ctx = {
     calls,
     fills: [], // fillStyle captured at each fillRect (F6 UI #193 zone colours)
+    lines: [], // lineTo end points ({x,y}) for geometry assertions
     save: () => calls.push("save"),
     restore: () => calls.push("restore"),
     beginPath: () => calls.push("beginPath"),
     moveTo: () => calls.push("moveTo"),
-    lineTo: () => calls.push("lineTo"),
+    lineTo: (x, y) => { calls.push("lineTo"); ctx.lines.push({ x, y }); },
     stroke: () => calls.push("stroke"),
     strokeRect: () => calls.push("strokeRect"),
     fillRect: () => { calls.push("fillRect"); ctx.fills.push(ctx.fillStyle); },
     fillText: () => calls.push("fillText"),
+    strokeText: () => calls.push("strokeText"),
     arc: () => calls.push("arc"),
     fill: () => calls.push("fill"),
+    rect: () => calls.push("rect"),
+    roundRect: () => calls.push("roundRect"),
+    measureText: (t) => ({ width: String(t).length * 6 }),
     font: "",
     strokeStyle: "",
     fillStyle: "",
@@ -150,4 +155,237 @@ test("position zones fall back to the literals with no DOM (R9)", () => {
   renderShape(ctx, { width: 300, height: 300 }, POSITION, MAP, false);
   assert.ok(ctx.fills.includes("#ef5350"), `risk fallback: ${ctx.fills}`);
   assert.ok(ctx.fills.includes("#26a69a"), `reward fallback: ${ctx.fills}`);
+});
+
+// --- F9 kinds render dispatch (F9 S3 R6) -------------------------------------
+
+const MAPR = { x: (t) => t, y: (p) => p, right: 1000 };
+
+// Render one row through renderShape and return every line end point (lineTo),
+// so a test can assert the real drawn extent rather than a pure-core return.
+function renderShapeLines(row) {
+  const ctx = recordingCtx();
+  renderShape(ctx, { width: 300, height: 300 }, row, MAPR, false);
+  return ctx.lines;
+}
+
+
+// One representative row per F9 kind.
+const F9_ROWS = {
+  ray: { kind: "ray", points: { p1: { time: 0, price: 0 }, p2: { time: 10, price: 10 } } },
+  vline: { kind: "vline", points: { time: 42 } },
+  channel: {
+    kind: "channel",
+    points: { p1: { time: 0, price: 0 }, p2: { time: 10, price: 10 }, p3: { time: 0, price: 20 } },
+  },
+  price: { kind: "price", points: { price: 50 } },
+  callout: {
+    kind: "callout",
+    points: { p1: { time: 0, price: 0 }, p2: { time: 10, price: 10 }, text: "OB" },
+  },
+  fib_ext: {
+    kind: "fib_ext",
+    points: { p1: { time: 0, price: 0 }, p2: { time: 10, price: 10 }, p3: { time: 20, price: 20 } },
+  },
+  fib_time: { kind: "fib_time", points: { p1: { time: 0 }, p2: { time: 10 } } },
+  fib_zone: {
+    kind: "fib_zone",
+    points: { p1: { time: 0, price: 0 }, p2: { time: 10, price: 10 } },
+  },
+};
+
+test("renderShape dispatches each F9 kind to renderTool without throwing (R6)", () => {
+  for (const kind of Object.keys(F9_ROWS)) {
+    const ctx = recordingCtx();
+    const row = { ...F9_ROWS[kind], style: { color: "#2962ff", lineWidth: 1 } };
+    assert.doesNotThrow(
+      () => renderShape(ctx, { width: 300, height: 300 }, row, MAPR, false),
+      kind,
+    );
+    const draws = ctx.calls.filter((c) => c === "stroke" || c === "fillRect" || c === "fillText");
+    assert.ok(draws.length > 0, `${kind} draws something`);
+  }
+});
+
+test("renderShape honours the hidden rule for F9 kinds too (R6)", () => {
+  for (const kind of Object.keys(F9_ROWS)) {
+    const ctx = recordingCtx();
+    const row = { ...F9_ROWS[kind], visible: false, style: {} };
+    renderShape(ctx, { width: 300, height: 300 }, row, MAPR, false);
+    assert.deepStrictEqual(ctx.calls, ["save", "restore"], kind);
+  }
+});
+
+test("price/ray/vline/channel are distinguished by shape (strokes) (R6)", () => {
+  for (const kind of ["ray", "vline", "channel", "price"]) {
+    const ctx = recordingCtx();
+    renderShape(ctx, { width: 300, height: 300 }, { ...F9_ROWS[kind], style: {} }, MAPR, false);
+    assert.ok(ctx.calls.filter((c) => c === "stroke").length > 0, kind);
+  }
+});
+
+test("price draws a right-axis price label, not colour alone (R6/design-system)", () => {
+  const ctx = recordingCtx();
+  renderShape(ctx, { width: 300, height: 300 }, { ...F9_ROWS.price, style: {} }, MAPR, false);
+  assert.ok(ctx.calls.includes("fillText"), "price carries a text label");
+});
+
+test("fib_ext/fib_time/fib_zone show ratio labels (R6/design-system)", () => {
+  for (const kind of ["fib_ext", "fib_time", "fib_zone"]) {
+    const ctx = recordingCtx();
+    renderShape(ctx, { width: 300, height: 300 }, { ...F9_ROWS[kind], style: {} }, MAPR, false);
+    assert.ok(ctx.calls.includes("fillText"), `${kind} shows ratio labels`);
+  }
+});
+
+test("callout draws its text balloon (R6/design-system)", () => {
+  const ctx = recordingCtx();
+  renderShape(ctx, { width: 300, height: 300 }, { ...F9_ROWS.callout, style: {} }, MAPR, false);
+  assert.ok(ctx.calls.includes("fillText"), "callout shows its text");
+});
+
+test("autoscaleInfo of a channel/fib_ext includes p3 (R6)", () => {
+  const channel = { kind: "channel", points: {
+    p1: { time: 0, price: 0 }, p2: { time: 10, price: 10 }, p3: { time: 20, price: 99 } } };
+  assert.deepStrictEqual(makeDrawingPrimitive(channel, {}).autoscaleInfo(), {
+    priceRange: { minValue: 0, maxValue: 99 },
+  });
+  const fibExt = { kind: "fib_ext", points: {
+    p1: { time: 0, price: 5 }, p2: { time: 10, price: 10 }, p3: { time: 20, price: 42 } } };
+  assert.deepStrictEqual(makeDrawingPrimitive(fibExt, {}).autoscaleInfo(), {
+    priceRange: { minValue: 5, maxValue: 42 },
+  });
+});
+
+test("autoscaleInfo of a price drawing includes its price (R6)", () => {
+  const prim = makeDrawingPrimitive({ kind: "price", points: { price: 50 } }, {});
+  assert.deepStrictEqual(prim.autoscaleInfo(), {
+    priceRange: { minValue: 50, maxValue: 50 },
+  });
+});
+
+// F9 #216: an off-bar anchor / off-scale level MUST skip the leg, never coerce
+// null to pixel 0 (the F6 positionBox lesson).
+test("fib_ext skips the body when an x anchor is off-bar (#216)", () => {
+  const ctx = recordingCtx();
+  const offX = { x: () => null, y: (p) => p, right: 1000 };
+  renderShape(ctx, { width: 300, height: 300 }, { ...F9_ROWS.fib_ext, style: {} }, offX, false);
+  assert.strictEqual(ctx.calls.filter((c) => c === "stroke").length, 0,
+    "no level line drawn with a null x anchor");
+});
+
+test("fib_zone skips a band whose level is off-scale, not y=0 (#216)", () => {
+  const ctx = recordingCtx();
+  // y() returns null for the second level -> the band MUST be skipped.
+  let n = 0;
+  const offY = { x: (t) => t, y: () => (n++ % 2 === 0 ? 10 : null), right: 1000 };
+  renderShape(ctx, { width: 300, height: 300 }, { ...F9_ROWS.fib_zone, style: {} }, offY, false);
+  assert.strictEqual(ctx.calls.filter((c) => c === "fillRect").length, 0,
+    "no band painted from a null level");
+});
+
+test("fib_zone skips the body when an x anchor is off-bar (#216)", () => {
+  const ctx = recordingCtx();
+  const offX = { x: () => null, y: (p) => p, right: 1000 };
+  renderShape(ctx, { width: 300, height: 300 }, { ...F9_ROWS.fib_zone, style: {} }, offX, false);
+  assert.strictEqual(ctx.calls.filter((c) => c === "fillRect").length, 0);
+});
+
+// F9 #217 (market-chart R20 / #68): an F9 primitive renders through
+// requestUpdate ONLY — it must never call setData/update on the series. A
+// throwing stub proves the option-only contract that F6 had for measure.
+test("an F9 primitive never calls setData/update (option-only, #68/#217)", () => {
+  for (const kind of Object.keys(F9_ROWS)) {
+    const ctx = recordingCtx();
+    let updates = 0;
+    const chart = { timeScale: () => ({ timeToCoordinate: (t) => t, coordinateToTime: (x) => x }) };
+    const series = {
+      priceToCoordinate: (p) => p,
+      coordinateToPrice: (y) => y,
+      setData() { throw new Error(`${kind} must never call setData`); },
+      update() { throw new Error(`${kind} must never call update`); },
+    };
+    const prim = makeDrawingPrimitive({ ...F9_ROWS[kind], style: {} }, {});
+    prim.attached({ chart, series, requestUpdate() { updates += 1; } });
+    // Render the pane view (the only write path) and force a redraw.
+    const views = prim.paneViews();
+    views[0].renderer().draw({ useMediaCoordinateSpace: (fn) => fn({ context: ctx, mediaSize: { width: 300, height: 300 } }) });
+    prim.requestUpdate();
+    assert.strictEqual(updates, 1, `${kind} redraws via requestUpdate only`);
+  }
+});
+
+// F9 #219: the PRIMITIVE's real map (not the synthetic MAPR) must carry the
+// canvas right edge, or rayPath falls back to p1->p2 and a ray renders like a
+// trendline. Drive the real paneView/draw path with a 1000px-wide media space.
+test("ray extends to the real media right edge through the primitive map (#219)", () => {
+  const ctx = recordingCtx();
+  const row = {
+    id: 2, kind: "ray",
+    points: { p1: { time: 0, price: 0 }, p2: { time: 10, price: 10 } },
+    style: { color: "#2962ff", lineWidth: 1 },
+  };
+  const chart = { timeScale: () => ({ timeToCoordinate: (t) => t }) };
+  const series = { priceToCoordinate: (p) => p };
+  const prim = makeDrawingPrimitive(row, {});
+  prim.attached({ chart, series, requestUpdate() {} });
+  prim.paneViews()[0].renderer().draw({
+    useMediaCoordinateSpace: (fn) => fn({ context: ctx, mediaSize: { width: 1000, height: 400 } }),
+  });
+  assert.strictEqual(ctx.lines.length, 1, "one ray segment");
+  // slope 1 through (0,0): the tip is at x=1000, y=1000 — NOT p2's x=10.
+  assert.deepStrictEqual(ctx.lines[0], { x: 1000, y: 1000 });
+});
+
+// F9 #220: fib_ext's third click is a draggable handle and feeds autoscale, so
+// it MUST also bound the drawn x extent. Before the fix only p1/p2 sized the
+// levels, so dragging p3 changed nothing on screen.
+test("fib_ext uses p3 as its right x extent, so dragging p3 moves it (#220)", () => {
+  const base = {
+    id: 3, kind: "fib_ext", style: {},
+    points: { p1: { time: 0, price: 0 }, p2: { time: 10, price: 10 }, p3: { time: 20, price: 20 } },
+  };
+  const near = renderShapeLines(base);
+  assert.ok(near.length > 0, "fib_ext draws its levels");
+  assert.ok(near.every((l) => l.x === 20), `right extent is p3.time: ${JSON.stringify(near)}`);
+
+  // Drag p3 one bar to the right: the extent follows; p1 still anchors the left.
+  const dragged = { ...base, points: { ...base.points, p3: { time: 30, price: 20 } } };
+  const far = renderShapeLines(dragged);
+  assert.ok(far.every((l) => l.x === 30), `right extent follows p3: ${JSON.stringify(far)}`);
+  assert.notDeepStrictEqual(far, near, "the drawn extent actually moved");
+});
+
+// --- F9 R2 (#223): callout balloon + price right-axis tag ---------------------
+
+test("callout draws a balloon behind the text plus an arrowhead at the anchor (#223)", () => {
+  const ctx = recordingCtx();
+  ctx.roundRect = (...a) => { ctx.calls.push("roundRect"); ctx.roundRects.push(a); };
+  ctx.roundRects = [];
+  renderShape(ctx, { width: 300, height: 300 }, { ...F9_ROWS.callout, style: {} }, MAPR, false);
+  assert.ok(ctx.calls.includes("roundRect"), "the balloon is a rounded rect");
+  assert.ok(ctx.calls.filter((c) => c === "fill").length >= 1, "the balloon is filled");
+  // The connector leg plus the two arrowhead legs stroke.
+  assert.ok(ctx.calls.filter((c) => c === "stroke").length >= 2, "line + arrowhead");
+  assert.ok(ctx.calls.includes("fillText"), "the text sits on the balloon");
+});
+
+test("a price label is right-aligned inside the pane and uses the series format (#223)", () => {
+  const ctx = recordingCtx();
+  const texts = [];
+  ctx.fillText = (t, x) => { texts.push({ t, x, align: ctx.textAlign }); ctx.calls.push("fillText"); };
+  const map = { ...MAPR, format: (v) => v.toFixed(2) };
+  renderShape(ctx, { width: 300, height: 300 }, { ...F9_ROWS.price, style: {} }, map, false);
+  assert.strictEqual(texts.length, 1);
+  assert.strictEqual(texts[0].t, "50.00", "the series format, not String(raw)");
+  assert.ok(texts[0].x <= 300 && texts[0].x >= 290, `right-right label near width-4: ${texts[0].x}`);
+  assert.strictEqual(texts[0].align, "right");
+});
+
+test("a price label falls back to the raw number when no formatter is supplied (#223)", () => {
+  const ctx = recordingCtx();
+  const texts = [];
+  ctx.fillText = (t) => texts.push(t);
+  renderShape(ctx, { width: 300, height: 300 }, { ...F9_ROWS.price, style: {} }, MAPR, false);
+  assert.strictEqual(texts[0], "50", "String(price) fallback");
 });

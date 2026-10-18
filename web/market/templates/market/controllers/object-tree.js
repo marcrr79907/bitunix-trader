@@ -10,13 +10,11 @@
 // the ONE new event ``indicator:visibility`` -> option-only host setter (#68).
 import {
   TREE_GROUPS,
-  EYE_ON,
-  EYE_OFF,
-  LOCK_ON,
-  LOCK_OFF,
+  labelFor,
   TRASH,
   GEAR,
 } from "../tool-icons-core.js";
+import { el, action, syncEye, syncLock } from "../object-tree-dom-core.js";
 import { createAddIndicator } from "../add-indicator-core.js";
 
 const DRAWINGS = TREE_GROUPS[0].label; // "Drawings"
@@ -37,32 +35,6 @@ export function createObjectTree({ store, bus, onIndicatorSettings }) {
   tree.setAttribute("role", "tree");
   tree.setAttribute("aria-label", "Chart objects");
   mount.appendChild(tree);
-
-  // --- small DOM helpers ------------------------------------------------------
-
-  function el(tag, cls, attrs) {
-    const node = document.createElement(tag);
-    if (cls) node.className = cls;
-    Object.keys(attrs || {}).forEach(function (k) { node.setAttribute(k, attrs[k]); });
-    return node;
-  }
-
-  // A native per-row action button. ``icon`` is a CSP-clean SVG string (no
-  // event attribute); the accessible name rides aria-label. ``shortcut`` is the
-  // documented per-row key that activates it (R6: the row owns roving focus, so
-  // the buttons stay tabindex=-1 and advertise their binding via aria-keyshortcuts).
-  function action(cls, label, icon, onClick, shortcut) {
-    const b = el("button", cls, {
-      type: "button", "aria-label": label, tabindex: "-1",
-    });
-    if (shortcut) b.setAttribute("aria-keyshortcuts", shortcut);
-    if (icon) b.innerHTML = icon;
-    b.addEventListener("click", function (e) {
-      e.stopPropagation();
-      onClick(b);
-    });
-    return b;
-  }
 
   // --- group scaffold ---------------------------------------------------------
 
@@ -104,7 +76,8 @@ export function createObjectTree({ store, bus, onIndicatorSettings }) {
   // --- rows -------------------------------------------------------------------
 
   function drawingRow(row) {
-    const eye = action("row-eye", "Toggle " + row.kind + " visibility",
+    const label = labelFor(row.kind); // R2 #223: a human name, never the slug
+    const eye = action("row-eye", "Toggle " + label + " visibility",
       "", function () {
         row.visible = !row.visible;
         syncEye(eye, row.visible !== false);
@@ -112,14 +85,14 @@ export function createObjectTree({ store, bus, onIndicatorSettings }) {
       }, "v");
     syncEye(eye, row.visible !== false);
 
-    const lock = action("row-lock", "Toggle " + row.kind + " lock", "", function () {
+    const lock = action("row-lock", "Toggle " + label + " lock", "", function () {
       row.locked = !row.locked;
       syncLock(lock, row.locked === true);
       bus.emit("drawing:changed", { id: row.id, locked: row.locked, persist: true });
     }, "l");
     syncLock(lock, row.locked === true);
 
-    const del = action("row-delete", "Delete " + row.kind + " #" + row.id, TRASH, function () {
+    const del = action("row-delete", "Delete " + label + " #" + row.id, TRASH, function () {
       bus.emit("drawing:delete", { id: row.id });
     }, "Delete");
 
@@ -127,7 +100,7 @@ export function createObjectTree({ store, bus, onIndicatorSettings }) {
     li.dataset.id = String(row.id);
     li.setAttribute("aria-selected", row.id === selectedDrawingId ? "true" : "false");
     const name = el("span", "tree-row-name", {});
-    name.textContent = row.kind + " #" + row.id;
+    name.textContent = label + " #" + row.id;
     li.appendChild(eye);
     li.appendChild(name);
     li.appendChild(lock);
@@ -151,15 +124,6 @@ export function createObjectTree({ store, bus, onIndicatorSettings }) {
     if (hit && hit._li) hit._li.setAttribute("aria-selected", "true");
     roving();
   }
-
-  // Sync a toggle button's icon + aria-pressed to a boolean (R6/R9: the icon
-  // swap keeps state not color-only). Eye and lock are the same shape.
-  function syncBtn(btn, on, onIcon, offIcon) {
-    btn.innerHTML = on ? onIcon : offIcon;
-    btn.setAttribute("aria-pressed", on ? "true" : "false");
-  }
-  const syncEye = (b, v) => syncBtn(b, v, EYE_ON, EYE_OFF);
-  const syncLock = (b, l) => syncBtn(b, l, LOCK_ON, LOCK_OFF);
 
   function indicatorRow(token) {
     const visible = !(state.indicatorVisible && state.indicatorVisible[token] === false);
