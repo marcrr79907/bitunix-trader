@@ -143,7 +143,7 @@ def test_controller_allowlist_routes_serve_javascript(logged_in_client):
     # ``market/controllers/`` as JS (a missing route = import 404 = blank chart).
     from market import views
 
-    assert len(views.CONTROLLER_ALLOWLIST) == 16
+    assert len(views.CONTROLLER_ALLOWLIST) == 17
     for name in views.CONTROLLER_ALLOWLIST:
         response = logged_in_client.get(f"/market/controllers/{name}.js")
         assert response.status_code == 200, name
@@ -192,7 +192,47 @@ def test_f9_cores_are_served(logged_in_client):
         assert response.status_code == 200, name
         assert response["Content-Type"] == "text/javascript", name
 
-    assert len(views.CONTROLLER_ALLOWLIST) == 16
+    assert len(views.CONTROLLER_ALLOWLIST) == 17
+
+
+def test_f10_alerts_are_served(logged_in_client):
+    # F10 S3 (R14): the two alert cores join MODULE_ALLOWLIST and ``alerts``
+    # joins CONTROLLER_ALLOWLIST; each MUST be served same-origin as JS or its
+    # import 404s and blanks the chart.
+    from market import views
+
+    assert len(views.MODULE_ALLOWLIST) == 31
+    for name in ("alert-markers-core", "alert-condition-core", "alert-ui-core"):
+        assert name in views.MODULE_ALLOWLIST, name
+        response = logged_in_client.get(f"/market/{name}.js")
+        assert response.status_code == 200, name
+        assert response["Content-Type"] == "text/javascript", name
+
+    assert "alerts" in views.CONTROLLER_ALLOWLIST
+    response = logged_in_client.get("/market/controllers/alerts.js")
+    assert response.status_code == 200
+    assert response["Content-Type"] == "text/javascript"
+
+
+def test_f10_alert_ui_is_markup_only(logged_in_client):
+    # F10 (design-system R6/R7): the dialog + live-status + reason nodes are
+    # static markup (CSP-clean); the bell is JS-built, so a served controller is
+    # what makes it exist. The marker layering proof lives at test level: the
+    # served SMC controller never grows an alert token.
+    body = logged_in_client.get("/market/").content.decode()
+    for marker in (
+        'id="alert-dialog"',
+        'id="alert-status"',
+        'id="alert-interval-reason"',
+        'aria-live="polite"',
+    ):
+        assert marker in body, marker
+
+    for name in ("alert-markers-core", "alert-condition-core", "controllers/alerts"):
+        assert f'href="/market/{name}.js"' in body, name
+
+    smc = logged_in_client.get("/market/controllers/smc.js").content
+    assert b"alert" not in smc.lower(), "markers must live in alerts.js only"
 
 
 def test_market_page_preloads_f9_cores(logged_in_client):

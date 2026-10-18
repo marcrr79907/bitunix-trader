@@ -92,6 +92,25 @@
   </form>
 </dialog>
 
+<dialog id="alert-dialog" aria-label="Price alert">
+  <form method="dialog">
+    <p class="alert-hint">Fires when the candle close goes above or below the level.</p>
+    <label for="alert-op">Direction</label>
+    <select id="alert-op">
+      <option value="above">above</option>
+      <option value="below">below</option>
+    </select>
+    <label for="alert-level">Price</label>
+    <input id="alert-level" type="text" inputmode="decimal" autocomplete="off">
+    <p id="alert-error" class="alert-error" role="alert" hidden></p>
+    <button type="submit" value="ok">Apply</button>
+    <button type="submit" value="cancel">Cancel</button>
+  </form>
+</dialog>
+
+<p id="alert-status" class="visually-hidden" aria-live="polite"></p>
+<p id="alert-interval-reason" class="visually-hidden"></p>
+
 <dialog id="drawing-settings-dialog" aria-label="Drawing settings">
   <form method="dialog">
     <label for="ds-color">Color</label>
@@ -131,6 +150,9 @@
 <link rel="modulepreload" href="{% url 'market_chart_module_js' name='fib-tools-core' %}">
 <link rel="modulepreload" href="{% url 'market_chart_module_js' name='drawing-click-flow-core' %}">
 <link rel="modulepreload" href="{% url 'market_chart_module_js' name='object-tree-dom-core' %}">
+<link rel="modulepreload" href="{% url 'market_chart_module_js' name='alert-markers-core' %}">
+<link rel="modulepreload" href="{% url 'market_chart_module_js' name='alert-condition-core' %}">
+<link rel="modulepreload" href="{% url 'market_chart_module_js' name='alert-ui-core' %}">
     <link rel="modulepreload" href="{% url 'market_chart_module_js' name='position-draft-core' %}">
     <link rel="modulepreload" href="{% url 'market_chart_module_js' name='readout-coalesce-core' %}">
 <link rel="modulepreload" href="{% url 'market_chart_module_js' name='main' %}">
@@ -150,5 +172,6 @@
 <link rel="modulepreload" href="{% url 'market_controller_js' name='preference' %}">
     <link rel="modulepreload" href="{% url 'market_controller_js' name='measure' %}">
     <link rel="modulepreload" href="{% url 'market_controller_js' name='position-seed' %}">
+<link rel="modulepreload" href="{% url 'market_controller_js' name='alerts' %}">
 <script type="module" src="{% url 'market_chart_js' %}"></script>
 {% endblock %}

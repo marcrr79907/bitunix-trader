@@ -28,6 +28,7 @@ import { createPositionSeed } from "./controllers/position-seed.js";
 import { createObjectTree } from "./controllers/object-tree.js";
 import { createLegend } from "./controllers/legend.js";
 import { createPreference } from "./controllers/preference.js";
+import { createAlerts } from "./controllers/alerts.js";
 
 export function boot(config) {
   // Sanctioned test seam (R18): the E2E reads window.SmcOverlayCore.setupMarkers.
@@ -111,6 +112,10 @@ export function boot(config) {
   // Read-only legend overlay: re-subscribes on chart:built internally, so no
   // buildChart change is needed (design: keeps main wiring to +1 line).
   createLegend({ store, bus, host, config });
+  // F10: the alert layer (bell + dialog + markers). It re-subscribes on
+  // chart:built internally and owns its own refetch, so the wiring is attach()
+  // here plus clearForSwitch()/refresh() on a pair switch.
+  const alerts = createAlerts({ store, bus, host, config });
 
   // Monotonic chart generation: a switch bumps it so a slow boot/switch load
   // for the previous chart cannot clobber the current one.
@@ -132,6 +137,7 @@ export function boot(config) {
     // F6 (D1/D4): the measure controller owns its own #chart listeners (guarded
     // on state.tool==="measure"); bind() is idempotent like the interaction.
     measure.attach();
+    alerts.attach();
     host.subscribeClick(drawings.onChartClick);
     host.subscribeVisibleRange(history.onVisibleRange);
     bus.emit("chart:built", {
@@ -172,6 +178,8 @@ export function boot(config) {
     // R14: the undo stack is symbol-scoped (a gone id must not replay).
     if (symbolChanged) undo.clearForSwitch();
     smc.clearForSwitch();
+    // F10: the alert markers/summary are per (symbol, interval) too.
+    alerts.clearForSwitch();
     // F6 (R4): a symbol switch clears an ephemeral measurement (no persistence).
     if (symbolChanged) measure.clearForSwitch();
     // R14: a symbol switch clears selection with the drawings; an interval-only

@@ -158,6 +158,30 @@ code{font-family:var(--mono); background:var(--surface); padding:1px 5px; border
 #drawing-settings-dialog input[type=color]{padding:0; height:32px; width:100%}
 #drawing-settings-dialog button{grid-column:1/-1}
 
+/* F10 alert bell: pinned at the crosshair inside #chart (legend overlay
+   precedent). Hidden stays display:none so it is not focusable. */
+.chart-alert-bell{
+  /* above LWC's canvases, which paint later in #chart (same-DOM rebuild) */
+  position:absolute; right:var(--sp-2); z-index:10; transform:translate(0,-50%);
+  min-width:28px; min-height:28px; padding:0 var(--sp-1);
+  background:var(--surface); color:var(--accent);
+  border:1px solid var(--border); border-radius:50%;
+  font-size:var(--fs-3); line-height:1; cursor:pointer;
+}
+.chart-alert-bell[hidden]{display:none}
+.chart-alert-bell:hover:not(:disabled){border-color:var(--accent)}
+.chart-alert-bell:disabled{color:var(--muted); cursor:not-allowed}
+.chart-alert-bell:focus-visible{outline:2px solid var(--accent); outline-offset:2px}
+#alert-dialog{max-width:min(320px,calc(100vw - 2*var(--sp-4)))}
+#alert-dialog::backdrop{background:rgba(0,0,0,.55)}
+#alert-dialog form{display:grid; grid-template-columns:auto 1fr;
+  align-items:center; gap:var(--sp-2)}
+#alert-dialog button{grid-column:1/-1}
+#alert-dialog .alert-hint,#alert-dialog .alert-error{grid-column:1/-1; margin:0;
+  color:var(--muted); font-size:var(--fs-3)}
+#alert-dialog .alert-error{color:var(--dn)}
+#alert-dialog .alert-error[hidden]{display:none}
+
 /* #chart is keyboard-focusable for Delete/Escape (R11): a visible focus ring. */
 #chart:focus-visible{outline:2px solid var(--accent); outline-offset:-2px}
 
