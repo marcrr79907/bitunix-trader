@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import json
 
+import requests
 from django.contrib.auth.decorators import login_required
 from django.http import HttpRequest, HttpResponse, JsonResponse
 from django.views.decorators.http import require_http_methods
@@ -23,6 +24,7 @@ from trading.models import AlertRule
 from market import catalog
 from market.catalog import SYMBOL_RE
 from src.alert_rules import parse_condition
+from src.client import BitunixError
 
 _CHAT_ID_MAX = 64
 
@@ -55,7 +57,7 @@ def _symbol_error(symbol: object) -> str | None:
         return "invalid symbol"
     try:
         known = catalog.symbol_exists(symbol)
-    except Exception:  # ponytail: any upstream failure means "cold" -> fail open
+    except (BitunixError, requests.RequestException):
         known = None
     if known is False:
         return "invalid symbol"

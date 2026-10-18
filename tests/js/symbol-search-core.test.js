@@ -48,3 +48,9 @@ test("never throws on malformed input", () => {
   assert.deepStrictEqual(filterSymbols(42, SYMBOLS), filterSymbols("", SYMBOLS));
   assert.deepStrictEqual(filterSymbols("btc", [null, 1, {}, "BTCUSDT"]), ["BTCUSDT"]);
 });
+
+test("limit is clamped: 0 and negative return nothing, no inversion", () => {
+  assert.deepStrictEqual(filterSymbols("", SYMBOLS, 0), []);
+  assert.deepStrictEqual(filterSymbols("", SYMBOLS, -5), []);
+  assert.deepStrictEqual(filterSymbols("btc", SYMBOLS, 1), ["BTCUSDT"]);
+});

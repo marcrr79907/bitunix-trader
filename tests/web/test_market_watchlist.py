@@ -215,8 +215,10 @@ def test_delete_is_idempotent(client_a, user_a):
 def test_post_fails_open_when_the_catalog_is_cold(client_a, user_a, monkeypatch):
     catalog.reset_cache()
 
+    import requests
+
     def boom(client=None, *, now=None):
-        raise RuntimeError("upstream down")
+        raise requests.RequestException("upstream down")
 
     monkeypatch.setattr(catalog, "list_symbols", boom)
 

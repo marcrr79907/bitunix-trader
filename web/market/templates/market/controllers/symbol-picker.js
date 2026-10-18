@@ -64,17 +64,26 @@ export function createSymbolPicker({ store, bus, config }) {
     bus.emit("config:changed", { symbol: symbol, interval: store.get().interval });
   }
 
-  function follow(symbol) {
-    return fetch(config.urls.watchlist, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", "X-CSRFToken": csrfToken() },
-      body: JSON.stringify({ symbol: symbol }),
+  // Follow/unfollow (R19). The POST is idempotent server-side; the DELETE is
+  // 204 either way, so a double click cannot corrupt the list.
+  function toggleFollow(symbol) {
+    const adding = !followed.has(symbol);
+    const url = adding
+      ? config.urls.watchlist
+      : config.urls.watchlist + "/" + encodeURIComponent(symbol);
+    return fetch(url, {
+      method: adding ? "POST" : "DELETE",
+      headers: adding
+        ? { "Content-Type": "application/json", "X-CSRFToken": csrfToken() }
+        : { "X-CSRFToken": csrfToken() },
+      body: adding ? JSON.stringify({ symbol: symbol }) : undefined,
     })
       .then(function (response) {
         if (!response.ok) throw new Error("watchlist " + response.status);
-        followed.add(symbol);
+        if (adding) followed.add(symbol);
+        else followed.delete(symbol);
         renderResults(input.value);
-        announce(symbol + " added to the watchlist");
+        announce(symbol + (adding ? " added to " : " removed from ") + "the watchlist");
       })
       .catch(function () {
         announce("Could not update the watchlist");
@@ -102,19 +111,19 @@ export function createSymbolPicker({ store, bus, config }) {
       label.textContent = symbol;
       option.appendChild(label);
 
-      // Follow affordance: refused on the active chart's own symbol (already
-      // reachable) and shown as a state for symbols already followed.
+      // Follow/unfollow toggle: never disabled, so a followed symbol can be
+      // removed again (R19 "follow/unfollow").
       const button = document.createElement("button");
       button.type = "button";
       button.className = "symbol-follow";
       const isFollowed = followed.has(symbol);
       button.textContent = isFollowed ? "✓" : "+";
+      button.setAttribute("aria-pressed", isFollowed ? "true" : "false");
       button.setAttribute("aria-label",
         (isFollowed ? "Unfollow " : "Follow ") + symbol);
-      button.disabled = isFollowed;
       button.addEventListener("click", function (event) {
         event.stopPropagation();
-        follow(symbol);
+        toggleFollow(symbol);
       });
       option.appendChild(button);
 

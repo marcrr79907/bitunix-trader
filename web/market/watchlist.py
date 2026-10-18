@@ -18,12 +18,14 @@ from __future__ import annotations
 
 import json
 
+import requests
 from django.contrib.auth.decorators import login_required
 from django.http import HttpRequest, JsonResponse
 from django.views.decorators.http import require_http_methods
 from trading.models import Watchlist
 
 from market import catalog
+from src.client import BitunixError
 from src.config import MAX_WATCHLIST_SYMBOLS, SYMBOLS
 
 
@@ -38,10 +40,14 @@ def _symbols_body(user) -> dict:
 
 
 def _known(symbol: str) -> bool | None:
-    """Catalog membership: ``True``/``False`` warm, ``None`` when unavailable."""
+    """Catalog membership: ``True``/``False`` warm, ``None`` when unavailable.
+
+    Only upstream failures mean "cold" — a programming error must surface rather
+    than silently degrade this endpoint to fail-open.
+    """
     try:
         return catalog.symbol_exists(symbol)
-    except Exception:  # ponytail: any upstream failure means "cold", same as alerts
+    except (BitunixError, requests.RequestException):
         return None
 
 

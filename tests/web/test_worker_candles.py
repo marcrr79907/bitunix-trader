@@ -80,6 +80,9 @@ def _freeze_now(monkeypatch):
     import trading.candles as candles
 
     monkeypatch.setattr(candles, "_now_seconds", lambda: NOW_MS // 1000, raising=False)
+    # F11: the worker owns a module-global _last_poll. Reset it per test so the
+    # due-interval state never leaks across tests (order-independence).
+    monkeypatch.setattr(worker, "_last_poll", None, raising=False)
 
 
 @pytest.mark.django_db

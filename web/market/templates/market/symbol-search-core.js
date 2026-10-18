@@ -10,13 +10,15 @@
 
 export function filterSymbols(query, symbols, limit = 50) {
   if (!Array.isArray(symbols)) return [];
+  // Clamp so a caller passing 0/negative/Infinity can never invert the slice.
+  const cap = Math.max(0, Number.isFinite(limit) ? Math.floor(limit) : 50);
   const rows = symbols.filter(function (s) {
     return typeof s === "string" && s.length > 0;
   });
 
   const raw = typeof query === "string" ? query.trim().toUpperCase() : "";
   if (raw === "") {
-    return rows.slice(0, limit);
+    return rows.slice(0, cap);
   }
 
   const scored = [];
@@ -35,7 +37,7 @@ export function filterSymbols(query, symbols, limit = 50) {
     return a.symbol < b.symbol ? -1 : a.symbol > b.symbol ? 1 : 0;
   });
 
-  return scored.slice(0, limit).map(function (row) {
+  return scored.slice(0, cap).map(function (row) {
     return row.symbol;
   });
 }

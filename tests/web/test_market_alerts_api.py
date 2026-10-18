@@ -639,9 +639,10 @@ def warm_catalog():
 @pytest.fixture
 def cold_catalog(monkeypatch):
     import market.catalog as catalog
+    import requests
 
     def boom(client=None, *, now=None):
-        raise RuntimeError("upstream down")
+        raise requests.RequestException("upstream down")
 
     catalog.reset_cache()
     monkeypatch.setattr(catalog, "list_symbols", boom)
