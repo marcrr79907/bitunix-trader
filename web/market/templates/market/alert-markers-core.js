@@ -30,8 +30,11 @@ export function stateOf(rule) {
 }
 
 // A single marker per armed/fired rule; inactive/none yield no marker.
-// fired -> last_fired_at (epoch s), falling back to anchorTime when unusable;
-// armed -> anchorTime. A missing anchor drops the rule (no synthetic time).
+// fired -> last_fired_at (epoch s); armed -> anchorTime. A marker whose time is
+// not a real data point MUST be dropped (spec chart-alerts R4): a fired rule
+// whose last_fired_at is off-series or unusable yields no marker — LWC v5 would
+// discard it anyway, and faking the newest-candle time would misplace it. The
+// fired state stays visible on the /signals/ pair badge.
 export function markersFor(rules, anchorTime) {
   if (!Array.isArray(rules)) return [];
   var anchor = num(anchorTime);
@@ -44,12 +47,9 @@ export function markersFor(rules, anchorTime) {
     var condition = rule.condition;
     var level = condition && typeof condition === "object" ? num(condition.level) : null;
     if (level === null) continue;
-    var time = state === "fired" ? num(rule.last_fired_at) : null;
-    if (time === null) {
-      if (anchor === null) continue;
-      time = anchor;
-    }
     var fired = state === "fired";
+    var time = fired ? num(rule.last_fired_at) : anchor;
+    if (time === null) continue; // off-series / missing anchor -> drop
     out.push({
       time: time,
       position: fired ? "aboveBar" : "belowBar",

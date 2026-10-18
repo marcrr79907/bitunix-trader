@@ -296,3 +296,18 @@ test("controllers/smc.js carries no alert token", () => {
   const path = here.replace(/tests\/js\/[^/]+$/, "web/market/templates/market/controllers/smc.js");
   assert.doesNotMatch(readFileSync(path, "utf8"), /alert/i);
 });
+
+test("bell is a keyboard-reachable native button (R1)", async () => {
+  // A native <button type="button"> is Tab-focusable and Enter/Space activate
+  // it (no keydown handler needed); this pins that it stays a real button, not
+  // a clickable <div>.
+  const f = fixture();
+  try {
+    const bell = f.dom.els.chart.children.find((c) => c.id === "chart-alert-bell");
+    assert.strictEqual(String(bell.tagName).toLowerCase(), "button", "the bell is a <button>");
+    assert.strictEqual(bell.type, "button", "type=button avoids form submit");
+    assert.ok(bell.getAttribute("aria-label"), "it has an accessible name");
+    f.host.move({ point: { x: 30, y: 100 } });
+    assert.strictEqual(bell.hidden, false, "reachable when the crosshair has a point");
+  } finally { f.dom.restore(); }
+});
