@@ -92,12 +92,16 @@ function installDom() {
     },
   };
   const requests = [];
+  // A write hook lets a test simulate a 400 body or a network rejection
+  // without touching the GET path the build fetch depends on.
+  let onWrite = null;
   globalThis.fetch = (url, opts) => {
     const method = (opts && opts.method) || "GET";
     requests.push({ url, method, body: opts && opts.body ? JSON.parse(opts.body) : null });
     if (method === "GET") {
       return Promise.resolve({ ok: true, json: () => Promise.resolve({ alerts: rows }) });
     }
+    if (onWrite) return onWrite({ url, method, opts });
     return Promise.resolve({
       ok: true,
       json: () => Promise.resolve({ id: 9, condition: JSON.parse(opts.body).condition }),
@@ -107,6 +111,7 @@ function installDom() {
   return {
     els, requests, handles,
     seed(next) { rows = next; },
+    failWrite(fn) { onWrite = fn; },
     restore() {
       globalThis.document = prevDoc;
       globalThis.LightweightCharts = prevLwc;
@@ -255,6 +260,142 @@ test("Cancel writes nothing and returns focus to #chart", async () => {
     assert.strictEqual(f.dom.requests.filter((r) => r.method !== "GET").length, 0);
     assert.strictEqual(globalThis.document.activeElement, f.dom.els.chart);
   } finally { f.dom.restore(); }
+});
+
+// --- F10 UI #233: a failed Apply must be visible ----------------------------
+//
+// Apply runs in the dialog's ``close`` handler, so the dialog is already shut
+// when the request resolves. Writing the error into the (closed) dialog is
+// zero feedback: every failure must re-open it with the message, keeping the
+// level the user typed.
+
+test("a 400 response re-opens the dialog with the server error visible (#233)", async () => {
+  const f = fixture();
+  f.dom.failWrite(() =>
+    Promise.resolve({
+      ok: false,
+      status: 400,
+      json: () => Promise.resolve({ error: "invalid condition" }),
+    }),
+  );
+  try {
+    f.host.move({ point: { x: 10, y: 100 } });
+    const bell = f.dom.els.chart.children.find((c) => c.id === "chart-alert-bell");
+    bell.click();
+    f.dom.els["alert-level"].value = "123.5";
+    f.dom.els["alert-dialog"].close("ok");
+    await settle();
+
+    assert.strictEqual(f.dom.requests.filter((r) => r.method === "POST").length, 1);
+    assert.strictEqual(f.dom.els["alert-dialog"].open, true, "the dialog re-opens");
+    assert.strictEqual(f.dom.els["alert-error"].hidden, false);
+    assert.strictEqual(f.dom.els["alert-error"].textContent, "invalid condition");
+    assert.strictEqual(f.dom.els["alert-level"].value, "123.5", "the typed level is kept");
+    assert.strictEqual(globalThis.document.activeElement, f.dom.els["alert-level"]);
+  } finally { f.dom.restore(); }
+});
+
+test("a network rejection re-opens the dialog with the error visible (#233)", async () => {
+  const f = fixture();
+  f.dom.failWrite(() => Promise.reject(new Error("offline")));
+  try {
+    f.host.move({ point: { x: 10, y: 100 } });
+    const bell = f.dom.els.chart.children.find((c) => c.id === "chart-alert-bell");
+    bell.click();
+    f.dom.els["alert-dialog"].close("ok");
+    await settle();
+
+    assert.strictEqual(f.dom.els["alert-dialog"].open, true);
+    assert.strictEqual(f.dom.els["alert-error"].hidden, false);
+    assert.match(f.dom.els["alert-error"].textContent, /Network error/);
+  } finally { f.dom.restore(); }
+});
+
+// --- F10 UI #235: a non-pointer entry point --------------------------------
+//
+// The bell only appears on a real crosshair point, so a keyboard user never
+// reaches it. ``openFromLastClose`` seeds the dialog from the newest candle
+// close, with no cursor at all.
+
+test("openFromLastClose seeds the dialog from the last close without a crosshair (#235)", async () => {
+  const f = fixture({ candles: [{ time: 1, close: 90 }, { time: 5, close: 137.25 }] });
+  try {
+    await settle();
+    f.alerts.openFromLastClose();
+    assert.strictEqual(f.dom.els["alert-dialog"].open, true, "the dialog opens");
+    assert.strictEqual(f.dom.els["alert-level"].value, "137.25");
+    // opFor(137.25, 137.25) -> "above" (at/above the close).
+    assert.strictEqual(f.dom.els["alert-op"].value, "above");
+  } finally { f.dom.restore(); }
+});
+
+test("openFromLastClose does nothing without candles or on an ineligible interval (#235)", async () => {
+  const empty = fixture({ candles: [] });
+  try {
+    empty.alerts.openFromLastClose();
+    assert.strictEqual(empty.dom.els["alert-dialog"].open, false, "no price to seed from");
+  } finally { empty.dom.restore(); }
+
+  const ineligible = fixture({ interval: "3d" });
+  try {
+    ineligible.alerts.openFromLastClose();
+    assert.strictEqual(ineligible.dom.els["alert-dialog"].open, false);
+  } finally { ineligible.dom.restore(); }
+});
+
+// --- F10 UI #232: theme-aware marker colors --------------------------------
+//
+// The core's literals are a fallback; the controller resolves the shell tokens
+// at RENDER time. A theme flip is option-only, so the controller must also be
+// told to re-render — otherwise the markers keep the previous palette.
+
+function withTokens(values) {
+  const prev = globalThis.getComputedStyle;
+  globalThis.getComputedStyle = () => ({
+    getPropertyValue: (name) => values[name] || "",
+  });
+  return () => {
+    if (prev === undefined) delete globalThis.getComputedStyle;
+    else globalThis.getComputedStyle = prev;
+  };
+}
+
+const THEMED_ROWS = [
+  { id: 1, condition: { type: "price", op: "above", level: 100 }, is_active: true, last_fired_at: 5 },
+  { id: 2, condition: { type: "price", op: "below", level: 80 }, is_active: true, last_fired_at: null },
+];
+
+test("markers paint with the resolved --alert-armed/--dn tokens, not literals (#232)", async () => {
+  const f = fixture();
+  f.dom.seed(THEMED_ROWS);
+  globalThis.document.documentElement = {};
+  const restoreTokens = withTokens({ "--alert-armed": "#aaaaaa", "--dn": "#bbbbbb" });
+  try {
+    await settle();
+    const h = f.dom.handles[0];
+    assert.strictEqual(h.list[0].color, "#bbbbbb", "fired uses --dn");
+    assert.strictEqual(h.list[1].color, "#aaaaaa", "armed uses --alert-armed");
+  } finally { restoreTokens(); f.dom.restore(); }
+});
+
+test("a theme change re-renders the markers with the new tokens (#232)", async () => {
+  const f = fixture();
+  f.dom.seed(THEMED_ROWS);
+  globalThis.document.documentElement = {};
+  let restoreTokens = withTokens({ "--alert-armed": "#aaaaaa", "--dn": "#bbbbbb" });
+  try {
+    await settle();
+    const h = f.dom.handles[0];
+    assert.strictEqual(h.list[0].color, "#bbbbbb");
+
+    restoreTokens();
+    restoreTokens = withTokens({ "--alert-armed": "#cccccc", "--dn": "#dddddd" });
+    f.alerts.refreshTheme(); // main's onTheme calls this after host.setTheme
+
+    assert.strictEqual(f.dom.handles.length, 1, "the same marker handle is reused");
+    assert.strictEqual(h.list[0].color, "#dddddd", "fired re-rendered");
+    assert.strictEqual(h.list[1].color, "#cccccc", "armed re-rendered");
+  } finally { restoreTokens(); f.dom.restore(); }
 });
 
 // --- markers ----------------------------------------------------------------

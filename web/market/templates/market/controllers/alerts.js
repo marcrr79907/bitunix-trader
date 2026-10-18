@@ -15,7 +15,17 @@
 // ``for_user`` is resolved server-side — the client never invents a rule.
 import * as Cond from "../alert-condition-core.js";
 import * as Markers from "../alert-markers-core.js";
-import { eligible, reasonText, fmtPrice } from "../alert-ui-core.js";
+import {
+  eligible,
+  reasonText,
+  fmtPrice,
+  lastClose,
+  listUrl,
+  writeRequest,
+  nearestRule,
+  paintBell,
+} from "../alert-ui-core.js";
+import { token } from "../theme-core.js";
 
 // Interval eligibility mirrors the worker's persisted set (trading/candles.py
 // Edit detection (D7): px distance to an existing price rule's level.
@@ -76,67 +86,60 @@ export function createAlerts({ store, bus, host, config }) {
   // Show the bell at the crosshair, or hide it when the pointer leaves the plot
   // (mirrors legend.js onMove). The interval guard disables it with a reason.
   function placeBell() {
-    if (!bell || hovering) return;
-    bell.hidden = !cursor;
-    if (!cursor) return;
-    // Only the PRICE (vertical) comes from the crosshair. A fixed horizontal
-    // anchor keeps the bell still: an x that tracked the cursor would move
-    // under the pointer and no click could ever land (a moving target).
-    bell.style.top = cursor.y + "px";
-    bell.setAttribute("aria-label", "Create price alert at " + fmtPrice(cursor.price));
-    bell.disabled = !isEligible();
-    if (isEligible()) {
-      bell.removeAttribute("aria-describedby");
-      bell.removeAttribute("title");
-      return;
-    }
-    bell.setAttribute("aria-describedby", "alert-interval-reason");
-    bell.setAttribute("title", reasonText(state.interval));
-    if (reasonEl) reasonEl.textContent = reasonText(state.interval);
+    paintBell(bell, cursor, state.interval, hovering, reasonEl);
   }
 
   // --- dialog ---------------------------------------------------------------
 
   function lastClosePrice() {
-    const bars = host.getCandles();
-    return Array.isArray(bars) && bars.length ? bars[bars.length - 1].close : null;
+    return lastClose(host.getCandles());
   }
 
   // Seed the dialog from the crosshair price; the op defaults off the last
   // close (opFor owns that rule, so the default cannot drift).
-  function openDialog() {
-    if (!dialog || !cursor || !isEligible()) return;
-    if (opInput) opInput.value = Cond.opFor(cursor.price, lastClosePrice());
-    if (levelInput) levelInput.value = fmtPrice(cursor.price);
+  function seedAt(price) {
+    if (!dialog || !isEligible()) return false;
+    if (opInput) opInput.value = Cond.opFor(price, lastClosePrice());
+    if (levelInput) levelInput.value = fmtPrice(price);
     if (errorEl) errorEl.hidden = true;
     dialog.showModal();
+    return true;
+  }
+
+  function openDialog() {
+    if (!cursor) return;
+    seedAt(cursor.price);
+  }
+
+  // F10 UI #235: the keyboard path. The bell needs a pointer-produced crosshair
+  // point, which Tab never makes, so the context menu's "Add alert" opens the
+  // dialog seeded from the newest close instead.
+  function openFromLastClose() {
+    const close = lastClosePrice();
+    return close === null ? false : seedAt(close);
   }
 
   // The existing price rule whose level is nearest the cursor, within NEAR_PX
-  // (zoom-aware px, not % — D7). No rule in range means "create".
+  // (zoom-aware px, not % — D7). No rule in range means "create". The mapping is
+  // the pure core's; this only supplies the price->coordinate function.
   function nearRule() {
     const series = host.getCandleSeries();
     if (!series || !cursor) return null;
-    let best = null;
-    let bestDistance = NEAR_PX + 1;
-    rules.forEach(function (rule) {
-      const condition = rule && rule.condition;
-      if (!condition || condition.type !== "price") return;
-      const y = series.priceToCoordinate(condition.level);
-      if (typeof y !== "number") return;
-      const distance = Math.abs(y - cursor.y);
-      if (distance <= NEAR_PX && distance < bestDistance) {
-        best = rule;
-        bestDistance = distance;
-      }
+    return nearestRule(rules, cursor.y, NEAR_PX, function (level) {
+      return series.priceToCoordinate(level);
     });
-    return best;
   }
 
-  function showError(text) {
-    if (!errorEl) return;
-    errorEl.textContent = text;
-    errorEl.hidden = false;
+  // Apply runs inside the dialog's ``close`` handler, so the dialog is already
+  // shut when the response lands. An error written into a closed dialog is zero
+  // feedback (#233): every failure RE-OPENS it. The typed level is untouched.
+  function fail(text) {
+    if (errorEl) {
+      errorEl.textContent = text;
+      errorEl.hidden = false;
+    }
+    if (dialog) dialog.showModal();
+    if (levelInput) levelInput.focus();
   }
 
   // Apply writes ONE request through the pure condition core; a null condition
@@ -145,26 +148,23 @@ export function createAlerts({ store, bus, host, config }) {
     const level = Cond.levelFromInput(levelInput ? levelInput.value : "");
     const condition = Cond.conditionFrom({ op: opInput ? opInput.value : "", level: level });
     if (!condition) {
-      showError("Enter a price above 0");
-      if (dialog) dialog.showModal();
+      fail("Enter a price above 0");
       return;
     }
     const target = nearRule();
-    const body = target
-      ? { condition: condition }
-      : { symbol: state.symbol, interval: state.interval, condition: condition, is_active: true };
-    fetch(config.urls.alerts + (target ? "/" + target.id : ""), {
+    const req = writeRequest(config.urls.alerts, state, condition, target);
+    fetch(req.url, {
       method: target ? "PUT" : "POST",
       headers: { "Content-Type": "application/json", "X-CSRFToken": csrfToken() },
-      body: JSON.stringify(body),
+      body: JSON.stringify(req.body),
     })
       .then(function (r) {
         return r.json().then(function (b) {
-          if (!r.ok) return showError((b && b.error) || "Could not save the alert");
+          if (!r.ok) return fail((b && b.error) || "Could not save the alert");
           return refresh();
         });
       })
-      .catch(function () { showError("Network error — the alert was not saved"); });
+      .catch(function () { fail("Network error — the alert was not saved"); });
   }
 
   if (dialog) {
@@ -184,30 +184,33 @@ export function createAlerts({ store, bus, host, config }) {
   // lives in #alert-status[aria-live="polite"] (design-system R6).
   function announce() {
     if (!statusEl) return;
-    let fired = 0, armed = 0;
-    rules.forEach(function (rule) {
-      const s = Markers.stateOf(rule);
-      if (s === "fired") fired += 1;
-      else if (s === "armed") armed += 1;
-    });
-    const total = fired + armed;
-    if (!total) return void (statusEl.textContent = "No alerts on this chart");
-    const noun = total === 1 ? " alert: " : " alerts: ";
-    statusEl.textContent = total + noun + fired + " fired, " + armed + " armed";
+    statusEl.textContent = Markers.summaryOf(rules) || "No alerts on this chart";
   }
 
   // The newest loaded candle is the armed anchor (a marker time MUST be a real
   // data point). Re-projected after every history page — no synthetic bars.
+  // F10 UI #232: the shell palette is resolved at RENDER time so a theme flip
+  // can repaint. ``--alert-armed`` is a dedicated token (the brand --accent is
+  // 3.86:1 on the dark bg, under the small-text floor); fired reuses --dn. The
+  // core's literals stay the fallback for a DOM-less caller.
   function renderMarkers() {
     const series = host.getCandleSeries();
     if (!series) return;
     const bars = host.getCandles();
     const anchor = Array.isArray(bars) && bars.length ? bars[bars.length - 1].time : null;
-    const list = Markers.markersFor(rules, anchor);
+    const colors = {
+      armed: token("--alert-armed", Markers.COLORS.armed),
+      fired: token("--dn", Markers.COLORS.fired),
+    };
+    const list = Markers.markersFor(rules, anchor, colors);
     if (!markers) markers = LightweightCharts.createSeriesMarkers(series, list);
     else markers.setMarkers(list);
     announce();
   }
+
+  // main's onTheme calls this AFTER host.setTheme (option-only, no rebuild): the
+  // resolved palette changed, so the canvas markers must be repainted.
+  function refreshTheme() { renderMarkers(); }
 
   // --- fetch ----------------------------------------------------------------
 
@@ -221,9 +224,7 @@ export function createAlerts({ store, bus, host, config }) {
       return Promise.resolve();
     }
     const mine = ++gen;
-    const enc = encodeURIComponent;
-    const url = config.urls.alerts + "?symbol=" + enc(state.symbol) + "&interval=" + enc(state.interval);
-    return fetch(url)
+    return fetch(listUrl(config.urls.alerts, state.symbol, state.interval))
       .then(function (r) { if (!r.ok) throw new Error("alerts " + r.status); return r.json(); })
       .then(function (body) {
         if (mine !== gen) return;
@@ -287,5 +288,11 @@ export function createAlerts({ store, bus, host, config }) {
     announce();
   }
 
-  return { attach: attach, refresh: refresh, clearForSwitch: clearForSwitch };
+  return {
+    attach: attach,
+    refresh: refresh,
+    clearForSwitch: clearForSwitch,
+    openFromLastClose: openFromLastClose,
+    refreshTheme: refreshTheme,
+  };
 }

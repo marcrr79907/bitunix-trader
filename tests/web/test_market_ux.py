@@ -436,3 +436,60 @@ def test_csp_absent_on_admin_login(client):
 def test_healthz_still_200(client):
     response = client.get("/healthz")
     assert response.status_code == 200
+
+
+def _luminance(hex_color):
+    """WCAG 2.1 relative luminance of a #rrggbb color."""
+    raw = hex_color.lstrip("#")
+    channels = []
+    for i in (0, 2, 4):
+        c = int(raw[i : i + 2], 16) / 255
+        channels.append(c / 12.92 if c <= 0.03928 else ((c + 0.055) / 1.055) ** 2.4)
+    return 0.2126 * channels[0] + 0.7152 * channels[1] + 0.0722 * channels[2]
+
+
+def _contrast(a, b):
+    la, lb = _luminance(a), _luminance(b)
+    hi, lo = max(la, lb), min(la, lb)
+    return (hi + 0.05) / (lo + 0.05)
+
+
+def test_f10_alert_marker_tokens_meet_contrast(logged_in_client):
+    """#232: the tokens the alert markers read must clear 4.5:1 on their theme.
+
+    Markers paint small text on the chart canvas, whose background is the
+    theme's --bg. ``alerts.js`` reads ``--alert-armed`` (armed) and ``--dn``
+    (fired), so those two tokens have to be legible in BOTH palettes. The brand
+    ``--accent`` is not used: its dark value is 3.86:1, under the small-text
+    floor, so the marker owns a dedicated token instead of shifting the brand.
+    """
+    import re
+
+    css = logged_in_client.get("/theme.css").content.decode()
+    dark = css[: css.index('[data-theme="light"]')]
+    light = css[css.index('[data-theme="light"]') :]
+
+    def tokens(block):
+        return {
+            name: re.search(rf"{name}:(#[0-9a-fA-F]{{6}})", block).group(1)
+            for name in ("--bg", "--alert-armed", "--dn")
+        }
+
+    for name, block in (("dark", dark), ("light", light)):
+        t = tokens(block)
+        for token in ("--alert-armed", "--dn"):
+            ratio = _contrast(t[token], t["--bg"])
+            assert ratio >= 4.5, f"{name} {token} on --bg is {ratio:.2f}:1 < 4.5:1"
+
+
+def test_f10_alert_marker_token_is_declared_in_both_palettes(logged_in_client):
+    """#232: a token read at render time must exist in BOTH palettes.
+
+    The shell uses :root for dark and [data-theme="light"] for light; a name
+    missing from either set silently falls back to the core literal.
+    """
+    css = logged_in_client.get("/theme.css").content.decode()
+    dark = css[: css.index('[data-theme="light"]')]
+    light = css[css.index('[data-theme="light"]') :]
+    assert "--alert-armed:" in dark
+    assert "--alert-armed:" in light

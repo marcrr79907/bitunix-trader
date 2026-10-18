@@ -19,6 +19,9 @@
   --draw-ray:#ffb74d; --draw-vline:#82b1ff; --draw-channel:#80cbc4;
   --draw-price:#ff8a80; --draw-callout:#e6edf3; --draw-fib-ext:#b388ff;
   --draw-fib-time:#4dd0e1; --draw-fib-zone:#ce93d8;
+  /* F10 UI #232: armed alert-marker colour. The brand --accent is 3.86:1 on
+     this bg (under the 4.5:1 small-text floor), so the marker owns a token. */
+  --alert-armed:#4c8dff;
 }
 
 /* Light palette (R1): selected by [data-theme="light"] on the root. Declares
@@ -39,6 +42,9 @@
   --draw-ray:#c2410c; --draw-vline:#0550ae; --draw-channel:#0f766e;
   --draw-price:#b91c1c; --draw-callout:#24292f; --draw-fib-ext:#6f42c1;
   --draw-fib-time:#0e7490; --draw-fib-zone:#7b1fa2;
+  /* F10 UI #232: armed alert-marker colour (5.19:1 on #ffffff). Declared in
+     both sets so no palette is missing the name. */
+  --alert-armed:#0969da;
 }
 
 *{box-sizing:border-box}

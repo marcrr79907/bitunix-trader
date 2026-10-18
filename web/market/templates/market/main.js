@@ -80,7 +80,15 @@ export function boot(config) {
   const drawingInteraction = createDrawingInteraction({ store, bus, host, config });
   // F7 (S3): the right-click menu over the chart; it reuses the interaction's
   // pure hit-test and the drawings bus commands (no new write path, #68).
-  const contextMenu = createContextMenu({ store, bus, host, config });
+  // F10 UI #235: its "Add alert" item is the keyboard path into the alert
+  // dialog; the callback is late-bound because alerts is created below.
+  const contextMenu = createContextMenu({
+    store,
+    bus,
+    host,
+    config,
+    onAddAlert: function () { alerts.openFromLastClose(); },
+  });
   const measure = createMeasure({ store, bus, host, config });
   // F6 UI #194: the "Position from setup" button state + setups cache. It seeds
   // a position through drawings.js (single source for the POST).
@@ -95,6 +103,9 @@ export function boot(config) {
     onTheme: function (p) {
       state.theme = p.resolved;
       host.setTheme(p.resolved);
+      // F10 UI #232: the markers read shell tokens at render time, so a resolved
+      // theme flip must repaint them (host.setTheme is option-only — no rebuild).
+      alerts.refreshTheme();
       savePreference({ theme: p.pref });
     },
   });
