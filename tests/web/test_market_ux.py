@@ -143,7 +143,7 @@ def test_controller_allowlist_routes_serve_javascript(logged_in_client):
     # ``market/controllers/`` as JS (a missing route = import 404 = blank chart).
     from market import views
 
-    assert len(views.CONTROLLER_ALLOWLIST) == 17
+    assert len(views.CONTROLLER_ALLOWLIST) == 18
     for name in views.CONTROLLER_ALLOWLIST:
         response = logged_in_client.get(f"/market/controllers/{name}.js")
         assert response.status_code == 200, name
@@ -192,7 +192,7 @@ def test_f9_cores_are_served(logged_in_client):
         assert response.status_code == 200, name
         assert response["Content-Type"] == "text/javascript", name
 
-    assert len(views.CONTROLLER_ALLOWLIST) == 17
+    assert len(views.CONTROLLER_ALLOWLIST) == 18
 
 
 def test_f10_alerts_are_served(logged_in_client):
@@ -201,7 +201,7 @@ def test_f10_alerts_are_served(logged_in_client):
     # import 404s and blanks the chart.
     from market import views
 
-    assert len(views.MODULE_ALLOWLIST) == 33
+    assert len(views.MODULE_ALLOWLIST) == 34
     for name in (
         "alert-markers-core",
         "alert-condition-core",
@@ -541,3 +541,48 @@ def test_f10_alert_marker_token_is_declared_in_both_palettes(logged_in_client):
     light = css[css.index('[data-theme="light"]') :]
     assert "--alert-armed:" in dark
     assert "--alert-armed:" in light
+
+
+def test_f11_symbol_picker_is_markup_only(logged_in_client):
+    # F11 A-S4 (R19/R20): the search affordance is static markup — a combobox
+    # input plus a listbox — with no inline handler and no new dependency.
+    response = logged_in_client.get("/market/")
+    body = response.content
+
+    assert b'id="symbol-search"' in body
+    assert b'role="combobox"' in body
+    assert b'id="symbol-results"' in body
+    assert b'role="listbox"' in body
+    assert b'id="symbol-status"' in body
+    assert b'aria-live="polite"' in body
+
+
+def test_f11_watchlist_container_keeps_the_pair_contract(logged_in_client):
+    # R20: the existing .pairs/.pair[data-symbol] contract must survive so
+    # toolbar.js delegation and the E2E selectors keep working unchanged.
+    body = logged_in_client.get("/market/").content
+
+    assert b'class="pairs"' in body
+    assert b'class="pair"' in body
+    assert b'data-symbol="BTCUSDT"' in body
+
+
+def test_f11_symbol_core_and_picker_are_served(logged_in_client):
+    from market import views
+
+    assert "symbol-search-core" in views.MODULE_ALLOWLIST
+    assert "symbol-picker" in views.CONTROLLER_ALLOWLIST
+
+    core = logged_in_client.get("/market/symbol-search-core.js")
+    assert core.status_code == 200
+    assert b"filterSymbols" in core.content
+
+    picker = logged_in_client.get("/market/controllers/symbol-picker.js")
+    assert picker.status_code == 200
+    assert b"createSymbolPicker" in picker.content
+
+
+def test_f11_toolbar_delegation_is_untouched(logged_in_client):
+    # R20: toolbar.js must remain byte-identical (it owns the .pair handler).
+    body = logged_in_client.get("/market/controllers/toolbar.js").content
+    assert b'document.querySelectorAll(".pair")' in body

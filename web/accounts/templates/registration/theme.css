@@ -136,6 +136,17 @@ code{font-family:var(--mono); background:var(--surface); padding:1px 5px; border
 .chart-legend .lg-row{display:flex; gap:var(--sp-2); justify-content:space-between}
 .chart-legend .lg-token{color:var(--muted)}
 .chart-legend .lg-val{color:var(--text)}
+.symbol-search{display:flex; flex-direction:column; gap:var(--sp-1); margin-bottom:var(--sp-2)}
+.symbol-search input{background:var(--surface); border:1px solid var(--border); color:var(--text);
+  padding:var(--sp-1) var(--sp-2); border-radius:var(--r); font-family:inherit; font-size:var(--fs-2)}
+.symbol-results{list-style:none; margin:0; padding:0; max-height:240px; overflow:auto;
+  border:1px solid var(--border); border-radius:var(--r); background:var(--surface)}
+.symbol-results li{display:flex; align-items:center; justify-content:space-between;
+  gap:var(--sp-2); padding:var(--sp-1) var(--sp-2); cursor:pointer}
+.symbol-results li[aria-selected=true]{background:var(--border); color:var(--text)}
+.symbol-follow{background:var(--surface); border:1px solid var(--border); color:var(--muted);
+  border-radius:var(--r); min-width:32px; min-height:32px; line-height:1; padding:0}
+.symbol-follow:disabled{color:var(--up); cursor:default}
 .pairs{display:flex; flex-wrap:wrap; gap:var(--sp-2)}
 .pairs .pair{background:var(--surface); border:1px solid var(--border); color:var(--text)}
 .indicators{display:flex; flex-direction:column; gap:var(--sp-1);

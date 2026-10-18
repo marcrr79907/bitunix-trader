@@ -32,6 +32,8 @@ export const CONFIG = {
     preference: "/market/api/preference",
     drawings: "/market/api/drawings",
     alerts: "/market/api/alerts",
+    symbols: "/market/api/symbols",
+    watchlist: "/market/api/watchlist",
   },
 };
 

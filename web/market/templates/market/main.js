@@ -29,6 +29,7 @@ import { createObjectTree } from "./controllers/object-tree.js";
 import { createLegend } from "./controllers/legend.js";
 import { createPreference } from "./controllers/preference.js";
 import { createAlerts } from "./controllers/alerts.js";
+import { createSymbolPicker } from "./controllers/symbol-picker.js";
 
 export function boot(config) {
   // Sanctioned test seam (R18): the E2E reads window.SmcOverlayCore.setupMarkers.
@@ -69,6 +70,7 @@ export function boot(config) {
   };
   window.marketChart.smcToggles = state.smc;
 
+  createSymbolPicker({ store, bus, config });
   const { savePreference, loadPreference } = createPreference({ config });
   const indicators = createIndicators({ store, bus, config });
   const history = createHistory({ store, bus, host, config });
