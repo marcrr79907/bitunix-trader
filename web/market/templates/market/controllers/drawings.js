@@ -6,7 +6,8 @@
 import * as Draw from "../drawing-core.js";
 import { makeDrawingPrimitive } from "../drawing-primitive.js";
 import { defaultPositionStyle } from "../position-core.js";
-import { createFlow, previewRow } from "../drawing-click-flow-core.js";
+import { createFlow } from "../drawing-click-flow-core.js";
+import { createDraftPreview } from "./draft-preview.js";
 
 function csrfToken() {
   const meta = document.querySelector('meta[name="csrf-token"]');
@@ -29,8 +30,9 @@ export function createDrawings({ store, bus, host, config }) {
   let flowTool = state.tool;
   // R2 #222: the transient PREVIEW of a half-collected draft (client-side only —
   // never POSTed, never in ``currentDrawings``). Re-attached after a rebuild.
-  let previewRowData = null;
-  let previewPrim = null;
+  const preview = createDraftPreview({
+    host, flow, makePrimitive: makeDrawingPrimitive, styleFor: styleFor,
+  });
   let pendingDialog = null; // {kind, points} awaiting the #text-dialog
   let selectedId = null; // interaction selection (closure only; never a store key)
   const selection = { isSelected: function (row) { return row.id === selectedId; } };
@@ -48,7 +50,7 @@ export function createDrawings({ store, bus, host, config }) {
         candleSeries.attachPrimitive(prim);
         attached.push({ id: row.id, prim: prim });
       });
-      attachPreview(candleSeries);
+      preview.attach(candleSeries);
     }
     window.marketChart.drawings = currentDrawings.slice();
     bus.emit("drawings:changed", { rows: currentDrawings.slice() });
@@ -81,26 +83,6 @@ export function createDrawings({ store, bus, host, config }) {
   function primFor(id) {
     const hit = attached.find(function (a) { return a.id === id; });
     return hit && hit.prim;
-  }
-
-  // R2 #222: draw the pending anchors so a 2/3-click draft is not a void — ONE
-  // throwaway primitive over a partial row (#68: no POST, no seam entry).
-  function attachPreview(candleSeries) {
-    const series = candleSeries || host.getCandleSeries();
-    if (previewPrim) { if (series) series.detachPrimitive(previewPrim); previewPrim = null; }
-    if (!previewRowData || !series || !series.attachPrimitive) return;
-    // ``isSelected`` draws the anchor HANDLES so the clicks already placed are
-    // visible; ``preview`` keeps a draft out of autoscale (no axis jump).
-    previewPrim = makeDrawingPrimitive(previewRowData, { isSelected: () => true, preview: true });
-    series.attachPrimitive(previewPrim);
-  }
-
-  // Derive the preview from the flow draft and (re)attach it; no draft -> detach.
-  function syncPreview() {
-    const p = flow.peek();
-    previewRowData = p ? previewRow(p.kind, p.clicks) : null;
-    if (previewRowData) previewRowData.style = styleFor(previewRowData.kind, previewRowData.points);
-    attachPreview();
   }
 
   // Selection highlight (R9): mark + redraw via the primitive requestUpdate only.
@@ -206,8 +188,8 @@ export function createDrawings({ store, bus, host, config }) {
     if (price === null || price === undefined) return;
     const out = flow.collect(state.tool, { time: param.time, price: price });
     if (!out) return;
-    if (out.status === "pending") { syncPreview(); return; }
-    syncPreview();
+    if (out.status === "pending") { preview.sync(); return; }
+    preview.sync();
     if (out.status === "dialog") { openTextDialog(out); return; }
     if (out.status === "ready") createDrawing(out.kind, out.points, styleFor(out.kind, out.points));
   }
@@ -246,7 +228,7 @@ export function createDrawings({ store, bus, host, config }) {
     if (state.tool === flowTool) return;
     flowTool = state.tool;
     flow.cancel(); // a tool switch drops the half-collected draft
-    syncPreview();
+    preview.sync();
     applyCursor();
   });
 
@@ -263,7 +245,7 @@ export function createDrawings({ store, bus, host, config }) {
     chartEl.addEventListener("keydown", function (e) {
       if (e.key === "Escape" && flow.active()) {
         flow.cancel();
-        syncPreview();
+        preview.sync();
         e.preventDefault();
       }
     });
@@ -289,7 +271,7 @@ export function createDrawings({ store, bus, host, config }) {
     store.set({ tool: null });
     flowTool = state.tool;
     flow.reset();
-    syncPreview();
+    preview.sync();
     pendingDialog = null;
     selectedId = null; // R14: selection clears with the drawings
     currentDrawings = [];
