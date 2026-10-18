@@ -89,9 +89,9 @@ export function createDrawings({ store, bus, host, config }) {
     const series = candleSeries || host.getCandleSeries();
     if (previewPrim) { if (series) series.detachPrimitive(previewPrim); previewPrim = null; }
     if (!previewRowData || !series || !series.attachPrimitive) return;
-    // ``isSelected`` -> the primitive draws the anchor HANDLES, so the clicks
-    // already placed are visible even before the shape has a body.
-    previewPrim = makeDrawingPrimitive(previewRowData, { isSelected: () => true });
+    // ``isSelected`` draws the anchor HANDLES so the clicks already placed are
+    // visible; ``preview`` keeps a draft out of autoscale (no axis jump).
+    previewPrim = makeDrawingPrimitive(previewRowData, { isSelected: () => true, preview: true });
     series.attachPrimitive(previewPrim);
   }
 

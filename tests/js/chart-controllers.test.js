@@ -1349,3 +1349,12 @@ test("#chart shows a crosshair cursor while a tool is active (#222)", () => {
     assert.strictEqual(f.chartEl.style.cursor, "", "the cursor is restored");
   } finally { f.restore(); }
 });
+
+test("the draft preview never moves the price scale (#222/#68)", () => {
+  const f = draftsPreviewFixture();
+  try {
+    f.tool("channel");
+    f.click(1, 10);
+    assert.strictEqual(f.attached[0].autoscaleInfo(), null, "a preview must not rescale");
+  } finally { f.restore(); }
+});

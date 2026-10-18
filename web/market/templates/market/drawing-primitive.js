@@ -290,8 +290,9 @@ function makeDrawingPrimitive(row, selection) {
       }];
     },
     // F5 S3 (R6): a hidden full-width ray MUST NOT influence autoscale.
+    // A transient draft preview never moves the price scale (R2 #222).
     autoscaleInfo: function () {
-      return row.visible === false ? null : priceRangeFor(row);
+      return row.visible === false || sel.preview ? null : priceRangeFor(row);
     },
   };
 }
