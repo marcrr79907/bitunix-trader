@@ -962,7 +962,7 @@ function menuEl(tag) {
   return el;
 }
 
-function menuFixture(rows) {
+function menuFixture(rows, onAddAlert) {
   const prevDoc = globalThis.document;
   const body = menuEl("body");
   const chart = menuEl("section");
@@ -982,7 +982,7 @@ function menuFixture(rows) {
   const emitted = [];
   ["drawing:delete", "drawing:duplicate", "scale:changed", "indicator:changed", "drawing:selected"]
     .forEach((e) => bus.on(e, (p) => emitted.push({ event: e, payload: p })));
-  const cm = createContextMenu({ store, bus, host, config: {} });
+  const cm = createContextMenu({ store, bus, host, config: {}, onAddAlert });
   cm.attach();
   if (rows) bus.emit("drawings:changed", { rows });
   return {
@@ -1021,13 +1021,13 @@ test("contextmenu on a drawing row opens a role=menu with Delete then Duplicate 
   } finally { f.restore(); }
 });
 
-test("contextmenu on an empty chart offers Add indicator (R1)", () => {
+test("contextmenu on an empty chart offers Add indicator then Add alert (R1/#235)", () => {
   const f = menuFixture([]);
   try {
     f.chart.fire("contextmenu", ctxEv(300, 400));
     const menu = menuNode(f.body);
     assert.ok(menu);
-    assert.deepStrictEqual(menu.children.map((c) => c.textContent), ["Add indicator"]);
+    assert.deepStrictEqual(menu.children.map((c) => c.textContent), ["Add indicator", "Add alert"]);
     const sel = f.emitted.find((e) => e.event === "drawing:selected");
     assert.deepStrictEqual(sel.payload, { id: null });
   } finally { f.restore(); }
@@ -1040,7 +1040,7 @@ test("reset-scale appears non-linear and is absent linear (R1)", () => {
     f.chart.fire("contextmenu", ctxEv(300, 400));
     assert.deepStrictEqual(
       menuNode(f.body).children.map((c) => c.textContent),
-      ["Reset scale", "Add indicator"],
+      ["Reset scale", "Add indicator", "Add alert"],
     );
     // Close, then flip linear: no reset-scale.
     globalThis.document.fireDoc("pointerdown", { target: menuEl("div") });
@@ -1048,7 +1048,7 @@ test("reset-scale appears non-linear and is absent linear (R1)", () => {
     f.chart.fire("contextmenu", ctxEv(300, 400));
     assert.deepStrictEqual(
       menuNode(f.body).children.map((c) => c.textContent),
-      ["Add indicator"],
+      ["Add indicator", "Add alert"],
     );
   } finally { f.restore(); }
 });
@@ -1094,6 +1094,34 @@ test("add-indicator reuses the F5 seam: store membership + indicator:changed (R4
     menuNode(f.body).children[0].fire("click");
     assert.deepStrictEqual(f.store.get().indicators, ["sma", "ema"]);
     assert.ok(f.emitted.some((e) => e.event === "indicator:changed"));
+  } finally { f.restore(); }
+});
+
+test("Add alert calls the injected callback and never emits a new bus event (#235)", () => {
+  // F10 UI #235: the menu is the non-pointer entry point. It mirrors the
+  // onIndicatorSettings precedent — an injected callback, NO new bus event.
+  let calls = 0;
+  const f = menuFixture([], () => { calls += 1; });
+  try {
+    f.chart.fire("contextmenu", ctxEv(300, 400));
+    menuNode(f.body).children[1].fire("click"); // Add indicator, then Add alert
+    assert.strictEqual(calls, 1, "the alerts callback ran exactly once");
+    assert.deepStrictEqual(f.emitted.map((e) => e.event), ["drawing:selected"]);
+  } finally { f.restore(); }
+});
+
+test("Add alert is reachable from the keyboard-opened menu too (#235)", () => {
+  // Shift+F10 / ContextMenu open the same model, so the keyboard user reaches
+  // the item with no pointer crosshair at all.
+  let calls = 0;
+  const f = menuFixture([], () => { calls += 1; });
+  try {
+    f.chart.fire("keydown", keyOpen("ContextMenu"));
+    const menu = menuNode(f.body);
+    const item = menu.children.find((c) => c.textContent === "Add alert");
+    assert.ok(item, "the keyboard menu offers Add alert");
+    item.fire("click");
+    assert.strictEqual(calls, 1);
   } finally { f.restore(); }
 });
 
@@ -1199,7 +1227,7 @@ test("ContextMenu key with nothing selected opens at the chart rect+8 (F7 UI #20
     assert.strictEqual(e._prevented(), true);
     const menu = menuNode(f.body);
     assert.ok(menu);
-    assert.deepStrictEqual(menu.children.map((c) => c.textContent), ["Add indicator"]);
+    assert.deepStrictEqual(menu.children.map((c) => c.textContent), ["Add indicator", "Add alert"]);
     assert.strictEqual(menu.style.left, "48px");
     assert.strictEqual(menu.style.top, "28px");
   } finally { f.restore(); }

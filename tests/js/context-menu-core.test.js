@@ -39,13 +39,24 @@ test("an empty chart yields reset-scale then add-indicator when non-linear", () 
   assert.deepStrictEqual(menuModel({ hit: null, row: null, scaleMode: "log" }), [
     { id: "reset-scale", label: "Reset scale", keyshortcut: "" },
     { id: "add-indicator", label: "Add indicator", keyshortcut: "" },
+    { id: "add-alert", label: "Add alert", keyshortcut: "" },
   ]);
 });
 
 test("an empty chart drops reset-scale when linear", () => {
   assert.deepStrictEqual(menuModel({ hit: null, row: null, scaleMode: "linear" }), [
     { id: "add-indicator", label: "Add indicator", keyshortcut: "" },
+    { id: "add-alert", label: "Add alert", keyshortcut: "" },
   ]);
+});
+
+test("a drawing row carries no add-alert entry", () => {
+  // The context menu is the keyboard entry point for creating an alert (F10 UI
+  // #235); a row's menu is about that drawing, so no alert item there.
+  assert.strictEqual(
+    menuModel({ hit: { id: 7 }, row, scaleMode: "linear" }).some((i) => i.id === "add-alert"),
+    false,
+  );
 });
 
 test("an unknown hit falls back to the empty-chart list", () => {

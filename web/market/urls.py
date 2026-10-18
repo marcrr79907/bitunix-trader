@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from django.urls import path
 
-from market import views
+from market import alerts, views
 
 urlpatterns = [
     path("market/", views.market_page, name="market_page"),
@@ -16,6 +16,12 @@ urlpatterns = [
         "market/api/preference",
         views.api_preference,
         name="market_api_preference",
+    ),
+    path("market/api/alerts", alerts.api_alerts, name="market_api_alerts"),
+    path(
+        "market/api/alerts/<int:id>",
+        alerts.api_alert_detail,
+        name="market_api_alert_detail",
     ),
     path("market/api/drawings", views.api_drawings, name="market_api_drawings"),
     path(

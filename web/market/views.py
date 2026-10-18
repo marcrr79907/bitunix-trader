@@ -66,6 +66,11 @@ MODULE_ALLOWLIST = frozenset(
         "fib-tools-core",
         "drawing-click-flow-core",
         "object-tree-dom-core",
+        "alert-markers-core",
+        "alert-condition-core",
+        "alert-ui-core",
+        "alert-markers-view",
+        "alert-bell-view",
         "chart-store",
         "chart-bus",
         "chart-host",
@@ -91,6 +96,7 @@ CONTROLLER_ALLOWLIST: frozenset[str] = frozenset(
         "undo",
         "context-menu",
         "draft-preview",
+        "alerts",
     }
 )
 

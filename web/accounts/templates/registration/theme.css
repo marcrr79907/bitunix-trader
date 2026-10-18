@@ -19,6 +19,9 @@
   --draw-ray:#ffb74d; --draw-vline:#82b1ff; --draw-channel:#80cbc4;
   --draw-price:#ff8a80; --draw-callout:#e6edf3; --draw-fib-ext:#b388ff;
   --draw-fib-time:#4dd0e1; --draw-fib-zone:#ce93d8;
+  /* F10 UI #232: armed alert-marker colour. The brand --accent is 3.86:1 on
+     this bg (under the 4.5:1 small-text floor), so the marker owns a token. */
+  --alert-armed:#4c8dff;
 }
 
 /* Light palette (R1): selected by [data-theme="light"] on the root. Declares
@@ -39,6 +42,9 @@
   --draw-ray:#c2410c; --draw-vline:#0550ae; --draw-channel:#0f766e;
   --draw-price:#b91c1c; --draw-callout:#24292f; --draw-fib-ext:#6f42c1;
   --draw-fib-time:#0e7490; --draw-fib-zone:#7b1fa2;
+  /* F10 UI #232: armed alert-marker colour (5.19:1 on #ffffff). Declared in
+     both sets so no palette is missing the name. */
+  --alert-armed:#0969da;
 }
 
 *{box-sizing:border-box}
@@ -157,6 +163,43 @@ code{font-family:var(--mono); background:var(--surface); padding:1px 5px; border
   align-items:center; gap:var(--sp-2)}
 #drawing-settings-dialog input[type=color]{padding:0; height:32px; width:100%}
 #drawing-settings-dialog button{grid-column:1/-1}
+
+/* F10 alert bell: pinned at the crosshair inside #chart (legend overlay
+   precedent). Hidden stays display:none so it is not focusable. The right
+   offset is set inline from the measured price-scale width (#234) so the bell
+   never covers the crosshair price tag or the axis drag strip; the fallback
+   below only clears a typical axis. */
+.chart-alert-bell{
+  /* above LWC's canvases, which paint later in #chart (same-DOM rebuild) */
+  position:absolute; right:72px; z-index:10; transform:translate(0,-50%);
+  min-width:40px; min-height:40px; padding:0 var(--sp-1);
+  background:var(--surface); color:var(--accent);
+  border:1px solid var(--border); border-radius:50%;
+  font-size:var(--fs-3); line-height:1; cursor:pointer;
+}
+.chart-alert-bell[hidden]{display:none}
+.chart-alert-bell:hover:not([aria-disabled="true"]){border-color:var(--accent)}
+/* #234: an inert bell stays focusable (aria-disabled, not disabled) so its
+   aria-describedby reason is announced. It only LOOKS and ACTS disabled. */
+.chart-alert-bell[aria-disabled="true"]{color:var(--muted); cursor:not-allowed}
+.chart-alert-bell:focus-visible{outline:2px solid var(--accent); outline-offset:2px}
+@media (pointer:coarse){.chart-alert-bell{min-width:44px; min-height:44px}}
+#alert-dialog{max-width:min(320px,calc(100vw - 2*var(--sp-4)))}
+#alert-dialog::backdrop{background:rgba(0,0,0,.55)}
+#alert-dialog form{display:grid; grid-template-columns:auto 1fr;
+  align-items:center; gap:var(--sp-2)}
+#alert-dialog button{grid-column:1/-1}
+#alert-dialog .alert-hint,#alert-dialog .alert-error,#alert-dialog .alert-cue{grid-column:1/-1; margin:0;
+  color:var(--muted); font-size:var(--fs-3)}
+#alert-dialog .alert-error{color:var(--dn)}
+#alert-dialog .alert-error[hidden],#alert-dialog .alert-cue[hidden]{display:none}
+/* #234: a silent PUT becomes an announced edit — the cue names the target. */
+#alert-dialog .alert-cue{color:var(--accent)}
+/* #234: Apply's success confirmation, revealed for a few seconds. */
+#alert-confirm{margin:var(--sp-1) 0 0; padding:var(--sp-1) var(--sp-2);
+  border:1px solid var(--border); border-radius:var(--r);
+  background:var(--surface); color:var(--text); font-size:var(--fs-3)}
+#alert-confirm[hidden]{display:none}
 
 /* #chart is keyboard-focusable for Delete/Escape (R11): a visible focus ring. */
 #chart:focus-visible{outline:2px solid var(--accent); outline-offset:-2px}

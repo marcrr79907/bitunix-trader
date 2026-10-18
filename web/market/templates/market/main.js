@@ -28,6 +28,7 @@ import { createPositionSeed } from "./controllers/position-seed.js";
 import { createObjectTree } from "./controllers/object-tree.js";
 import { createLegend } from "./controllers/legend.js";
 import { createPreference } from "./controllers/preference.js";
+import { createAlerts } from "./controllers/alerts.js";
 
 export function boot(config) {
   // Sanctioned test seam (R18): the E2E reads window.SmcOverlayCore.setupMarkers.
@@ -79,7 +80,15 @@ export function boot(config) {
   const drawingInteraction = createDrawingInteraction({ store, bus, host, config });
   // F7 (S3): the right-click menu over the chart; it reuses the interaction's
   // pure hit-test and the drawings bus commands (no new write path, #68).
-  const contextMenu = createContextMenu({ store, bus, host, config });
+  // F10 UI #235: its "Add alert" item is the keyboard path into the alert
+  // dialog; the callback is late-bound because alerts is created below.
+  const contextMenu = createContextMenu({
+    store,
+    bus,
+    host,
+    config,
+    onAddAlert: function () { alerts.openFromLastClose(); },
+  });
   const measure = createMeasure({ store, bus, host, config });
   // F6 UI #194: the "Position from setup" button state + setups cache. It seeds
   // a position through drawings.js (single source for the POST).
@@ -94,6 +103,9 @@ export function boot(config) {
     onTheme: function (p) {
       state.theme = p.resolved;
       host.setTheme(p.resolved);
+      // F10 UI #232: the markers read shell tokens at render time, so a resolved
+      // theme flip must repaint them (host.setTheme is option-only — no rebuild).
+      alerts.refreshTheme();
       savePreference({ theme: p.pref });
     },
   });
@@ -111,6 +123,10 @@ export function boot(config) {
   // Read-only legend overlay: re-subscribes on chart:built internally, so no
   // buildChart change is needed (design: keeps main wiring to +1 line).
   createLegend({ store, bus, host, config });
+  // F10: the alert layer (bell + dialog + markers). It re-subscribes on
+  // chart:built internally and owns its own refetch, so the wiring is attach()
+  // here plus clearForSwitch()/refresh() on a pair switch.
+  const alerts = createAlerts({ store, bus, host, config });
 
   // Monotonic chart generation: a switch bumps it so a slow boot/switch load
   // for the previous chart cannot clobber the current one.
@@ -132,6 +148,7 @@ export function boot(config) {
     // F6 (D1/D4): the measure controller owns its own #chart listeners (guarded
     // on state.tool==="measure"); bind() is idempotent like the interaction.
     measure.attach();
+    alerts.attach();
     host.subscribeClick(drawings.onChartClick);
     host.subscribeVisibleRange(history.onVisibleRange);
     bus.emit("chart:built", {
@@ -172,6 +189,8 @@ export function boot(config) {
     // R14: the undo stack is symbol-scoped (a gone id must not replay).
     if (symbolChanged) undo.clearForSwitch();
     smc.clearForSwitch();
+    // F10: the alert markers/summary are per (symbol, interval) too.
+    alerts.clearForSwitch();
     // F6 (R4): a symbol switch clears an ephemeral measurement (no persistence).
     if (symbolChanged) measure.clearForSwitch();
     // R14: a symbol switch clears selection with the drawings; an interval-only

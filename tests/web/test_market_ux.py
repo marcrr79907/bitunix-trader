@@ -143,7 +143,7 @@ def test_controller_allowlist_routes_serve_javascript(logged_in_client):
     # ``market/controllers/`` as JS (a missing route = import 404 = blank chart).
     from market import views
 
-    assert len(views.CONTROLLER_ALLOWLIST) == 16
+    assert len(views.CONTROLLER_ALLOWLIST) == 17
     for name in views.CONTROLLER_ALLOWLIST:
         response = logged_in_client.get(f"/market/controllers/{name}.js")
         assert response.status_code == 200, name
@@ -192,7 +192,62 @@ def test_f9_cores_are_served(logged_in_client):
         assert response.status_code == 200, name
         assert response["Content-Type"] == "text/javascript", name
 
-    assert len(views.CONTROLLER_ALLOWLIST) == 16
+    assert len(views.CONTROLLER_ALLOWLIST) == 17
+
+
+def test_f10_alerts_are_served(logged_in_client):
+    # F10 S3 (R14): the two alert cores join MODULE_ALLOWLIST and ``alerts``
+    # joins CONTROLLER_ALLOWLIST; each MUST be served same-origin as JS or its
+    # import 404s and blanks the chart.
+    from market import views
+
+    assert len(views.MODULE_ALLOWLIST) == 33
+    for name in (
+        "alert-markers-core",
+        "alert-condition-core",
+        "alert-ui-core",
+        "alert-markers-view",
+        "alert-bell-view",
+    ):
+        assert name in views.MODULE_ALLOWLIST, name
+        response = logged_in_client.get(f"/market/{name}.js")
+        assert response.status_code == 200, name
+        assert response["Content-Type"] == "text/javascript", name
+
+    assert "alerts" in views.CONTROLLER_ALLOWLIST
+    response = logged_in_client.get("/market/controllers/alerts.js")
+    assert response.status_code == 200
+    assert response["Content-Type"] == "text/javascript"
+
+
+def test_f10_alert_ui_is_markup_only(logged_in_client):
+    # F10 (design-system R6/R7): the dialog + live-status + reason nodes are
+    # static markup (CSP-clean); the bell is JS-built, so a served controller is
+    # what makes it exist. The marker layering proof lives at test level: the
+    # served SMC controller never grows an alert token.
+    body = logged_in_client.get("/market/").content.decode()
+    for marker in (
+        'id="alert-dialog"',
+        'id="alert-status"',
+        'id="alert-interval-reason"',
+        'id="alert-cue"',
+        'id="alert-confirm"',
+        'aria-live="polite"',
+    ):
+        assert marker in body, marker
+
+    for name in (
+        "alert-markers-core",
+        "alert-condition-core",
+        "alert-ui-core",
+        "alert-markers-view",
+        "alert-bell-view",
+        "controllers/alerts",
+    ):
+        assert f'href="/market/{name}.js"' in body, name
+
+    smc = logged_in_client.get("/market/controllers/smc.js").content
+    assert b"alert" not in smc.lower(), "markers must live in alerts.js only"
 
 
 def test_market_page_preloads_f9_cores(logged_in_client):
@@ -396,3 +451,93 @@ def test_csp_absent_on_admin_login(client):
 def test_healthz_still_200(client):
     response = client.get("/healthz")
     assert response.status_code == 200
+
+
+def _luminance(hex_color):
+    """WCAG 2.1 relative luminance of a #rrggbb color."""
+    raw = hex_color.lstrip("#")
+    channels = []
+    for i in (0, 2, 4):
+        c = int(raw[i : i + 2], 16) / 255
+        channels.append(c / 12.92 if c <= 0.03928 else ((c + 0.055) / 1.055) ** 2.4)
+    return 0.2126 * channels[0] + 0.7152 * channels[1] + 0.0722 * channels[2]
+
+
+def _contrast(a, b):
+    la, lb = _luminance(a), _luminance(b)
+    hi, lo = max(la, lb), min(la, lb)
+    return (hi + 0.05) / (lo + 0.05)
+
+
+def test_f10_alert_marker_tokens_meet_contrast(logged_in_client):
+    """#232: the tokens the alert markers read must clear 4.5:1 on their theme.
+
+    Markers paint small text on the chart canvas, whose background is the
+    theme's --bg. ``alerts.js`` reads ``--alert-armed`` (armed) and ``--dn``
+    (fired), so those two tokens have to be legible in BOTH palettes. The brand
+    ``--accent`` is not used: its dark value is 3.86:1, under the small-text
+    floor, so the marker owns a dedicated token instead of shifting the brand.
+    """
+    import re
+
+    css = logged_in_client.get("/theme.css").content.decode()
+    dark = css[: css.index('[data-theme="light"]')]
+    light = css[css.index('[data-theme="light"]') :]
+
+    def tokens(block):
+        return {
+            name: re.search(rf"{name}:(#[0-9a-fA-F]{{6}})", block).group(1)
+            for name in ("--bg", "--alert-armed", "--dn")
+        }
+
+    for name, block in (("dark", dark), ("light", light)):
+        t = tokens(block)
+        for token in ("--alert-armed", "--dn"):
+            ratio = _contrast(t[token], t["--bg"])
+            assert ratio >= 4.5, f"{name} {token} on --bg is {ratio:.2f}:1 < 4.5:1"
+
+
+def test_f10_bell_clears_the_price_axis_and_is_touch_sized(logged_in_client):
+    """#234: the bell must not cover the crosshair price tag, and its target must
+    clear the 40px touch floor on coarse pointers."""
+    import re
+
+    css = logged_in_client.get("/theme.css").content.decode()
+    bell = css[css.index(".chart-alert-bell{") :].split("}")[0]
+    # The offset is computed at build time into an inline style; the CSS default
+    # only has to leave room for a typical axis, never sit at 8px.
+    assert "right:var(--sp-2)" not in bell, "the bell must not sit on the axis"
+    # aria-disabled is the inert state now, so the :disabled rule is dead weight.
+    bell_block = css[css.index(".chart-alert-bell") : css.index("#alert-dialog")]
+    assert ":disabled" not in bell_block
+    assert '[aria-disabled="true"]' in css
+    # Coarse pointers get the touch floor (the desktop stays compact).
+    coarse = css[css.index("@media (pointer:coarse)") :]
+    coarse = coarse[: coarse.index("}}") + 1] if "}}" in coarse else coarse
+    target = int(re.search(r"min-width:(\d+)px", coarse).group(1))
+    assert 40 <= target <= 44, target
+    assert f"min-height:{target}px" in coarse
+
+
+def test_f10_alert_dialog_cue_and_confirm_are_token_only(logged_in_client):
+    """#234: the silent-edit cue and the success confirmation reuse shell tokens."""
+    import re
+
+    css = logged_in_client.get("/theme.css").content.decode()
+    for selector in ("#alert-dialog .alert-cue", "#alert-confirm"):
+        rule = css[css.index(selector + "{") :].split("}")[0]
+        assert "var(--" in rule, selector
+        assert not re.search(r"#[0-9a-fA-F]{3,8}\b", rule), selector
+
+
+def test_f10_alert_marker_token_is_declared_in_both_palettes(logged_in_client):
+    """#232: a token read at render time must exist in BOTH palettes.
+
+    The shell uses :root for dark and [data-theme="light"] for light; a name
+    missing from either set silently falls back to the core literal.
+    """
+    css = logged_in_client.get("/theme.css").content.decode()
+    dark = css[: css.index('[data-theme="light"]')]
+    light = css[css.index('[data-theme="light"]') :]
+    assert "--alert-armed:" in dark
+    assert "--alert-armed:" in light
