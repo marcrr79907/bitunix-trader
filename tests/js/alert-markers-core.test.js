@@ -100,11 +100,14 @@ test("markersFor: a rule without a numeric level is skipped", () => {
   assert.strictEqual(out[0].text, "A 1");
 });
 
-test("markersFor: a non-finite last_fired_at falls back to the anchor", () => {
+test("markersFor: an off-series or non-finite last_fired_at drops the marker (R4)", () => {
+  // Spec chart-alerts R4: a marker time that is not on the series MUST be
+  // dropped. Faking the newest-candle time would misplace it (and LWC v5 would
+  // discard it anyway); the fired state stays visible on /signals/.
   const rules = [{ condition: { level: 10 }, is_active: true, last_fired_at: "nope" }];
-  const [marker] = markersFor(rules, ANCHOR);
-  assert.strictEqual(marker.time, ANCHOR);
-  assert.strictEqual(marker.text, "F 10");
+  assert.deepStrictEqual(markersFor(rules, ANCHOR), []);
+  const offSeries = [{ condition: { level: 10 }, is_active: true, last_fired_at: Infinity }];
+  assert.deepStrictEqual(markersFor(offSeries, ANCHOR), []);
 });
 
 test("markersFor: a missing/non-finite anchor drops armed rules", () => {

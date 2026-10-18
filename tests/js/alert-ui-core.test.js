@@ -23,3 +23,18 @@ test("fmtPrice trims to 6 decimals and degrades a non-number to an en dash", () 
   assert.strictEqual(fmtPrice("100"), "\u2013");
   assert.strictEqual(fmtPrice(null), "\u2013");
 });
+
+// Parity guard: the client's eval-able set must equal the server's
+// CANDLE_INTERVALS, or the bell could create an alert the worker never
+// evaluates (it would never fire).
+test("EVALUABLE matches the server CANDLE_INTERVALS exactly", async () => {
+  const { readFileSync } = await import("node:fs");
+  const { fileURLToPath } = await import("node:url");
+  const src = readFileSync(
+    fileURLToPath(new URL("../../web/trading/candles.py", import.meta.url)),
+    "utf8",
+  );
+  const block = src.slice(src.indexOf("INTERVAL_SECONDS = {"), src.indexOf("}", src.indexOf("INTERVAL_SECONDS = {")));
+  const keys = [...block.matchAll(/"([^"]+)":/g)].map((m) => m[1]);
+  assert.deepStrictEqual(keys.slice().sort(), EVALUABLE.slice().sort());
+});
