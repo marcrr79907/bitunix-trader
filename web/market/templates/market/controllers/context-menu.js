@@ -14,7 +14,7 @@ import { grabHandle, handlesFor } from "../drawing-interaction-core.js";
 import { inactiveTokens } from "../add-indicator-core.js";
 import { REGISTRY } from "../chart-registry-core.js";
 
-export function createContextMenu({ store, bus, host, config }) {
+export function createContextMenu({ store, bus, host, config, onAddAlert }) {
   const el = document.getElementById("chart");
   let rows = []; // the latest ``drawings:changed`` rows (shared refs)
   let selectedId = null; // the last ``drawing:selected`` id (keyboard anchor)
@@ -79,6 +79,12 @@ export function createContextMenu({ store, bus, host, config }) {
       if (!token) return;
       store.set({ indicators: (store.get().indicators || []).concat([token]) });
       bus.emit("indicator:changed"); // membership change = rebuild (setData path, #68)
+    },
+    // F10 UI #235: the non-pointer entry point for creating an alert. It reuses
+    // the alerts controller through an injected callback (the
+    // onIndicatorSettings precedent): no new bus event, no new seam.
+    "add-alert": function () {
+      if (typeof onAddAlert === "function") onAddAlert();
     },
   };
 

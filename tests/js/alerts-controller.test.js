@@ -311,6 +311,38 @@ test("a network rejection re-opens the dialog with the error visible (#233)", as
   } finally { f.dom.restore(); }
 });
 
+// --- F10 UI #235: a non-pointer entry point --------------------------------
+//
+// The bell only appears on a real crosshair point, so a keyboard user never
+// reaches it. ``openFromLastClose`` seeds the dialog from the newest candle
+// close, with no cursor at all.
+
+test("openFromLastClose seeds the dialog from the last close without a crosshair (#235)", async () => {
+  const f = fixture({ candles: [{ time: 1, close: 90 }, { time: 5, close: 137.25 }] });
+  try {
+    await settle();
+    f.alerts.openFromLastClose();
+    assert.strictEqual(f.dom.els["alert-dialog"].open, true, "the dialog opens");
+    assert.strictEqual(f.dom.els["alert-level"].value, "137.25");
+    // opFor(137.25, 137.25) -> "above" (at/above the close).
+    assert.strictEqual(f.dom.els["alert-op"].value, "above");
+  } finally { f.dom.restore(); }
+});
+
+test("openFromLastClose does nothing without candles or on an ineligible interval (#235)", async () => {
+  const empty = fixture({ candles: [] });
+  try {
+    empty.alerts.openFromLastClose();
+    assert.strictEqual(empty.dom.els["alert-dialog"].open, false, "no price to seed from");
+  } finally { empty.dom.restore(); }
+
+  const ineligible = fixture({ interval: "3d" });
+  try {
+    ineligible.alerts.openFromLastClose();
+    assert.strictEqual(ineligible.dom.els["alert-dialog"].open, false);
+  } finally { ineligible.dom.restore(); }
+});
+
 // --- markers ----------------------------------------------------------------
 
 test("markers are created from the armed/fired rules and anchored on the newest candle", async () => {

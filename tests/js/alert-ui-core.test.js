@@ -2,7 +2,15 @@
 // The eval-able set MUST mirror the server's CANDLE_INTERVALS.
 import test from "node:test";
 import assert from "node:assert";
-import { EVALUABLE, eligible, reasonText, fmtPrice } from "../../web/market/templates/market/alert-ui-core.js";
+import {
+  EVALUABLE,
+  eligible,
+  reasonText,
+  fmtPrice,
+  lastClose,
+  listUrl,
+  writeRequest,
+} from "../../web/market/templates/market/alert-ui-core.js";
 
 test("EVALUABLE mirrors the server CANDLE_INTERVALS (8 intervals, no 1m)", () => {
   assert.deepStrictEqual(EVALUABLE, ["5m", "15m", "1h", "2h", "4h", "1d", "1w", "1M"]);
@@ -22,6 +30,37 @@ test("fmtPrice trims to 6 decimals and degrades a non-number to an en dash", () 
   assert.strictEqual(fmtPrice(NaN), "\u2013");
   assert.strictEqual(fmtPrice("100"), "\u2013");
   assert.strictEqual(fmtPrice(null), "\u2013");
+});
+
+test("lastClose reads the newest bar's close, or null when unusable (#235)", () => {
+  assert.strictEqual(lastClose([{ close: 1 }, { close: 137.25 }]), 137.25);
+  for (const bad of [[], null, undefined, {}, [{ close: "9" }], [{ close: Infinity }]]) {
+    assert.strictEqual(lastClose(bad), null, JSON.stringify(bad));
+  }
+});
+
+test("listUrl scopes the GET to the active pair", () => {
+  assert.strictEqual(
+    listUrl("/market/api/alerts", "BTCUSDT", "1h"),
+    "/market/api/alerts?symbol=BTCUSDT&interval=1h",
+  );
+  assert.strictEqual(
+    listUrl("/a", "A B&c", "1m"),
+    "/a?symbol=A%20B%26c&interval=1m",
+  );
+});
+
+test("writeRequest edits a near rule in place, otherwise creates for the pair", () => {
+  const pair = { symbol: "BTCUSDT", interval: "1h" };
+  const cond = { type: "price", op: "above", level: 100 };
+  assert.deepStrictEqual(writeRequest("/a", pair, cond, { id: 7 }), {
+    url: "/a/7",
+    body: { condition: cond },
+  });
+  assert.deepStrictEqual(writeRequest("/a", pair, cond, null), {
+    url: "/a",
+    body: { symbol: "BTCUSDT", interval: "1h", condition: cond, is_active: true },
+  });
 });
 
 // Parity guard: the client's eval-able set must equal the server's

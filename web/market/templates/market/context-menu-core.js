@@ -14,6 +14,10 @@
 
 var RESET_SCALE = { id: "reset-scale", label: "Reset scale", keyshortcut: "" };
 var ADD_INDICATOR = { id: "add-indicator", label: "Add indicator", keyshortcut: "" };
+// F10 UI #235: the keyboard entry point for creating an alert. The bell is
+// pointer-only, so the menu (also openable with Shift+F10 / the ContextMenu
+// key) must offer it; the controller wires the action.
+var ADD_ALERT = { id: "add-alert", label: "Add alert", keyshortcut: "" };
 var DELETE_ITEM = { id: "delete", label: "Delete", keyshortcut: "Delete" };
 var DUPLICATE_ITEM = { id: "duplicate", label: "Duplicate", keyshortcut: "" };
 
@@ -24,7 +28,7 @@ function nonLinear(scaleMode) {
 // {hit, row, scaleMode} -> ordered items. The caller resolves `hit` into a
 // `row`; a drawing under the cursor (a `row`) yields delete/duplicate
 // (+ reset-scale when non-linear); anything else (empty chart, unknown hit) is
-// the empty-chart list (reset-scale when non-linear + add-indicator).
+// the empty-chart list (reset-scale when non-linear + add-indicator + add-alert).
 function menuModel(input) {
   try {
     var row = input ? input.row : null;
@@ -33,7 +37,8 @@ function menuModel(input) {
       var drawing = [DELETE_ITEM, DUPLICATE_ITEM];
       return nonLinear(scaleMode) ? drawing.concat([RESET_SCALE]) : drawing;
     }
-    return nonLinear(scaleMode) ? [RESET_SCALE, ADD_INDICATOR] : [ADD_INDICATOR];
+    var empty = [ADD_INDICATOR, ADD_ALERT];
+    return nonLinear(scaleMode) ? [RESET_SCALE].concat(empty) : empty;
   } catch (e) {
     return [ADD_INDICATOR];
   }

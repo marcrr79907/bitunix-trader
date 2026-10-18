@@ -15,7 +15,7 @@
 // ``for_user`` is resolved server-side — the client never invents a rule.
 import * as Cond from "../alert-condition-core.js";
 import * as Markers from "../alert-markers-core.js";
-import { eligible, reasonText, fmtPrice } from "../alert-ui-core.js";
+import { eligible, reasonText, fmtPrice, lastClose, listUrl, writeRequest } from "../alert-ui-core.js";
 
 // Interval eligibility mirrors the worker's persisted set (trading/candles.py
 // Edit detection (D7): px distance to an existing price rule's level.
@@ -98,18 +98,31 @@ export function createAlerts({ store, bus, host, config }) {
   // --- dialog ---------------------------------------------------------------
 
   function lastClosePrice() {
-    const bars = host.getCandles();
-    return Array.isArray(bars) && bars.length ? bars[bars.length - 1].close : null;
+    return lastClose(host.getCandles());
   }
 
   // Seed the dialog from the crosshair price; the op defaults off the last
   // close (opFor owns that rule, so the default cannot drift).
-  function openDialog() {
-    if (!dialog || !cursor || !isEligible()) return;
-    if (opInput) opInput.value = Cond.opFor(cursor.price, lastClosePrice());
-    if (levelInput) levelInput.value = fmtPrice(cursor.price);
+  function seedAt(price) {
+    if (!dialog || !isEligible()) return false;
+    if (opInput) opInput.value = Cond.opFor(price, lastClosePrice());
+    if (levelInput) levelInput.value = fmtPrice(price);
     if (errorEl) errorEl.hidden = true;
     dialog.showModal();
+    return true;
+  }
+
+  function openDialog() {
+    if (!cursor) return;
+    seedAt(cursor.price);
+  }
+
+  // F10 UI #235: the keyboard path. The bell needs a pointer-produced crosshair
+  // point, which Tab never makes, so the context menu's "Add alert" opens the
+  // dialog seeded from the newest close instead.
+  function openFromLastClose() {
+    const close = lastClosePrice();
+    return close === null ? false : seedAt(close);
   }
 
   // The existing price rule whose level is nearest the cursor, within NEAR_PX
@@ -158,13 +171,11 @@ export function createAlerts({ store, bus, host, config }) {
       return;
     }
     const target = nearRule();
-    const body = target
-      ? { condition: condition }
-      : { symbol: state.symbol, interval: state.interval, condition: condition, is_active: true };
-    fetch(config.urls.alerts + (target ? "/" + target.id : ""), {
+    const req = writeRequest(config.urls.alerts, state, condition, target);
+    fetch(req.url, {
       method: target ? "PUT" : "POST",
       headers: { "Content-Type": "application/json", "X-CSRFToken": csrfToken() },
-      body: JSON.stringify(body),
+      body: JSON.stringify(req.body),
     })
       .then(function (r) {
         return r.json().then(function (b) {
@@ -192,16 +203,7 @@ export function createAlerts({ store, bus, host, config }) {
   // lives in #alert-status[aria-live="polite"] (design-system R6).
   function announce() {
     if (!statusEl) return;
-    let fired = 0, armed = 0;
-    rules.forEach(function (rule) {
-      const s = Markers.stateOf(rule);
-      if (s === "fired") fired += 1;
-      else if (s === "armed") armed += 1;
-    });
-    const total = fired + armed;
-    if (!total) return void (statusEl.textContent = "No alerts on this chart");
-    const noun = total === 1 ? " alert: " : " alerts: ";
-    statusEl.textContent = total + noun + fired + " fired, " + armed + " armed";
+    statusEl.textContent = Markers.summaryOf(rules) || "No alerts on this chart";
   }
 
   // The newest loaded candle is the armed anchor (a marker time MUST be a real
@@ -229,9 +231,7 @@ export function createAlerts({ store, bus, host, config }) {
       return Promise.resolve();
     }
     const mine = ++gen;
-    const enc = encodeURIComponent;
-    const url = config.urls.alerts + "?symbol=" + enc(state.symbol) + "&interval=" + enc(state.interval);
-    return fetch(url)
+    return fetch(listUrl(config.urls.alerts, state.symbol, state.interval))
       .then(function (r) { if (!r.ok) throw new Error("alerts " + r.status); return r.json(); })
       .then(function (body) {
         if (mine !== gen) return;
@@ -295,5 +295,5 @@ export function createAlerts({ store, bus, host, config }) {
     announce();
   }
 
-  return { attach: attach, refresh: refresh, clearForSwitch: clearForSwitch };
+  return { attach: attach, refresh: refresh, clearForSwitch: clearForSwitch, openFromLastClose: openFromLastClose };
 }

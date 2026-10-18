@@ -23,3 +23,33 @@ export function reasonText(interval) {
 export function fmtPrice(v) {
   return typeof v === "number" && isFinite(v) ? String(Math.round(v * 1e6) / 1e6) : "\u2013";
 }
+
+// The newest loaded candle's close, or null. The dialog's "no crosshair" seed
+// (F10 UI #235) and the op default both read this.
+export function lastClose(bars) {
+  if (!Array.isArray(bars) || !bars.length) return null;
+  const close = bars[bars.length - 1].close;
+  return typeof close === "number" && isFinite(close) ? close : null;
+}
+
+// GET url for the ACTIVE pair's rules.
+export function listUrl(base, symbol, interval) {
+  const enc = encodeURIComponent;
+  return base + "?symbol=" + enc(symbol) + "&interval=" + enc(interval);
+}
+
+// {url, body} for ONE alert write: a near rule is edited in place (PUT), else a
+// new rule for the pair is created (POST). Pure so the request shape is testable
+// without fetch.
+export function writeRequest(base, pair, condition, target) {
+  if (target) return { url: base + "/" + target.id, body: { condition: condition } };
+  return {
+    url: base,
+    body: {
+      symbol: pair.symbol,
+      interval: pair.interval,
+      condition: condition,
+      is_active: true,
+    },
+  };
+}

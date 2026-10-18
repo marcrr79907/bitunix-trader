@@ -29,6 +29,24 @@ export function stateOf(rule) {
   return "inactive";
 }
 
+// Accessible count summary for ``#alert-status`` (design-system R6): markers are
+// canvas, so the fired/armed tally is the only announced state. Pure: returns
+// the already-formatted sentence, or "" when there is nothing to announce.
+export function summaryOf(rules) {
+  if (!Array.isArray(rules)) return "";
+  var fired = 0;
+  var armed = 0;
+  for (var i = 0; i < rules.length; i++) {
+    var state = stateOf(rules[i]);
+    if (state === "fired") fired += 1;
+    else if (state === "armed") armed += 1;
+  }
+  var total = fired + armed;
+  if (!total) return "";
+  var noun = total === 1 ? " alert: " : " alerts: ";
+  return total + noun + fired + " fired, " + armed + " armed";
+}
+
 // A single marker per armed/fired rule; inactive/none yield no marker.
 // fired -> last_fired_at (epoch s); armed -> anchorTime. A marker whose time is
 // not a real data point MUST be dropped (spec chart-alerts R4): a fired rule
