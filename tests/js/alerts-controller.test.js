@@ -343,6 +343,61 @@ test("openFromLastClose does nothing without candles or on an ineligible interva
   } finally { ineligible.dom.restore(); }
 });
 
+// --- F10 UI #232: theme-aware marker colors --------------------------------
+//
+// The core's literals are a fallback; the controller resolves the shell tokens
+// at RENDER time. A theme flip is option-only, so the controller must also be
+// told to re-render — otherwise the markers keep the previous palette.
+
+function withTokens(values) {
+  const prev = globalThis.getComputedStyle;
+  globalThis.getComputedStyle = () => ({
+    getPropertyValue: (name) => values[name] || "",
+  });
+  return () => {
+    if (prev === undefined) delete globalThis.getComputedStyle;
+    else globalThis.getComputedStyle = prev;
+  };
+}
+
+const THEMED_ROWS = [
+  { id: 1, condition: { type: "price", op: "above", level: 100 }, is_active: true, last_fired_at: 5 },
+  { id: 2, condition: { type: "price", op: "below", level: 80 }, is_active: true, last_fired_at: null },
+];
+
+test("markers paint with the resolved --alert-armed/--dn tokens, not literals (#232)", async () => {
+  const f = fixture();
+  f.dom.seed(THEMED_ROWS);
+  globalThis.document.documentElement = {};
+  const restoreTokens = withTokens({ "--alert-armed": "#aaaaaa", "--dn": "#bbbbbb" });
+  try {
+    await settle();
+    const h = f.dom.handles[0];
+    assert.strictEqual(h.list[0].color, "#bbbbbb", "fired uses --dn");
+    assert.strictEqual(h.list[1].color, "#aaaaaa", "armed uses --alert-armed");
+  } finally { restoreTokens(); f.dom.restore(); }
+});
+
+test("a theme change re-renders the markers with the new tokens (#232)", async () => {
+  const f = fixture();
+  f.dom.seed(THEMED_ROWS);
+  globalThis.document.documentElement = {};
+  let restoreTokens = withTokens({ "--alert-armed": "#aaaaaa", "--dn": "#bbbbbb" });
+  try {
+    await settle();
+    const h = f.dom.handles[0];
+    assert.strictEqual(h.list[0].color, "#bbbbbb");
+
+    restoreTokens();
+    restoreTokens = withTokens({ "--alert-armed": "#cccccc", "--dn": "#dddddd" });
+    f.alerts.refreshTheme(); // main's onTheme calls this after host.setTheme
+
+    assert.strictEqual(f.dom.handles.length, 1, "the same marker handle is reused");
+    assert.strictEqual(h.list[0].color, "#dddddd", "fired re-rendered");
+    assert.strictEqual(h.list[1].color, "#cccccc", "armed re-rendered");
+  } finally { restoreTokens(); f.dom.restore(); }
+});
+
 // --- markers ----------------------------------------------------------------
 
 test("markers are created from the armed/fired rules and anchored on the newest candle", async () => {

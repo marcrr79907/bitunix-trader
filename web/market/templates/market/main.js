@@ -103,6 +103,9 @@ export function boot(config) {
     onTheme: function (p) {
       state.theme = p.resolved;
       host.setTheme(p.resolved);
+      // F10 UI #232: the markers read shell tokens at render time, so a resolved
+      // theme flip must repaint them (host.setTheme is option-only — no rebuild).
+      alerts.refreshTheme();
       savePreference({ theme: p.pref });
     },
   });

@@ -15,7 +15,17 @@
 // ``for_user`` is resolved server-side — the client never invents a rule.
 import * as Cond from "../alert-condition-core.js";
 import * as Markers from "../alert-markers-core.js";
-import { eligible, reasonText, fmtPrice, lastClose, listUrl, writeRequest } from "../alert-ui-core.js";
+import {
+  eligible,
+  reasonText,
+  fmtPrice,
+  lastClose,
+  listUrl,
+  writeRequest,
+  nearestRule,
+  paintBell,
+} from "../alert-ui-core.js";
+import { token } from "../theme-core.js";
 
 // Interval eligibility mirrors the worker's persisted set (trading/candles.py
 // Edit detection (D7): px distance to an existing price rule's level.
@@ -76,23 +86,7 @@ export function createAlerts({ store, bus, host, config }) {
   // Show the bell at the crosshair, or hide it when the pointer leaves the plot
   // (mirrors legend.js onMove). The interval guard disables it with a reason.
   function placeBell() {
-    if (!bell || hovering) return;
-    bell.hidden = !cursor;
-    if (!cursor) return;
-    // Only the PRICE (vertical) comes from the crosshair. A fixed horizontal
-    // anchor keeps the bell still: an x that tracked the cursor would move
-    // under the pointer and no click could ever land (a moving target).
-    bell.style.top = cursor.y + "px";
-    bell.setAttribute("aria-label", "Create price alert at " + fmtPrice(cursor.price));
-    bell.disabled = !isEligible();
-    if (isEligible()) {
-      bell.removeAttribute("aria-describedby");
-      bell.removeAttribute("title");
-      return;
-    }
-    bell.setAttribute("aria-describedby", "alert-interval-reason");
-    bell.setAttribute("title", reasonText(state.interval));
-    if (reasonEl) reasonEl.textContent = reasonText(state.interval);
+    paintBell(bell, cursor, state.interval, hovering, reasonEl);
   }
 
   // --- dialog ---------------------------------------------------------------
@@ -126,37 +120,24 @@ export function createAlerts({ store, bus, host, config }) {
   }
 
   // The existing price rule whose level is nearest the cursor, within NEAR_PX
-  // (zoom-aware px, not % — D7). No rule in range means "create".
+  // (zoom-aware px, not % — D7). No rule in range means "create". The mapping is
+  // the pure core's; this only supplies the price->coordinate function.
   function nearRule() {
     const series = host.getCandleSeries();
     if (!series || !cursor) return null;
-    let best = null;
-    let bestDistance = NEAR_PX + 1;
-    rules.forEach(function (rule) {
-      const condition = rule && rule.condition;
-      if (!condition || condition.type !== "price") return;
-      const y = series.priceToCoordinate(condition.level);
-      if (typeof y !== "number") return;
-      const distance = Math.abs(y - cursor.y);
-      if (distance <= NEAR_PX && distance < bestDistance) {
-        best = rule;
-        bestDistance = distance;
-      }
+    return nearestRule(rules, cursor.y, NEAR_PX, function (level) {
+      return series.priceToCoordinate(level);
     });
-    return best;
-  }
-
-  function showError(text) {
-    if (!errorEl) return;
-    errorEl.textContent = text;
-    errorEl.hidden = false;
   }
 
   // Apply runs inside the dialog's ``close`` handler, so the dialog is already
   // shut when the response lands. An error written into a closed dialog is zero
   // feedback (#233): every failure RE-OPENS it. The typed level is untouched.
   function fail(text) {
-    showError(text);
+    if (errorEl) {
+      errorEl.textContent = text;
+      errorEl.hidden = false;
+    }
     if (dialog) dialog.showModal();
     if (levelInput) levelInput.focus();
   }
@@ -208,16 +189,28 @@ export function createAlerts({ store, bus, host, config }) {
 
   // The newest loaded candle is the armed anchor (a marker time MUST be a real
   // data point). Re-projected after every history page — no synthetic bars.
+  // F10 UI #232: the shell palette is resolved at RENDER time so a theme flip
+  // can repaint. ``--alert-armed`` is a dedicated token (the brand --accent is
+  // 3.86:1 on the dark bg, under the small-text floor); fired reuses --dn. The
+  // core's literals stay the fallback for a DOM-less caller.
   function renderMarkers() {
     const series = host.getCandleSeries();
     if (!series) return;
     const bars = host.getCandles();
     const anchor = Array.isArray(bars) && bars.length ? bars[bars.length - 1].time : null;
-    const list = Markers.markersFor(rules, anchor);
+    const colors = {
+      armed: token("--alert-armed", Markers.COLORS.armed),
+      fired: token("--dn", Markers.COLORS.fired),
+    };
+    const list = Markers.markersFor(rules, anchor, colors);
     if (!markers) markers = LightweightCharts.createSeriesMarkers(series, list);
     else markers.setMarkers(list);
     announce();
   }
+
+  // main's onTheme calls this AFTER host.setTheme (option-only, no rebuild): the
+  // resolved palette changed, so the canvas markers must be repainted.
+  function refreshTheme() { renderMarkers(); }
 
   // --- fetch ----------------------------------------------------------------
 
@@ -295,5 +288,11 @@ export function createAlerts({ store, bus, host, config }) {
     announce();
   }
 
-  return { attach: attach, refresh: refresh, clearForSwitch: clearForSwitch, openFromLastClose: openFromLastClose };
+  return {
+    attach: attach,
+    refresh: refresh,
+    clearForSwitch: clearForSwitch,
+    openFromLastClose: openFromLastClose,
+    refreshTheme: refreshTheme,
+  };
 }

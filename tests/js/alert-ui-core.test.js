@@ -10,6 +10,8 @@ import {
   lastClose,
   listUrl,
   writeRequest,
+  nearestRule,
+  paintBell,
 } from "../../web/market/templates/market/alert-ui-core.js";
 
 test("EVALUABLE mirrors the server CANDLE_INTERVALS (8 intervals, no 1m)", () => {
@@ -61,6 +63,54 @@ test("writeRequest edits a near rule in place, otherwise creates for the pair", 
     url: "/a",
     body: { symbol: "BTCUSDT", interval: "1h", condition: cond, is_active: true },
   });
+});
+
+function fakeBell() {
+  const attrs = {};
+  return {
+    hidden: false, disabled: false, style: {}, attrs,
+    setAttribute(k, v) { attrs[k] = String(v); },
+    removeAttribute(k) { delete attrs[k]; },
+  };
+}
+
+test("paintBell hides without a cursor and anchors on its y", () => {
+  const bell = fakeBell();
+  paintBell(bell, null, "1h", false, null);
+  assert.strictEqual(bell.hidden, true);
+  paintBell(bell, { y: 42, price: 101.5 }, "1h", false, null);
+  assert.strictEqual(bell.hidden, false);
+  assert.strictEqual(bell.style.top, "42px");
+  assert.match(bell.attrs["aria-label"], /101\.5/);
+});
+
+test("paintBell keeps a hovered bell visible and describes an ineligible interval", () => {
+  const bell = fakeBell();
+  const reason = { textContent: "" };
+  paintBell(bell, null, "1h", true, reason);
+  assert.strictEqual(bell.hidden, false, "hovering does not hide the bell");
+
+  paintBell(bell, { y: 1, price: 5 }, "3d", false, reason);
+  assert.strictEqual(bell.disabled, true);
+  assert.strictEqual(bell.attrs["aria-describedby"], "alert-interval-reason");
+  assert.match(reason.textContent, /3d/);
+  paintBell(bell, { y: 1, price: 5 }, "1h", false, reason);
+  assert.strictEqual(bell.disabled, false);
+  assert.strictEqual(bell.attrs["aria-describedby"], undefined);
+});
+
+test("nearestRule picks the closest price rule within the px window", () => {
+  const rules = [
+    { id: 1, condition: { type: "price", level: 100 } },
+    { id: 2, condition: { type: "price", level: 104 } },
+    { id: 3, condition: { type: "rsi", level: 101 } },
+  ];
+  const coord = (level) => 200 - level; // y grows downward
+  assert.strictEqual(nearestRule(rules, 98, 10, coord).id, 1); // |98-100| = 2
+  assert.strictEqual(nearestRule(rules, 95, 10, coord).id, 2); // |95-96| = 1
+  assert.strictEqual(nearestRule(rules, 50, 10, coord), null); // nothing near
+  assert.strictEqual(nearestRule(null, 98, 10, coord), null);
+  assert.strictEqual(nearestRule(rules, 98, 10, null), null);
 });
 
 // Parity guard: the client's eval-able set must equal the server's

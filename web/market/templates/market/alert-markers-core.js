@@ -17,6 +17,13 @@ function num(v) {
   return typeof v === "number" && isFinite(v) ? v : null;
 }
 
+// A usable injected color, else the state's fallback literal (F10 UI #232: the
+// shell tokens are resolved by the controller; the core stays pure and keeps
+// these literals so a DOM-less caller still paints something).
+function colorOf(override, fallback) {
+  return typeof override === "string" && override ? override : fallback;
+}
+
 // rule -> "fired" | "armed" | "inactive" | "none".
 // null/undefined -> "none"; any other non-object -> "inactive" (a rule exists).
 export function stateOf(rule) {
@@ -53,8 +60,13 @@ export function summaryOf(rules) {
 // whose last_fired_at is off-series or unusable yields no marker — LWC v5 would
 // discard it anyway, and faking the newest-candle time would misplace it. The
 // fired state stays visible on the /signals/ pair badge.
-export function markersFor(rules, anchorTime) {
+// `colors` ({armed, fired}) is optional: the controller passes the shell tokens
+// it resolved at render time; a missing/invalid entry falls back to COLORS.
+export function markersFor(rules, anchorTime, colors) {
   if (!Array.isArray(rules)) return [];
+  var map = colors && typeof colors === "object" ? colors : {};
+  var firedColor = colorOf(map.fired, COLORS.fired);
+  var armedColor = colorOf(map.armed, COLORS.armed);
   var anchor = num(anchorTime);
   var out = [];
   for (var i = 0; i < rules.length; i++) {
@@ -73,7 +85,7 @@ export function markersFor(rules, anchorTime) {
       position: fired ? "aboveBar" : "belowBar",
       shape: fired ? "arrowDown" : "circle",
       text: (fired ? "F " : "A ") + level,
-      color: fired ? COLORS.fired : COLORS.armed,
+      color: fired ? firedColor : armedColor,
     });
   }
   return out;

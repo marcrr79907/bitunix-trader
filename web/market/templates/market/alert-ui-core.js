@@ -38,6 +38,48 @@ export function listUrl(base, symbol, interval) {
   return base + "?symbol=" + enc(symbol) + "&interval=" + enc(interval);
 }
 
+// Paint the bell for the current crosshair state. No globals: the caller passes
+// the elements, so this stays testable and keeps the controller thin. A fixed
+// horizontal anchor (not the cursor x) keeps the target still — an x that
+// tracked the pointer would move under it and no click could land.
+export function paintBell(bell, cursor, interval, hovering, reasonEl) {
+  if (!bell || hovering) return;
+  bell.hidden = !cursor;
+  if (!cursor) return;
+  bell.style.top = cursor.y + "px";
+  bell.setAttribute("aria-label", "Create price alert at " + fmtPrice(cursor.price));
+  bell.disabled = !eligible(interval);
+  if (eligible(interval)) {
+    bell.removeAttribute("aria-describedby");
+    bell.removeAttribute("title");
+    return;
+  }
+  bell.setAttribute("aria-describedby", "alert-interval-reason");
+  bell.setAttribute("title", reasonText(interval));
+  if (reasonEl) reasonEl.textContent = reasonText(interval);
+}
+
+// The existing price rule whose level is nearest ``pxY`` within ``nearPx``
+// (zoom-aware pixels, not % — design D7), or null. ``coordOf`` maps a level to a
+// y coordinate; a non-number skips the rule. Pure: the caller supplies the map.
+export function nearestRule(rules, pxY, nearPx, coordOf) {
+  if (!Array.isArray(rules) || typeof coordOf !== "function") return null;
+  let best = null;
+  let bestDistance = nearPx + 1;
+  rules.forEach(function (rule) {
+    const condition = rule && rule.condition;
+    if (!condition || condition.type !== "price") return;
+    const y = coordOf(condition.level);
+    if (typeof y !== "number" || !isFinite(y)) return;
+    const distance = Math.abs(y - pxY);
+    if (distance <= nearPx && distance < bestDistance) {
+      best = rule;
+      bestDistance = distance;
+    }
+  });
+  return best;
+}
+
 // {url, body} for ONE alert write: a near rule is edited in place (PUT), else a
 // new rule for the pair is created (POST). Pure so the request shape is testable
 // without fetch.

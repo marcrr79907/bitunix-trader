@@ -11,6 +11,7 @@ import {
   COLORS,
   stateOf,
   markersFor,
+  summaryOf,
 } from "../../web/market/templates/market/alert-markers-core.js";
 
 const SRC = readFileSync(
@@ -127,6 +128,49 @@ test("markersFor: never throws and never mutates the input", () => {
   const snapshot = JSON.parse(JSON.stringify(rules));
   assert.doesNotThrow(() => markersFor([null, 42, "x", ...rules], ANCHOR));
   assert.deepStrictEqual(rules, snapshot);
+});
+
+// --- colors are injected (F10 UI #232) ---------------------------------------
+//
+// The core stays pure and import-free: the controller resolves the shell tokens
+// and passes them in. Without an override the literals stay (the fallback map),
+// so a DOM-less caller and the initial render keep working.
+
+test("markersFor: injected colors override the fallback literals", () => {
+  const rules = [
+    { condition: { level: 10 }, is_active: true, last_fired_at: 1 },
+    { condition: { level: 20 }, is_active: true, last_fired_at: null },
+  ];
+  const [fired, armed] = markersFor(rules, ANCHOR, { armed: "#111111", fired: "#222222" });
+  assert.strictEqual(fired.color, "#222222");
+  assert.strictEqual(armed.color, "#111111");
+});
+
+test("markersFor: a partial/invalid color map falls back per state", () => {
+  const rules = [
+    { condition: { level: 10 }, is_active: true, last_fired_at: 1 },
+    { condition: { level: 20 }, is_active: true, last_fired_at: null },
+  ];
+  const [fired, armed] = markersFor(rules, ANCHOR, { fired: "#222222" });
+  assert.strictEqual(fired.color, "#222222");
+  assert.strictEqual(armed.color, COLORS.armed);
+  const [fired2, armed2] = markersFor(rules, ANCHOR, { armed: 7, fired: "" });
+  assert.strictEqual(fired2.color, COLORS.fired);
+  assert.strictEqual(armed2.color, COLORS.armed);
+});
+
+test("summaryOf counts fired/armed and returns the aria-live sentence", () => {
+  assert.strictEqual(summaryOf([]), "");
+  assert.strictEqual(summaryOf(null), "");
+  const one = [{ condition: { level: 1 }, is_active: true, last_fired_at: null }];
+  assert.strictEqual(summaryOf(one), "1 alert: 0 fired, 1 armed");
+  const three = [
+    { condition: { level: 1 }, is_active: true, last_fired_at: 5 },
+    { condition: { level: 2 }, is_active: true, last_fired_at: null },
+    { condition: { level: 3 }, is_active: true, last_fired_at: null },
+    { condition: { level: 4 }, is_active: false, last_fired_at: null },
+  ];
+  assert.strictEqual(summaryOf(three), "3 alerts: 1 fired, 2 armed");
 });
 
 // --- purity ------------------------------------------------------------------
