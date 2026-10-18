@@ -201,8 +201,8 @@ def test_f10_alerts_are_served(logged_in_client):
     # import 404s and blanks the chart.
     from market import views
 
-    assert len(views.MODULE_ALLOWLIST) == 30
-    for name in ("alert-markers-core", "alert-condition-core"):
+    assert len(views.MODULE_ALLOWLIST) == 31
+    for name in ("alert-markers-core", "alert-condition-core", "alert-ui-core"):
         assert name in views.MODULE_ALLOWLIST, name
         response = logged_in_client.get(f"/market/{name}.js")
         assert response.status_code == 200, name

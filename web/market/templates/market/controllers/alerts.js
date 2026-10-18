@@ -15,20 +15,15 @@
 // ``for_user`` is resolved server-side — the client never invents a rule.
 import * as Cond from "../alert-condition-core.js";
 import * as Markers from "../alert-markers-core.js";
+import { eligible, reasonText, fmtPrice } from "../alert-ui-core.js";
 
 // Interval eligibility mirrors the worker's persisted set (trading/candles.py
-// CANDLE_INTERVALS): a rule on any other interval can never fire.
-const EVALUABLE = ["5m", "15m", "1h", "2h", "4h", "1d", "1w", "1M"];
 // Edit detection (D7): px distance to an existing price rule's level.
 const NEAR_PX = 10;
 
 function csrfToken() {
   const meta = document.querySelector('meta[name="csrf-token"]');
   return meta ? meta.content : "";
-}
-
-function fmtPrice(v) {
-  return typeof v === "number" && isFinite(v) ? String(Math.round(v * 1e6) / 1e6) : "–";
 }
 
 export function createAlerts({ store, bus, host, config }) {
@@ -51,9 +46,7 @@ export function createAlerts({ store, bus, host, config }) {
   // crosshair), so the flag stops it vanishing just as it is reached.
   let hovering = false;
 
-  function eligible() { return EVALUABLE.indexOf(state.interval) !== -1; }
-
-  function reasonText() { return "Alerts cannot fire on the " + state.interval + " interval"; }
+  function isEligible() { return eligible(state.interval); }
 
   // --- bell -----------------------------------------------------------------
 
@@ -91,15 +84,15 @@ export function createAlerts({ store, bus, host, config }) {
     // under the pointer and no click could ever land (a moving target).
     bell.style.top = cursor.y + "px";
     bell.setAttribute("aria-label", "Create price alert at " + fmtPrice(cursor.price));
-    bell.disabled = !eligible();
-    if (eligible()) {
+    bell.disabled = !isEligible();
+    if (isEligible()) {
       bell.removeAttribute("aria-describedby");
       bell.removeAttribute("title");
       return;
     }
     bell.setAttribute("aria-describedby", "alert-interval-reason");
-    bell.setAttribute("title", reasonText());
-    if (reasonEl) reasonEl.textContent = reasonText();
+    bell.setAttribute("title", reasonText(state.interval));
+    if (reasonEl) reasonEl.textContent = reasonText(state.interval);
   }
 
   // --- dialog ---------------------------------------------------------------
@@ -112,7 +105,7 @@ export function createAlerts({ store, bus, host, config }) {
   // Seed the dialog from the crosshair price; the op defaults off the last
   // close (opFor owns that rule, so the default cannot drift).
   function openDialog() {
-    if (!dialog || !cursor || !eligible()) return;
+    if (!dialog || !cursor || !isEligible()) return;
     if (opInput) opInput.value = Cond.opFor(cursor.price, lastClosePrice());
     if (levelInput) levelInput.value = fmtPrice(cursor.price);
     if (errorEl) errorEl.hidden = true;
@@ -221,7 +214,7 @@ export function createAlerts({ store, bus, host, config }) {
   // Refetch the ACTIVE pair's rules. A non-evaluable interval cannot have a
   // firing rule, so no request is issued there (the API would 400 anyway).
   function refresh() {
-    if (!container || !eligible()) {
+    if (!container || !isEligible()) {
       rules = [];
       if (markers) markers.setMarkers([]);
       announce();
@@ -267,7 +260,7 @@ export function createAlerts({ store, bus, host, config }) {
     if (bound) return;
     bound = true;
     buildBell();
-    if (reasonEl) reasonEl.textContent = reasonText();
+    if (reasonEl) reasonEl.textContent = reasonText(state.interval);
     // build() recreates the chart, so the handler is re-bound to the NEW chart
     // on every chart:built (its predecessor died with chart.remove()).
     bus.on("chart:built", function () {
