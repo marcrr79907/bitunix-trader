@@ -143,7 +143,7 @@ def test_controller_allowlist_routes_serve_javascript(logged_in_client):
     # ``market/controllers/`` as JS (a missing route = import 404 = blank chart).
     from market import views
 
-    assert len(views.CONTROLLER_ALLOWLIST) == 18
+    assert len(views.CONTROLLER_ALLOWLIST) == 19
     for name in views.CONTROLLER_ALLOWLIST:
         response = logged_in_client.get(f"/market/controllers/{name}.js")
         assert response.status_code == 200, name
@@ -192,7 +192,7 @@ def test_f9_cores_are_served(logged_in_client):
         assert response.status_code == 200, name
         assert response["Content-Type"] == "text/javascript", name
 
-    assert len(views.CONTROLLER_ALLOWLIST) == 18
+    assert len(views.CONTROLLER_ALLOWLIST) == 19
 
 
 def test_f10_alerts_are_served(logged_in_client):
@@ -201,7 +201,7 @@ def test_f10_alerts_are_served(logged_in_client):
     # import 404s and blanks the chart.
     from market import views
 
-    assert len(views.MODULE_ALLOWLIST) == 34
+    assert len(views.MODULE_ALLOWLIST) == 35
     for name in (
         "alert-markers-core",
         "alert-condition-core",
@@ -596,3 +596,44 @@ def test_f11_search_has_an_empty_state_and_a_labelled_input(logged_in_client):
     assert 'id="symbol-empty"' in body
     assert 'aria-labelledby="symbols-heading"' in body
     assert '<label class="visually-hidden" for="symbol-search">' in body
+
+
+def test_f11b_templates_are_markup_only(logged_in_client):
+    # F11-B (T5): the template controls are static markup — a select, three
+    # buttons and a native dialog — with no inline handler.
+    body = logged_in_client.get("/market/").content.decode()
+
+    for marker in (
+        'id="template-select"',
+        'id="template-apply"',
+        'id="template-save"',
+        'id="template-delete"',
+        'id="template-dialog"',
+        'id="template-name"',
+        'id="template-status"',
+    ):
+        assert marker in body, marker
+    assert 'aria-live="polite"' in body
+
+
+def test_f11b_template_modules_are_served_and_allowlisted(logged_in_client):
+    from market import views
+
+    assert "templates-core" in views.MODULE_ALLOWLIST
+    assert "templates" in views.CONTROLLER_ALLOWLIST
+
+    core = logged_in_client.get("/market/templates-core.js")
+    assert core.status_code == 200
+    assert b"templateToStore" in core.content
+
+    controller = logged_in_client.get("/market/controllers/templates.js")
+    assert controller.status_code == 200
+    assert b"createTemplates" in controller.content
+
+
+def test_f11b_main_js_stays_under_the_ceiling():
+    # T5: the wiring budget is explicit — 297/300 with three lines to spare.
+    from pathlib import Path
+
+    main = Path(__file__).resolve().parents[2] / ("web/market/templates/market/main.js")
+    assert len(main.read_text(encoding="utf-8").splitlines()) <= 297

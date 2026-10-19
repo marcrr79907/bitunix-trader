@@ -73,6 +73,7 @@ MODULE_ALLOWLIST = frozenset(
         "alert-markers-view",
         "alert-bell-view",
         "symbol-search-core",
+        "templates-core",
         "chart-store",
         "chart-bus",
         "chart-host",
@@ -100,6 +101,7 @@ CONTROLLER_ALLOWLIST: frozenset[str] = frozenset(
         "draft-preview",
         "alerts",
         "symbol-picker",
+        "templates",
     }
 )
 

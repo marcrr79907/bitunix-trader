@@ -1504,3 +1504,111 @@ test("symbol picker: a followed symbol can be unfollowed (DELETE, not disabled)"
     f.restore();
   }
 });
+
+
+// --- templates controller: blank name keeps the dialog open (F11-B) ---------
+//
+// The F10 lesson: an error written to an already-closed dialog is invisible.
+// A whitespace-only name passes the native `required` check, so validation MUST
+// run on submit and call preventDefault, not in the close handler.
+const { createTemplates } = await import(
+  "../../web/market/templates/market/controllers/templates.js"
+);
+
+function templatesFixture() {
+  const prevDoc = globalThis.document;
+  const prevFetch = globalThis.fetch;
+  const calls = [];
+  const nodes = {};
+
+  function node(tag) {
+    return {
+      tagName: tag,
+      children: [],
+      _handlers: {},
+      value: "",
+      textContent: "",
+      hidden: false,
+      disabled: false,
+      attributes: {},
+      appendChild(child) { this.children.push(child); return child; },
+      setAttribute(n, v) { this.attributes[n] = v; },
+      removeAttribute(n) { delete this.attributes[n]; },
+      addEventListener(n, fn) { this._handlers[n] = fn; },
+      querySelector() { return nodes.form || null; },
+      focus() {},
+      showModal() { this.open = true; },
+      close() { this.open = false; },
+    };
+  }
+
+  ["template-select", "template-apply", "template-save", "template-delete",
+   "template-status", "template-dialog", "template-name", "template-error"]
+    .forEach((id) => { nodes[id] = node("div"); });
+  nodes.form = node("form");
+
+  globalThis.document = {
+    getElementById: (id) => nodes[id] || null,
+    querySelector: () => ({ content: "tok" }),
+    createElement: node,
+  };
+  globalThis.fetch = (url, opts) => {
+    calls.push({ url, method: (opts && opts.method) || "GET" });
+    return Promise.resolve({ ok: true, json: () => Promise.resolve({ templates: [] }) });
+  };
+
+  const controller = createTemplates({
+    store: { get: () => ({ indicators: ["sma"], params: {}, styles: {}, indicatorVisible: {} }) },
+    bus: { emit() {} },
+    config: { urls: { templates: "/market/api/templates" } },
+  });
+
+  return {
+    controller, nodes, calls,
+    restore() {
+      if (prevDoc === undefined) delete globalThis.document; else globalThis.document = prevDoc;
+      if (prevFetch === undefined) delete globalThis.fetch; else globalThis.fetch = prevFetch;
+    },
+  };
+}
+
+test("templates: a whitespace-only name keeps the dialog open and shows the error", async () => {
+  const f = templatesFixture();
+  try {
+    await new Promise((r) => setImmediate(r)); // let the initial refresh settle
+    f.nodes["template-name"].value = "   ";
+    let prevented = false;
+    f.nodes.form._handlers.submit({
+      submitter: { value: "ok" },
+      preventDefault() { prevented = true; },
+    });
+
+    assert.strictEqual(prevented, true, "submit is cancelled so the dialog stays open");
+    assert.strictEqual(f.nodes["template-error"].hidden, false, "the error is visible");
+    assert.strictEqual(f.nodes["template-error"].textContent, "Name is required");
+    assert.deepStrictEqual(
+      f.calls.filter((c) => c.method === "POST"),
+      [],
+      "no POST is issued for an invalid name",
+    );
+  } finally {
+    f.restore();
+  }
+});
+
+test("templates: Cancel is not blocked by the name check", async () => {
+  const f = templatesFixture();
+  try {
+    await new Promise((r) => setImmediate(r));
+    f.nodes["template-name"].value = "";
+    let prevented = false;
+    f.nodes.form._handlers.submit({
+      submitter: { value: "cancel" },
+      preventDefault() { prevented = true; },
+    });
+
+    assert.strictEqual(prevented, false, "Cancel closes normally");
+  } finally {
+    f.restore();
+  }
+});

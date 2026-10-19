@@ -34,6 +34,7 @@ export const CONFIG = {
     alerts: "/market/api/alerts",
     symbols: "/market/api/symbols",
     watchlist: "/market/api/watchlist",
+    templates: "/market/api/templates",
   },
 };
 

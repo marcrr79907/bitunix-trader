@@ -230,6 +230,33 @@ class ChartLayout(UserOwnedModel):
         ]
 
 
+class ChartTemplate(UserOwnedModel):
+    """Per-user named indicator setup (F11-B, R14).
+
+    A template is user-GLOBAL by design: it is a *setup*, and applying it to a
+    different ``(symbol, interval)`` is the whole point — unlike ``ChartLayout``,
+    which is one row per chart. ``indicators`` is the exact list shape
+    ``ChartLayout`` stores, so ``quotes.parse_layout_indicators`` validates both
+    and the two can never disagree. ``UniqueConstraint(user, name)`` makes a name
+    unique per user (a duplicate is a 400 at the API, not a silent overwrite).
+    """
+
+    NAME_MAX = 40
+
+    name = models.CharField(max_length=NAME_MAX)
+    indicators = models.JSONField(default=list)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["name"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["user", "name"],
+                name="uniq_template_user_name",
+            )
+        ]
+
+
 class Drawing(UserOwnedModel):
     """Per-user, per-SYMBOL chart annotation collection (R14, R1): one row per shape.
 

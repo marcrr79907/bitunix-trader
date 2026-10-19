@@ -93,9 +93,10 @@ def test_0016_adds_eight_kinds_forward_then_reverses_without_data_loss():
         email="mig0016@example.com", password="pw-123456"
     )
     try:
-        # Pre-state: the migration is the latest leaf; every prior kind seeded.
+        # Pre-state: 0016 is applied. Later additive migrations may exist
+        # (0017+), so assert the leaf is AT LEAST 0016, not equal to it.
         _up_to_latest()
-        assert _trading_leaf() == _AFTER[1]
+        assert _trading_leaf() >= _AFTER[1]
 
         _down_to_0015()
         assert _trading_leaf() == _BEFORE[1]

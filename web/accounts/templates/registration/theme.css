@@ -148,6 +148,9 @@ code{font-family:var(--mono); background:var(--surface); padding:1px 5px; border
   border-radius:var(--r); min-width:32px; min-height:32px; line-height:1; padding:0}
 .symbol-follow[aria-pressed=true]{color:var(--text); font-weight:700}
 .symbol-empty{margin:0; color:var(--muted); font-size:var(--fs-3)}
+.templates{display:flex; flex-wrap:wrap; gap:var(--sp-1); align-items:center; margin-bottom:var(--sp-2)}
+.templates select{flex:1 1 auto; min-width:0}
+.templates button{min-width:32px; min-height:32px}
 .pairs{display:flex; flex-wrap:wrap; gap:var(--sp-2)}
 .pairs .pair{background:var(--surface); border:1px solid var(--border); color:var(--text)}
 .indicators{display:flex; flex-direction:column; gap:var(--sp-1);
