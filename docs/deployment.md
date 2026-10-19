@@ -85,6 +85,13 @@ gitignored. It is not needed at runtime — the app has no JavaScript build.
 Deploy commands still come from the Railway dashboard configuration captured in
 the IaC file; the CD pipeline in `.github/workflows/cd.yml` is unchanged.
 
+**Verified after the migration (2026-10-19):** the `develop` push with
+`railway.json` deleted deployed successfully. The build log shows
+`load build definition from Dockerfile` and `Healthcheck succeeded` on
+`/healthz` — RAILPACK auto-detected the Dockerfile exactly as before, so the
+removal changed nothing. All five staging services were Online/Ready with zero
+failures, and `/healthz` returned 200.
+
 ## One-time Railway setup (per service, per environment)
 
 1. **Disable** GitHub autodeploy on `web`, `worker`, `scheduler`
