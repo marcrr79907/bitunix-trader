@@ -1,6 +1,7 @@
 # Handoff — bitunix-trader (roadmap completo)
 
-**Fecha**: 2026-10-19 · **Branch**: `develop` @ `6e23b37` (== `origin/develop`, árbol limpio).
+**Fecha**: 2026-10-19 · **Branch**: `develop` (== `origin/develop`, árbol limpio; confirmá con `git log --oneline -1`).
+> El SHA no se fija a propósito: cualquier commit posterior lo dejaría obsoleto.
 **Estado**: no hay issues abiertos, ni PRs abiertos, ni ramas pendientes.
 
 ## Qué es este proyecto
@@ -33,6 +34,7 @@ Especificaciones canónicas: **46** en `openspec/specs/`. Changes archivados en
 | F11-A `symbol-universe` | #239–#247 | Catálogo de todo el universo BitUnix, watchlist CRUD, ingesta de pares seguidos con `due_intervals`, búsqueda + combobox |
 | F11-B `layout-templates` | #250–#255 | `ChartTemplate` + migración `0017`, CRUD JSON, UI guardar/aplicar/eliminar |
 | #54 IaC | #257 | `.railway/railway.ts` (importado del proyecto vivo), `railway.json` eliminado, deploy verificado |
+| docs: handoffs | #258 | Consolidados en `docs/HANDOFF.md`; los anteriores a `docs/handoff/archive/` |
 
 Archive reports con el detalle: `openspec/changes/archive/2026-10-19-*/archive-report.md`.
 
