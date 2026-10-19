@@ -30,6 +30,7 @@ OWNED_MODELS = frozenset(
         "Drawing",
         "AlertRule",
         "ChartPreference",
+        "ChartTemplate",
     }
 )
 UNSCOPED_VERBS = frozenset(
