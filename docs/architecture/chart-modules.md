@@ -52,10 +52,10 @@ Allowlisted modules: `chart-core`, `chart-types-core`, `chart-registry-core`,
 `theme-core`, `drawing-core`, `drawing-interaction-core`, `drawing-primitive`,
 `tool-icons-core`, `add-indicator-core`, `smc-overlay-core`, `legend-core`,
 `indicator-settings-core`, `chart-store`, `chart-bus`, `chart-host`,
-`chart-host-candles`, `symbol-search-core`, `main`.
+`chart-host-candles`, `symbol-search-core`, `templates-core`, `main`.
 Controllers: `indicators`, `history`, `stream`, `drawings`,
 `drawing-interaction`, `smc`, `toolbar`, `legend`, `draw-toolbar`,
-`object-tree`, `preference`, `symbol-picker`.
+`object-tree`, `preference`, `symbol-picker`, `templates`.
 
 `LightweightCharts` stays a classic CDN global (`unpkg.com`); every other
 script is same-origin ESM, so CSP `script-src 'self' https://unpkg.com` is

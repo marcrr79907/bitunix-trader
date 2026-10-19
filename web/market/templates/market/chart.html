@@ -75,6 +75,17 @@
     <h2 id="position-heading">Position</h2>
     <button type="button" id="position-seed" disabled>Position from setup</button>
     <p id="position-readout" aria-live="polite"></p>
+    <h2 id="templates-heading">Templates</h2>
+    <div class="templates">
+      <label class="visually-hidden" for="template-select">Template</label>
+      <select id="template-select" class="control-select" aria-labelledby="templates-heading">
+        <option value="">—</option>
+      </select>
+      <button type="button" id="template-apply" disabled>Apply</button>
+      <button type="button" id="template-save">Save as…</button>
+      <button type="button" id="template-delete" disabled>Delete</button>
+      <p id="template-status" class="visually-hidden" aria-live="polite"></p>
+    </div>
     <h2 id="objects-heading">Objects</h2>
     <div id="object-tree" aria-labelledby="objects-heading"></div>
   </aside>
@@ -124,6 +135,16 @@
 <p id="alert-status" class="visually-hidden" aria-live="polite"></p>
 <p id="alert-interval-reason" class="visually-hidden"></p>
 <p id="alert-confirm" class="alert-confirm" role="status" hidden></p>
+
+<dialog id="template-dialog" aria-label="Save chart as template">
+  <form method="dialog">
+    <label for="template-name">Name</label>
+    <input id="template-name" type="text" maxlength="40" autocomplete="off" required>
+    <p id="template-error" class="alert-error" role="alert" hidden></p>
+    <button type="submit" value="ok">Save</button>
+    <button type="submit" value="cancel">Cancel</button>
+  </form>
+</dialog>
 
 <dialog id="drawing-settings-dialog" aria-label="Drawing settings">
   <form method="dialog">
