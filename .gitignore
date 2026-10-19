@@ -18,3 +18,6 @@ htmlcov/
 
 # Local agent tooling (skill registry)
 .atl/
+
+# Node tooling (Railway IaC SDK) — never commit
+node_modules/
