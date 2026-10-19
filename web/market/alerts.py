@@ -20,8 +20,9 @@ from django.views.decorators.http import require_http_methods
 from trading.candles import CANDLE_INTERVALS
 from trading.models import AlertRule
 
+from market import catalog
+from market.catalog import SYMBOL_RE
 from src.alert_rules import parse_condition
-from src.config import SYMBOLS
 
 _CHAT_ID_MAX = 64
 
@@ -40,12 +41,32 @@ def _row(rule: AlertRule) -> dict:
     }
 
 
-def _pair_error(symbol: object, interval: object) -> str | None:
-    """Validation steps 1-4; returns the first error message, or ``None``."""
+def _symbol_error(symbol: object) -> str | None:
+    """Symbol check (F11 R12): format always, catalog membership when warm.
+
+    A malformed symbol is rejected in every state. When the catalog is
+    unavailable we FAIL OPEN and store the rule: it is per-user owned, never
+    shared, never executed as an order, and the worker simply never has candles
+    for it. The alternative would be a network call on every alert request.
+    """
     if not symbol:
         return "symbol required"
-    if symbol not in SYMBOLS:
+    if not isinstance(symbol, str) or not SYMBOL_RE.match(symbol):
         return "invalid symbol"
+    try:
+        known = catalog.symbol_exists(symbol)
+    except Exception:  # ponytail: any upstream failure means "cold" -> fail open
+        known = None
+    if known is False:
+        return "invalid symbol"
+    return None
+
+
+def _pair_error(symbol: object, interval: object) -> str | None:
+    """Validation steps 1-4; returns the first error message, or ``None``."""
+    error = _symbol_error(symbol)
+    if error is not None:
+        return error
     if not interval:
         return "interval required"
     if interval not in CANDLE_INTERVALS:

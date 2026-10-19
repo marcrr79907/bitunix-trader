@@ -614,3 +614,82 @@ def test_alert_delete_b_of_a_id_is_404_and_a_row_survives():
     assert AlertRule.objects.filter(pk=rule.id).exists()
     rule.refresh_from_db()
     assert rule.condition == {"type": "price", "op": "above", "level": 100.0}
+
+
+# --- F11 A-S2: catalog-based symbol validation (alert-rules R12) ------------
+
+
+@pytest.fixture
+def warm_catalog():
+    import market.catalog as catalog
+
+    class Stub:
+        def __init__(self, symbols):
+            self._symbols = list(symbols)
+
+        def tickers(self, symbols=None):
+            return [{"symbol": s} for s in self._symbols]
+
+    catalog.reset_cache()
+    catalog.list_symbols(client=Stub(["BTCUSDT", "DOGEUSDT"]))
+    yield catalog
+    catalog.reset_cache()
+
+
+@pytest.fixture
+def cold_catalog(monkeypatch):
+    import market.catalog as catalog
+
+    def boom(client=None, *, now=None):
+        raise RuntimeError("upstream down")
+
+    catalog.reset_cache()
+    monkeypatch.setattr(catalog, "list_symbols", boom)
+    yield catalog
+    catalog.reset_cache()
+
+
+def test_alerts_accept_a_catalog_symbol_outside_config_symbols(warm_catalog):
+    body = _body(symbol="DOGEUSDT", interval="1h")
+
+    response = _post(USER, body)
+
+    assert response.status_code == 201
+    assert AlertRule.objects.filter(symbol="DOGEUSDT").count() == 1
+
+
+def test_alerts_reject_an_unknown_symbol_when_the_catalog_is_warm(warm_catalog):
+    body = _body(symbol="FAKEUSDT", interval="1h")
+
+    response = _post(USER, body)
+
+    assert response.status_code == 400
+    assert AlertRule.objects.count() == 0
+
+
+def test_alerts_fail_open_when_the_catalog_is_cold(cold_catalog):
+    body = _body(symbol="ARBUSDT", interval="1h")
+
+    response = _post(USER, body)
+
+    assert response.status_code == 201
+    assert AlertRule.objects.filter(symbol="ARBUSDT").count() == 1
+
+
+@pytest.mark.parametrize("symbol", ["abc/usdt", "A", "btc usdt"])
+def test_alerts_reject_malformed_symbols_even_when_cold(cold_catalog, symbol):
+    body = _body(symbol=symbol, interval="1h")
+
+    response = _post(USER, body)
+
+    assert response.status_code == 400
+    assert AlertRule.objects.count() == 0
+
+
+def test_alerts_interval_bound_is_unchanged(warm_catalog):
+    body = _body(symbol="BTCUSDT", interval="1m")
+
+    response = _post(USER, body)
+
+    assert response.status_code == 400
+    assert AlertRule.objects.count() == 0
