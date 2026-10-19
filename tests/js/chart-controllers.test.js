@@ -1386,3 +1386,121 @@ test("the draft preview never moves the price scale (#222/#68)", () => {
     assert.strictEqual(f.attached[0].autoscaleInfo(), null, "a preview must not rescale");
   } finally { f.restore(); }
 });
+
+
+// --- symbol picker: follow/unfollow toggle (F11 A-S4 / R19) ------------------
+//
+// The listbox rows are JS-built, so this drives the real controller with a
+// minimal DOM shim. It proves the ONE thing a static markup test cannot: a
+// followed symbol can be UNfollowed again (the button is never disabled) and
+// the request method flips POST -> DELETE.
+const { createSymbolPicker } = await import(
+  "../../web/market/templates/market/controllers/symbol-picker.js"
+);
+
+function pickerFixture(watchlist) {
+  const prevDoc = globalThis.document;
+  const prevFetch = globalThis.fetch;
+  const calls = [];
+
+  function makeNode(tag) {
+    return {
+      tagName: tag,
+      children: [],
+      dataset: {},
+      attributes: {},
+      textContent: "",
+      hidden: true,
+      id: "",
+      type: "",
+      className: "",
+      _handlers: {},
+      appendChild(child) { this.children.push(child); return child; },
+      setAttribute(name, value) { this.attributes[name] = value; },
+      removeAttribute(name) { delete this.attributes[name]; },
+      addEventListener(name, fn) { this._handlers[name] = fn; },
+      contains() { return false; },
+      querySelectorAll(sel) {
+        return this.children.filter((c) => c.attributes.role === "option");
+      },
+      scrollIntoView() {},
+    };
+  }
+
+  const input = makeNode("input");
+  const list = makeNode("ul");
+  const status = makeNode("p");
+
+  globalThis.document = {
+    getElementById(id) {
+      if (id === "symbol-search") return input;
+      if (id === "symbol-results") return list;
+      if (id === "symbol-status") return status;
+      return null;
+    },
+    querySelector: () => ({ content: "tok" }),
+    createElement: makeNode,
+    addEventListener() {},
+  };
+
+  globalThis.fetch = (url, opts) => {
+    const method = (opts && opts.method) || "GET";
+    calls.push({ url, method });
+    const body =
+      url.indexOf("symbols") !== -1
+        ? { symbols: ["BTCUSDT", "ETHUSDT"] }
+        : { symbols: watchlist };
+    return Promise.resolve({ ok: true, json: () => Promise.resolve(body) });
+  };
+
+  const picker = createSymbolPicker({
+    store: { get: () => ({ interval: "1m" }) },
+    bus: { emit() {} },
+    config: {
+      symbols: ["BTCUSDT"],
+      saveDelay: 0,
+      urls: { symbols: "/market/api/symbols", watchlist: "/market/api/watchlist" },
+    },
+  });
+
+  return {
+    picker, calls, input, list,
+    restore() {
+      if (prevDoc === undefined) delete globalThis.document; else globalThis.document = prevDoc;
+      if (prevFetch === undefined) delete globalThis.fetch; else globalThis.fetch = prevFetch;
+    },
+  };
+}
+
+test("symbol picker: a followed symbol can be unfollowed (DELETE, not disabled)", async () => {
+  const f = pickerFixture(["BTCUSDT"]);
+  try {
+    await f.picker.refresh();
+    f.input._handlers.input.call(f.input, {});
+    const options = f.list.querySelectorAll("option");
+    const btc = options.find((o) => o.dataset.symbol === "BTCUSDT");
+    const button = btc.children[1];
+
+    assert.strictEqual(button.disabled, undefined, "follow button is never disabled");
+    assert.strictEqual(button.attributes["aria-pressed"], "true", "starts followed");
+
+    f.calls.length = 0;
+    const clickHandler = button._handlers.click;
+    assert.ok(clickHandler, "a click handler is attached to the follow button");
+    clickHandler({ stopPropagation() {} });
+    await Promise.resolve();
+    await Promise.resolve();
+
+    assert.deepStrictEqual(
+      f.calls.map((c) => c.method),
+      ["DELETE"],
+      "unfollow issues DELETE",
+    );
+    assert.ok(
+      f.calls[0].url.endsWith("/BTCUSDT"),
+      "DELETE targets the symbol path",
+    );
+  } finally {
+    f.restore();
+  }
+});

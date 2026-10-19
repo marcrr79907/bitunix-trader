@@ -17,6 +17,7 @@ from django.shortcuts import render
 from django.views.decorators.http import require_http_methods
 from trading.models import AlertRule, ChartLayout, ChartPreference, Drawing
 
+from market import catalog
 from market.quotes import (
     CHART_TYPES,
     DEFAULT_LAYOUT,
@@ -71,6 +72,7 @@ MODULE_ALLOWLIST = frozenset(
         "alert-ui-core",
         "alert-markers-view",
         "alert-bell-view",
+        "symbol-search-core",
         "chart-store",
         "chart-bus",
         "chart-host",
@@ -97,6 +99,7 @@ CONTROLLER_ALLOWLIST: frozenset[str] = frozenset(
         "context-menu",
         "draft-preview",
         "alerts",
+        "symbol-picker",
     }
 )
 
@@ -239,6 +242,21 @@ def api_smc(request: HttpRequest) -> JsonResponse:
         return JsonResponse({"error": "upstream"}, status=502)
 
     return JsonResponse(payload)
+
+
+@login_required
+@require_http_methods(["GET"])
+def api_symbols(request: HttpRequest) -> JsonResponse:
+    """Exchange-wide symbol universe (F11 A-S1, spec ``symbol-catalog`` R3).
+
+    Read-only and login-gated; the catalog module owns the 60s cache. An
+    upstream failure is a 502, mirroring ``api_kline``.
+    """
+    try:
+        symbols = catalog.list_symbols()
+    except (BitunixError, requests.RequestException):
+        return JsonResponse({"error": "upstream"}, status=502)
+    return JsonResponse({"symbols": symbols})
 
 
 @login_required

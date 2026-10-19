@@ -12,9 +12,15 @@ shorter months; backfill covers history).
 
 from __future__ import annotations
 
+import logging
 import time
 
+import requests
+
+from src.client import BitunixError
 from trading.models import Candle
+
+logger = logging.getLogger(__name__)
 
 INTERVAL_SECONDS = {
     "5m": 300,
@@ -45,18 +51,46 @@ def is_closed(candle_time: int, interval: str, now: int) -> bool:
     return now >= candle_time + INTERVAL_SECONDS[interval]
 
 
-def fetch_closed_candles(client, symbols, now=None) -> list[dict]:
+def due_intervals(now: int, last_poll: int | None) -> tuple[str, ...]:
+    """Intervals whose bucket rolled over since ``last_poll`` (F11 A-S3).
+
+    Pure: no clock read, no I/O. A fresh process (``last_poll is None``) returns
+    every interval once, which is the documented restart burst; the worker's
+    cycle throttle absorbs it. Without this guard a 50-symbol watchlist would
+    request 8 intervals each cycle (~13 req/s, over the exchange's 10 req/s).
+    """
+    if last_poll is None:
+        return CANDLE_INTERVALS
+    return tuple(
+        name
+        for name, span in INTERVAL_SECONDS.items()
+        if now // span != last_poll // span
+    )
+
+
+def fetch_closed_candles(client, symbols, now=None, intervals=None) -> list[dict]:
     """Fetch the just-closed candle per symbol × interval.
 
     ``limit=2`` returns the forming candle plus the one that just closed; only
     closed buckets are kept. Each row is tagged with its ``symbol``/``interval``
     so the flat list is directly persistable.
+
+    ``intervals`` defaults to every ``CANDLE_INTERVALS`` entry (back-compat). A
+    per-(symbol, interval) failure is logged and skipped so one bad pair can
+    never abort the whole cycle (F11 spec R7).
     """
     now = _now_seconds() if now is None else now
+    interval_names = CANDLE_INTERVALS if intervals is None else tuple(intervals)
     closed: list[dict] = []
     for symbol in symbols:
-        for interval in CANDLE_INTERVALS:
-            rows = client.kline(symbol, interval, 2)
+        for interval in interval_names:
+            try:
+                rows = client.kline(symbol, interval, 2)
+            except (BitunixError, requests.RequestException):
+                logger.warning(
+                    "candle fetch failed symbol=%s interval=%s", symbol, interval
+                )
+                continue
             for row in rows:
                 if is_closed(row["time"], interval, now):
                     closed.append(
