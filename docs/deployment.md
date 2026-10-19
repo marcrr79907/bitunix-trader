@@ -56,6 +56,35 @@ Create project tokens in Railway: **Project -> Settings -> Tokens**. A project
 token is scoped to a single environment, so a leaked CI token exposes one
 environment, not the account.
 
+## Infrastructure as Code
+
+Railway resource configuration lives in `.railway/railway.ts` (railway IaC).
+`railway.json` was **removed** on 2026-10-19: it declared `builder: DOCKERFILE`
+but every real service uses **RAILPACK** (which auto-detects the `Dockerfile`),
+so it was inert — `railway config migrate status` reported "No services in
+staging read Config as Code". Removing it clears the deprecation warning without
+changing any build.
+
+The IaC file manages services, databases and volumes; **variables stay
+unmanaged** (`variables: { managed: false }`), so secrets never enter the repo
+and Railway keeps owning them. Values imported from the project appear as
+`preserve()`.
+
+| Command | Purpose |
+|---|---|
+| `env _="$(which railway)" railway config plan` | preview drift (must show no changes after a clean import) |
+| `railway config pull` | re-import the live project into IaC |
+| `railway config apply` | apply a reviewed plan (asks for confirmation) |
+
+The `env _=...` prefix is required: the TypeScript SDK reads the CLI version from
+`$ _`, which a shell normally points at the last command.
+
+The SDK is a dev-only dependency (`npm install railway`); `node_modules/` is
+gitignored. It is not needed at runtime — the app has no JavaScript build.
+
+Deploy commands still come from the Railway dashboard configuration captured in
+the IaC file; the CD pipeline in `.github/workflows/cd.yml` is unchanged.
+
 ## One-time Railway setup (per service, per environment)
 
 1. **Disable** GitHub autodeploy on `web`, `worker`, `scheduler`
