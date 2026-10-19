@@ -99,11 +99,6 @@ export function createTemplates({ store, bus, config }) {
 
   function save() {
     const name = (nameInput ? nameInput.value : "").trim();
-    if (!name) {
-      showError("Name is required");
-      return; // dialog stays OPEN so the message is visible (F10 lesson)
-    }
-
     const entries = storeToTemplate(buildIndicators, store.get());
     fetch(config.urls.templates, {
       method: "POST",
@@ -135,10 +130,23 @@ export function createTemplates({ store, bus, config }) {
     });
   }
 
-  if (dialog) {
-    dialog.addEventListener("close", function () {
-      if (dialog.returnValue === "ok") save();
-      dialog.returnValue = "";
+  // Validate on SUBMIT, not on close: a whitespace-only name passes the native
+  // ``required`` check, so the dialog would already be closed (and the error
+  // invisible) if we validated in the close handler — the F10 bug.
+  const form = dialog.querySelector("form");
+  if (form) {
+    form.addEventListener("submit", function (event) {
+      // The Cancel button is also a submit (value="cancel"): let it close.
+      const submitter = event.submitter;
+      if (submitter && submitter.value === "cancel") return;
+      const name = (nameInput ? nameInput.value : "").trim();
+      if (!name) {
+        event.preventDefault(); // keep the dialog open so the error is visible
+        showError("Name is required");
+        if (nameInput) nameInput.focus();
+        return;
+      }
+      save();
     });
   }
 
