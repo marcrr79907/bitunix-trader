@@ -40,6 +40,26 @@ def _bootstrap() -> None:
     django.setup()
 
 
+# F11 A-S3: last cycle instant for due-interval scheduling. In-memory only — a
+# restart makes every interval due once, and the cycle throttle absorbs the
+# burst; persisting it would need a table for a ~40 s transient.
+_last_poll: int | None = None
+
+
+def ingest_symbols() -> list[str]:
+    """The worker's ingest set: defaults first, then watchlist, deduped + capped.
+
+    The unscoped ``Watchlist`` read is legal only here (R14.4 trust zone),
+    mirroring ``run_alert_rules``. Defaults are first in the dedup order so a
+    full watchlist can never starve the operator's configured pairs.
+    """
+    from trading.models import Watchlist
+
+    watched = sorted(set(Watchlist.objects.values_list("symbol", flat=True)))
+    merged = list(dict.fromkeys([*config.SYMBOLS, *watched]))
+    return merged[: config.MAX_WATCHLIST_SYMBOLS]
+
+
 def run_once(client, symbols) -> tuple[int, int]:
     """Fetch one market snapshot and persist it. Returns (funding, ticker) counts.
 
@@ -47,13 +67,27 @@ def run_once(client, symbols) -> tuple[int, int]:
     failure must never degrade funding/ticker persistence or kill the loop.
     The return contract stays ``(funding, ticker)`` for existing callers.
     """
-    from trading.candles import fetch_closed_candles, persist_candles
+    global _last_poll
+
+    from trading.candles import (
+        _now_seconds,
+        due_intervals,
+        fetch_closed_candles,
+        persist_candles,
+    )
     from trading.ingest import fetch_market, persist_market
 
     market = fetch_market(client, symbols)
     counts = persist_market(market["funding"], market["tickers"])
+    now = _now_seconds()
     try:
-        n_candles = persist_candles(fetch_closed_candles(client, symbols))
+        n_candles = persist_candles(
+            fetch_closed_candles(
+                client, symbols, now=now, intervals=due_intervals(now, _last_poll)
+            )
+        )
+        # Advance ONLY on success so a failed cycle retries the same buckets.
+        _last_poll = now
         logger.info("candle cycle ok persisted=%d", n_candles)
     except (
         Exception
@@ -200,17 +234,22 @@ def run_loop(client, symbols=None, iterations=None, stop=None, sleep=time.sleep)
     """Poll the market until ``iterations`` or ``stop()``; back off on errors.
 
     No real sleeps when ``sleep`` is injected, so tests reach every branch.
+
+    ``symbols=None`` means the full ingest set (defaults + watchlist); an
+    explicit list is authoritative (tests and operators override it).
     """
-    symbols = config.SYMBOLS if symbols is None else symbols
+    explicit = symbols is not None
     backoff, count = INGEST_POLL_SECONDS, 0
     while iterations is None or count < iterations:
         if stop is not None and stop():
             break
         try:
-            n_funding, n_tickers = run_once(client, symbols)
+            # Recomputed per cycle so a watchlist change lands on the next poll.
+            cycle_symbols = symbols if explicit else ingest_symbols()
+            n_funding, n_tickers = run_once(client, cycle_symbols)
             logger.info(
                 "cycle ok symbols=%d funding=%d tickers=%d",
-                len(symbols),
+                len(cycle_symbols),
                 n_funding,
                 n_tickers,
             )
