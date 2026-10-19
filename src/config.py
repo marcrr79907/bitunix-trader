@@ -48,5 +48,9 @@ SYMBOLS = [
     s.strip() for s in os.environ.get("BITUNIX_SYMBOLS", "").split(",") if s.strip()
 ] or DEFAULT_SYMBOLS
 
+# F11: one cap shared by the watchlist API and the worker ingest set, so the two
+# limits can never disagree.
+MAX_WATCHLIST_SYMBOLS = 50
+
 TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN", "").strip()
 TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID", "").strip()
