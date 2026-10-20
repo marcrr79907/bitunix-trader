@@ -133,9 +133,10 @@ def find_setups(
 class SetupRecord(NamedTuple):
     """A ``Setup`` enriched with the anchor bar's time and ATR.
 
-    ``anchor_time`` is ``times[index]`` (``None`` when the index is outside the
-    supplied window) and ``atr`` is the ATR at ``index`` (``None`` inside the
-    warm-up). Never an order; a persisted observation.
+    ``anchor_time`` is ``times[index]`` and ``atr`` is the ATR at ``index``
+    (``None`` inside the warm-up). Records whose index falls outside the
+    supplied ``times`` window are skipped, never emitted with ``None``.
+    Never an order; a persisted observation.
     """
 
     direction: str
@@ -145,7 +146,7 @@ class SetupRecord(NamedTuple):
     rr: float
     score: int
     index: int
-    anchor_time: int | None
+    anchor_time: int
     atr: float | None
 
 
@@ -215,7 +216,7 @@ def capture_setups(
                 setup.score,
                 index,
                 times[index],
-                atrs[index] if index < len(atrs) else None,
+                atrs[index],
             )
         )
     return out

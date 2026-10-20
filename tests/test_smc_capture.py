@@ -23,10 +23,6 @@ def test_engine_version_is_a_non_empty_string():
     assert SMC_ENGINE_VERSION.strip()
 
 
-def test_capture_setups_is_callable():
-    assert callable(capture_setups)
-
-
 # --- fixtures -------------------------------------------------------------
 # 24-bar zigzag: confirmed swings, one bullish BOS at index 20, one long setup
 # with a full score when the range is resolved. Same generator shape as the

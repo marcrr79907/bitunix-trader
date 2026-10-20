@@ -71,6 +71,40 @@ def test_engine_version_and_atr_columns():
     assert Setup._meta.get_field("created_at").auto_now_add is True
 
 
+@pytest.mark.parametrize(
+    "name,internal_type,max_length",
+    [
+        ("symbol", "CharField", 32),
+        ("interval", "CharField", 8),
+        ("direction", "CharField", 8),
+        ("engine_version", "CharField", 16),
+    ],
+)
+def test_char_column_contract(name, internal_type, max_length):
+    field = Setup._meta.get_field(name)
+    assert field.get_internal_type() == internal_type
+    assert field.max_length == max_length
+
+
+def test_numeric_column_contract():
+    assert Setup._meta.get_field("anchor_time").get_internal_type() == "BigIntegerField"
+    for name in ("entry", "stop", "take_profit", "rr"):
+        assert Setup._meta.get_field(name).get_internal_type() == "FloatField"
+    assert Setup._meta.get_field("score").get_internal_type() == (
+        "PositiveSmallIntegerField"
+    )
+    assert Setup._meta.get_field("created_at").get_internal_type() == "DateTimeField"
+
+
+def test_required_columns_are_not_nullable():
+    nullable = {
+        field.name
+        for field in Setup._meta.fields
+        if field.null and not field.primary_key
+    }
+    assert nullable == {"atr"}
+
+
 # --- migration source ----------------------------------------------------
 
 
