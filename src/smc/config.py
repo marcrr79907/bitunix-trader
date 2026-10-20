@@ -11,6 +11,10 @@ SWING_LEFT = 2
 SWING_RIGHT = 2
 USE_CLOSE = True
 
+# Hand-bump whenever scoring, thresholds, or the derivation chain change; each
+# persisted setup row records the version that emitted it.
+SMC_ENGINE_VERSION = "1"
+
 # --- B2 zones -------------------------------------------------------------
 OB_LOOKBACK = 10  # bars scanned back for the opposite order-block candle
 FVG_MIN_GAP = 0.0  # minimum gap size (price units) to emit an FVG
