@@ -80,6 +80,7 @@ def run_once(client, symbols) -> tuple[int, int]:
     market = fetch_market(client, symbols)
     counts = persist_market(market["funding"], market["tickers"])
     now = _now_seconds()
+    n_candles: int | None = None
     try:
         n_candles = persist_candles(
             fetch_closed_candles(
@@ -93,6 +94,20 @@ def run_once(client, symbols) -> tuple[int, int]:
         Exception
     ) as exc:  # ponytail: broad by spec — candle failure must never kill ticks
         logger.warning("candle cycle failed: %s", exc)
+    if n_candles is None or n_candles > 0:
+        # The window moved (or the candle cycle failed and we may be stale):
+        # re-derive. On an unchanged window this is redundant work, so it is
+        # gated on candle progress. Isolation unchanged (D3): the import stays
+        # inside the try so a bad SETUP_CAPTURE_INTERVALS disables capture only.
+        try:
+            from trading.setups import run_setup_capture
+
+            n_setups = run_setup_capture(symbols)
+            logger.info("setup capture ok persisted=%d", n_setups)
+        except (
+            Exception
+        ) as exc:  # ponytail: isolation by spec — capture must never kill ticks
+            logger.warning("setup capture failed: %s", exc)
     try:
         n_users = run_private_sync()
         logger.info("private sync ok users=%d", n_users)

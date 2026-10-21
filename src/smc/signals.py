@@ -10,10 +10,11 @@ from __future__ import annotations
 
 from typing import NamedTuple
 
+from src.indicators import atr
 from src.smc.config import MIN_CONFLUENCE, MIN_RR, MIN_RR_TP_R, OB_LOOKBACK, SL_BUFFER
-from src.smc.range import classify_price
-from src.smc.structure import StructureEvent
-from src.smc.swings import Swing
+from src.smc.range import classify_price, dealing_range
+from src.smc.structure import StructureEvent, find_structure
+from src.smc.swings import Swing, find_swings
 from src.smc.zones import FVG, OrderBlock, find_fvg, find_order_blocks
 
 
@@ -127,3 +128,81 @@ def find_setups(
         return []
 
     return [Setup(direction, entry, stop, take_profit, rr, score, anchor)]
+
+
+class SetupRecord(NamedTuple):
+    """A ``Setup`` enriched with the anchor bar's time and ATR.
+
+    ``anchor_time`` is ``times[index]`` and ``atr`` is the ATR at ``index``
+    (``None`` inside the warm-up). Records whose index falls outside the
+    supplied ``times`` window are skipped, never emitted with ``None``.
+    Never an order; a persisted observation.
+    """
+
+    direction: str
+    entry: float
+    stop: float
+    take_profit: float
+    rr: float
+    score: int
+    index: int
+    anchor_time: int
+    atr: float | None
+
+
+def capture_setups(
+    opens: list[float],
+    highs: list[float],
+    lows: list[float],
+    closes: list[float],
+    times: list[int],
+    *,
+    atr_window: int = 14,
+) -> list[SetupRecord]:
+    """Run the ``get_smc_payload`` chain and enrich each setup for persistence.
+
+    Composition mirrors the payload exactly: ``find_swings`` →
+    ``find_structure`` → ``dealing_range`` → ``find_setups`` with every knob at
+    its default, so the ledger records what the chart shows. The caller owns
+    the window length; see ``SMC_WINDOW`` in ``web.trading.setups``.
+
+    ``anchor_time`` is ``times[index]`` with the same bounds rule as
+    ``_serialize_smc``; ``atr`` is ``src.indicators.atr(...)[index]``. Records
+    whose index falls outside ``times`` are skipped. Empty or mismatched OHLC,
+    ``len(times) != len(closes)``, or no structure event yield ``[]``. Pure and
+    deterministic: no I/O, no clock, no mutation, never raises.
+    """
+    n = len(closes)
+    if n == 0 or len(opens) != n or len(highs) != n or len(lows) != n:
+        return []
+    if len(times) != n:
+        return []
+
+    swings = find_swings(highs, lows)
+    structure = find_structure(highs, lows, closes)
+    setups = find_setups(
+        opens, highs, lows, closes, swings, structure, range_=dealing_range(highs, lows)
+    )
+    if not setups:
+        return []
+
+    atrs = atr(highs, lows, closes, atr_window)
+    out: list[SetupRecord] = []
+    for setup in setups:
+        index = setup.index
+        if not 0 <= index < n:
+            continue
+        out.append(
+            SetupRecord(
+                setup.direction,
+                setup.entry,
+                setup.stop,
+                setup.take_profit,
+                setup.rr,
+                setup.score,
+                index,
+                times[index],
+                atrs[index],
+            )
+        )
+    return out

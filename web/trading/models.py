@@ -87,6 +87,45 @@ class Candle(models.Model):
         ]
 
 
+class Setup(models.Model):
+    """Global SMC setup ledger row: an observation, never an order.
+
+    A setup is market-derived and byte-identical for every user, exactly like
+    ``Candle``; it carries no owner FK and is not user-scoped. ``anchor_time``
+    is the anchoring candle's OPEN in UNIX seconds. The unique key includes
+    ``engine_version`` so a hand-bumped engine writes new rows instead of being
+    silently swallowed by the old anchor; ``engine_version`` is stamped at
+    persistence time, never inside the pure helper.
+    """
+
+    symbol = models.CharField(max_length=32)
+    interval = models.CharField(max_length=8)
+    anchor_time = models.BigIntegerField()
+    direction = models.CharField(max_length=8)
+    entry = models.FloatField()
+    stop = models.FloatField()
+    take_profit = models.FloatField()
+    rr = models.FloatField()
+    score = models.PositiveSmallIntegerField()
+    atr = models.FloatField(null=True)
+    engine_version = models.CharField(max_length=16)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=["symbol", "interval", "anchor_time", "engine_version"],
+                name="uniq_setup_symbol_interval_anchor_engine",
+            )
+        ]
+        indexes = [
+            models.Index(
+                fields=["symbol", "interval", "anchor_time"],
+                name="ix_setup_sym_int_anchor",
+            )
+        ]
+
+
 class UserOwnedModel(models.Model):
     """Abstract owner-scoped base. Fail-closed: no owner → empty queryset."""
 
