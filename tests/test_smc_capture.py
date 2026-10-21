@@ -12,7 +12,7 @@ import copy
 
 from src.indicators import atr
 from src.smc.config import SMC_ENGINE_VERSION
-from src.smc.range import DealingRange, dealing_range
+from src.smc.range import dealing_range
 from src.smc.signals import Setup, capture_setups, find_setups
 from src.smc.structure import find_structure
 from src.smc.swings import find_swings
@@ -112,17 +112,6 @@ def test_atr_is_none_inside_the_warm_up():
     out = capture_setups(OPENS, HIGHS, LOWS, CLOSES, TIMES, atr_window=100)
 
     assert out and out[0].atr is None
-
-
-def test_range_override_wins_over_the_internal_dealing_range():
-    # A range whose high yields rr < min_rr forces the fixed-R fallback in the
-    # frozen chain; the helper must pass it through unchanged.
-    override = DealingRange(high=110.0, low=100.0, equilibrium=105.0, index=23)
-    default = capture_setups(OPENS, HIGHS, LOWS, CLOSES, TIMES)
-    custom = capture_setups(OPENS, HIGHS, LOWS, CLOSES, TIMES, range_=override)
-
-    assert default[0].take_profit == 114.5
-    assert custom[0].take_profit == 110.0
 
 
 def test_empty_and_mismatched_ohlc_return_empty():

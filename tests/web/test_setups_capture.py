@@ -1,7 +1,7 @@
 """Contract for the setup capture seam (smc-setup-ledger R5/R6, design D2/D3).
 
 The seam reads only persisted candles (``market.quotes._db_rows``), runs the
-pure ``capture_setups`` chain, stamps ``SMC_ENGINE_VERSION`` and persists with
+pure ``capture_setups`` chain, stamps ``engine_stamp()`` and persists with
 ``bulk_create(ignore_conflicts=True)``. Zero network, zero SMC math here.
 """
 
@@ -12,7 +12,6 @@ from trading.candles import CANDLE_INTERVALS
 from trading.models import Candle, Setup
 
 from src.indicators import atr
-from src.smc.config import SMC_ENGINE_VERSION
 from src.smc.signals import capture_setups
 
 pytestmark = pytest.mark.django_db
@@ -77,6 +76,40 @@ def setups():
     return module
 
 
+# --- surface parity -------------------------------------------------------
+
+
+def test_ledger_matches_the_chart_payload(setups):
+    """The ledger must record the setup the user is SHOWN, not a near copy.
+
+    The chart payload serializes with a 200-candle window (SIGNALS_LIMIT).
+    find_structure is path-dependent, so the capture window must match or the
+    ledger diverges from what the user saw. This test replays the exact same
+    seeded candles through the payload and the seam.
+    """
+    from market.quotes import get_smc_payload
+
+    from src.client import BitunixClient
+
+    _seed()
+    client = BitunixClient()  # must never be called: DB has the full window
+
+    payload = get_smc_payload(client, SYMBOL, INTERVAL, len(ROWS))["setups"]
+    assert payload, "fixture must produce a payload setup"
+
+    assert setups.run_setup_capture([SYMBOL]) == 1
+    row = Setup.objects.get()
+
+    shown = payload[-1]
+    assert row.direction == shown["direction"]
+    assert row.entry == shown["entry"]
+    assert row.stop == shown["stop"]
+    assert row.take_profit == shown["take_profit"]
+    assert row.rr == shown["rr"]
+    assert row.score == shown["score"]
+    assert row.anchor_time == shown["time"]
+
+
 # --- capture_intervals ----------------------------------------------------
 
 
@@ -119,7 +152,7 @@ def test_capture_persists_one_matching_row(setups):
     assert row.take_profit == record.take_profit
     assert row.rr == record.rr
     assert row.score == record.score
-    assert row.engine_version == SMC_ENGINE_VERSION
+    assert row.engine_version == setups.engine_stamp()
 
 
 def test_capture_is_idempotent(setups):
@@ -143,11 +176,11 @@ def test_version_bump_inserts_a_new_row_and_keeps_the_old(setups, monkeypatch):
     _seed()
     assert setups.run_setup_capture([SYMBOL]) == 1
 
-    monkeypatch.setattr(setups, "SMC_ENGINE_VERSION", "2")
+    monkeypatch.setattr(setups, "engine_stamp", lambda: "2:w200")
     assert setups.run_setup_capture([SYMBOL]) == 1
 
     versions = sorted(Setup.objects.values_list("engine_version", flat=True))
-    assert versions == ["1", "2"]
+    assert versions == ["1:w200", "2:w200"]
 
 
 def test_thin_window_inserts_nothing_and_does_not_raise(setups):

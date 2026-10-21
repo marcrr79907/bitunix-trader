@@ -15,13 +15,26 @@ from market.quotes import _db_rows
 
 from src.smc.config import SMC_ENGINE_VERSION
 from src.smc.signals import capture_setups
-from trading.candles import CANDLE_INTERVALS
+from trading.candles import CANDLE_INTERVALS, INTERVAL_SECONDS
 from trading.models import Setup
 
-# ponytail: matches ALERT_CANDLE_WINDOW so the ledger and the alert path see the
-# same geometry; deep enough for RANGE_LOOKBACK + swing warm-up.
-SETUP_CANDLE_WINDOW = 100
+# ponytail: parity with every consumer of the same setups — the chart's
+# SIGNALS_LIMIT, MAX_LIMIT and the analytics LIMIT are all 200, and
+# find_structure is path-dependent (it seeds its trend at the first break in
+# the window), so a shorter window yields a DIFFERENT signal, not a suffix.
+SMC_WINDOW = 200
 DEFAULT_CAPTURE_INTERVALS = ("1h",)
+
+
+def engine_stamp() -> str:
+    """Engine version fingerprinted with the window geometry.
+
+    find_structure is path-dependent, so the same engine over a different
+    window is a different engine. Encoding the window in the stamp keeps the
+    unique constraint from swallowing rows derived under new geometry —
+    without it, widening the window would silently collide with old rows.
+    """
+    return f"{SMC_ENGINE_VERSION}:w{SMC_WINDOW}"
 
 
 def capture_intervals() -> tuple[str, ...]:
@@ -45,9 +58,17 @@ def capture_intervals() -> tuple[str, ...]:
 
 
 def _records(symbol: str, interval: str) -> list:
-    """Run the pure chain over one persisted window; ``[]`` when too thin."""
-    rows = _db_rows(symbol, interval, None, SETUP_CANDLE_WINDOW)
+    """Run the pure chain over one persisted window; ``[]`` when too thin.
+
+    A gappy window is consumed as-is, but a gap shifts every index and
+    re-seeds structure differently, so a window with holes must not be
+    mistaken for a contiguous one.
+    """
+    rows = _db_rows(symbol, interval, None, SMC_WINDOW)
     if len(rows) < 3:
+        return []
+    span = rows[-1]["time"] - rows[0]["time"]
+    if span != (len(rows) - 1) * INTERVAL_SECONDS[interval]:
         return []
     return capture_setups(
         [row["open"] for row in rows],
@@ -66,12 +87,11 @@ def run_setup_capture(symbols) -> int:
     ``persist_candles``). Zero network: only persisted candles are read.
     """
     intervals = capture_intervals()
+    stamp = engine_stamp()
     staged = []
     for symbol in symbols:
         for interval in intervals:
             for record in _records(symbol, interval):
-                if not record.anchor_time:  # defensive: never a half row
-                    continue
                 staged.append(
                     Setup(
                         symbol=symbol,
@@ -84,11 +104,15 @@ def run_setup_capture(symbols) -> int:
                         rr=record.rr,
                         score=record.score,
                         atr=record.atr,
-                        engine_version=SMC_ENGINE_VERSION,
+                        engine_version=stamp,
                     )
                 )
     if not staged:
         return 0
+    # bulk_create(ignore_conflicts=True) cannot report what actually inserted,
+    # so the honest count is a delta. The pre-scan runs only when there is
+    # something to insert (rare: about once per closed candle), not on every
+    # no-op cycle.
     before = Setup.objects.count()
     Setup.objects.bulk_create(staged, ignore_conflicts=True)
     return Setup.objects.count() - before
