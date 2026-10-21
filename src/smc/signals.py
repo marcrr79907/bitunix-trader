@@ -158,17 +158,13 @@ def capture_setups(
     times: list[int],
     *,
     atr_window: int = 14,
-    range_=None,
-    min_rr: float = MIN_RR,
-    min_confluence: int = MIN_CONFLUENCE,
-    sl_buffer: float = SL_BUFFER,
 ) -> list[SetupRecord]:
     """Run the ``get_smc_payload`` chain and enrich each setup for persistence.
 
     Composition mirrors the payload exactly: ``find_swings`` →
-    ``find_structure`` → ``dealing_range`` → ``find_setups``. The dealing range
-    is always computed and used unless the caller passes ``range_`` (an
-    explicit override wins), so the helper is predictable from its inputs.
+    ``find_structure`` → ``dealing_range`` → ``find_setups`` with every knob at
+    its default, so the ledger records what the chart shows. The caller owns
+    the window length; see ``SMC_WINDOW`` in ``web.trading.setups``.
 
     ``anchor_time`` is ``times[index]`` with the same bounds rule as
     ``_serialize_smc``; ``atr`` is ``src.indicators.atr(...)[index]``. Records
@@ -184,18 +180,8 @@ def capture_setups(
 
     swings = find_swings(highs, lows)
     structure = find_structure(highs, lows, closes)
-    resolved_range = range_ if range_ is not None else dealing_range(highs, lows)
     setups = find_setups(
-        opens,
-        highs,
-        lows,
-        closes,
-        swings,
-        structure,
-        range_=resolved_range,
-        min_rr=min_rr,
-        min_confluence=min_confluence,
-        sl_buffer=sl_buffer,
+        opens, highs, lows, closes, swings, structure, range_=dealing_range(highs, lows)
     )
     if not setups:
         return []
