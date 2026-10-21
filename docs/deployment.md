@@ -107,7 +107,7 @@ failures, and `/healthz` returned 200.
      `ALLOWED_HOSTS=.up.railway.app,.railway.internal`.
 3. The image source is set by CD on each run; no manual image pinning needed.
 
-## Cron services (`cron-backfill`, `cron-prune`)
+## Cron services (`cron-backfill`, `cron-prune`, `cron-evaluate`)
 
 Scheduled batch work runs as **Railway native cron services** — container-
 decoupled from `web`/`worker`/`scheduler`, each booting only to run one
@@ -119,8 +119,9 @@ migrations, connect Redis, or bind a port.
 |---|---|---|
 | `cron-backfill` | `0 * * * *` (hourly) | `python web/manage.py backfill_candles --max-pages 3000` |
 | `cron-prune` | `0 3 * * *` (daily, 03:00) | `python web/manage.py prune_snapshots --older-than 7` |
+| `cron-evaluate` | `0 * * * *` (hourly) | `python web/manage.py evaluate_setups` |
 
-Both use the production env: `DJANGO_SETTINGS_MODULE=config.settings.prod`,
+All three use the production env: `DJANGO_SETTINGS_MODULE=config.settings.prod`,
 `SECRET_KEY`, `CREDENTIALS_FERNET_KEY`, `DATABASE_URL=${{Postgres.DATABASE_URL}}`,
 `DEBUG=false`, `ALLOWED_HOSTS=...`. Do **not** set `PORT`, `REDIS_URL`, a
 gunicorn command, or migrations: `web` is the single migrator and runs against
@@ -128,8 +129,8 @@ the current schema.
 
 **These services must be created in the Railway dashboard** (an ops step; the
 repo only ships the commands, the CD loop entry, and this doc — there is no
-`railway cron` CLI). Create both from the repo image, set the start command and
-Cron Schedule, set the env above, disable GitHub autodeploy on both, then
+`railway cron` CLI). Create each from the repo image, set the start command and
+Cron Schedule, set the env above, disable GitHub autodeploy on each, then
 trigger each once and confirm its logs.
 
 ### Why `--max-pages` and convergence
