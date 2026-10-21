@@ -195,6 +195,18 @@ def test_no_candles_inserts_nothing_and_does_not_raise(setups):
     assert Setup.objects.count() == 0
 
 
+def test_gappy_window_is_skipped(setups):
+    # A gap re-seeds structure and shifts every index, so a window with holes
+    # must not be recorded as truth: capture declines the pair entirely.
+    _seed()
+    gapped = Candle.objects.order_by("time")
+    middle = gapped[len(gapped) // 2]
+    middle.delete()
+
+    assert setups.run_setup_capture([SYMBOL]) == 0
+    assert Setup.objects.count() == 0
+
+
 def test_capture_reads_only_persisted_candles_no_network(setups, monkeypatch):
     import market.quotes as quotes
 
