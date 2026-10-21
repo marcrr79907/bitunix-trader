@@ -191,5 +191,17 @@ def test_capture_uses_configured_intervals(setups, monkeypatch):
     assert Setup.objects.count() == 0
 
 
-def test_default_capture_interval_is_a_persisted_candle_interval():
-    assert "1h" in CANDLE_INTERVALS
+def test_default_capture_interval_is_a_persisted_candle_interval(setups):
+    # Guards the contract, not the constant: whatever DEFAULT_CAPTURE_INTERVALS
+    # says, every entry must be an interval the worker actually persists.
+    assert set(setups.DEFAULT_CAPTURE_INTERVALS) <= set(CANDLE_INTERVALS)
+
+
+def test_bad_intervals_names_every_offender(setups, monkeypatch):
+    monkeypatch.setenv("SETUP_CAPTURE_INTERVALS", "bogus,xx,1h")
+    with pytest.raises(ValueError) as excinfo:
+        setups.capture_intervals()
+
+    message = str(excinfo.value)
+    assert "bogus" in message
+    assert "xx" in message

@@ -94,8 +94,9 @@ def run_once(client, symbols) -> tuple[int, int]:
     ) as exc:  # ponytail: broad by spec — candle failure must never kill ticks
         logger.warning("candle cycle failed: %s", exc)
     try:
-        # Import INSIDE the try (D3): a bad SETUP_CAPTURE_INTERVALS raises at
-        # module import, which must disable capture without touching ingestion.
+        # Inside the try (D3): capture_intervals() parses env lazily and raises
+        # on an unknown interval, which must disable capture only — never
+        # ingestion, private sync, or alerts.
         from trading.setups import run_setup_capture
 
         n_setups = run_setup_capture(symbols)
