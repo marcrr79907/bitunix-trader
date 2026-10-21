@@ -119,3 +119,22 @@ def test_bad_intervals_config_disables_capture_without_touching_ingestion(
     assert Setup.objects.count() == 0
     assert "setup capture failed:" in caplog.text
     assert "bogus" in caplog.text
+
+
+def test_capture_skipped_when_no_candle_persisted(monkeypatch, caplog):
+    # The window only moves when a candle persisted: re-deriving on a static
+    # window is pure waste, so the step must be skipped entirely.
+    import trading.setups as setups
+
+    called = []
+    monkeypatch.setattr(setups, "run_setup_capture", lambda s: called.append(s) or 0)
+
+    class NoCandleClient(StubClient):
+        def kline(
+            self, symbol, interval="1m", limit=100, start_time=None, end_time=None
+        ):  # noqa: E501
+            return []  # nothing closed this cycle
+
+    worker.run_once(NoCandleClient(), ["BTCUSDT"])
+
+    assert called == []
