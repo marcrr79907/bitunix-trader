@@ -126,6 +126,40 @@ class Setup(models.Model):
         ]
 
 
+class SetupOutcome(models.Model):
+    """Global resolution record for one ``Setup`` (1:1, overwritten on re-run).
+
+    Market-derived like ``Setup``: no owner FK, not ``UserOwnedModel``. The
+    OneToOne unique index IS the idempotency key — re-evaluation overwrites
+    the row instead of duplicating it. ``resolved_time`` is the resolution
+    candle's OPEN in UNIX seconds (NULL while unresolved); ``ambiguous`` is
+    counted as ``stop_loss`` in any aggregation, never a win. Computed by the
+    pure ``resolve_setup``; this model is persistence only, no math.
+    """
+
+    class Status(models.TextChoices):
+        TAKE_PROFIT = "take_profit"
+        STOP_LOSS = "stop_loss"
+        AMBIGUOUS = "ambiguous"
+        EXPIRED = "expired"
+        NOT_TRIGGERED = "not_triggered"
+
+    setup = models.OneToOneField(
+        Setup,
+        on_delete=models.CASCADE,
+        related_name="outcome",
+    )
+    status = models.CharField(max_length=16, choices=Status.choices)
+    resolved_time = models.BigIntegerField(null=True)
+    bars_to_resolution = models.IntegerField(null=True)
+    mfe_r = models.FloatField(null=True)
+    mae_r = models.FloatField(null=True)
+    sl_then_tp = models.BooleanField(null=True)
+    horizon_bars = models.IntegerField()
+    engine_version = models.CharField(max_length=16)
+    evaluated_at = models.DateTimeField(auto_now=True)
+
+
 class UserOwnedModel(models.Model):
     """Abstract owner-scoped base. Fail-closed: no owner → empty queryset."""
 
