@@ -1,9 +1,11 @@
 """Pure confluence scoring and trade-setup derivation.
 
 Combines the latest B1 structure event with B2 zones and dealing range to emit
-a read-only ``Setup`` proposal. No I/O, no network, no order path, stdlib only;
-deterministic, non-mutating, never raises: empty / short / mismatched input
-returns ``[]``. A ``Setup`` is a computed proposal — NEVER an order.
+a read-only ``Setup`` proposal, and resolves a persisted setup against the
+candles that followed its anchor. No I/O, no network, no order path, stdlib
+only; deterministic, non-mutating, never raises: empty / short / mismatched
+input returns ``[]`` or the degenerate ``not_triggered`` record. A ``Setup`` is
+a computed proposal — NEVER an order.
 """
 
 from __future__ import annotations
@@ -206,3 +208,118 @@ def capture_setups(
             )
         )
     return out
+
+
+class OutcomeRecord(NamedTuple):
+    """The resolved fate of one setup, over a bounded candle horizon.
+
+    ``status`` is one of ``take_profit`` / ``stop_loss`` / ``ambiguous`` /
+    ``expired`` / ``not_triggered``. ``resolved_time`` is the resolution
+    candle's OPEN (NULL until resolved); ``bars_to_resolution`` counts from
+    the activation candle (0 when it resolves itself). ``mfe_r``/``mae_r``
+    are the favorable/adverse excursions in R; ``sl_then_tp`` is the
+    post-resolution TP-touch flag, defined only for ``stop_loss`` and
+    ``ambiguous``. A pure observation — never an order.
+    """
+
+    status: str
+    resolved_time: int | None
+    bars_to_resolution: int | None
+    mfe_r: float | None
+    mae_r: float | None
+    sl_then_tp: bool | None
+
+
+def resolve_setup(
+    direction: str,
+    entry: float,
+    stop: float,
+    take_profit: float,
+    candles: list[tuple[int, float, float]],
+    *,
+    horizon_bars: int = 200,
+) -> OutcomeRecord:
+    """Walk the post-anchor candles and resolve the setup, conservatively.
+
+    ``candles`` are ``(time, high, low)`` tuples strictly after the anchor
+    time, ascending — the caller owns the filter; at most ``horizon_bars``
+    are walked. Activation is the first candle touching entry; a resolution
+    candle touching both stop and take-profit is ``ambiguous`` (the OHLC
+    cannot order them — counted as a loss in any aggregation, never a win).
+    Excursions use ``R = |entry - stop|`` over the window from activation to
+    resolution (full walked horizon when never activated, horizon end when
+    unresolved); ``R == 0`` degrades every R metric to ``None`` rather than
+    dividing. Touches before activation are ignored. Pure and deterministic:
+    no I/O, no clock, no mutation, never raises.
+    """
+    walked = candles[:horizon_bars]
+    if not walked:
+        return OutcomeRecord("not_triggered", None, None, None, None, None)
+
+    long = direction == "long"
+    r = abs(entry - stop)
+
+    def touches(price: float, candle: tuple[int, float, float]) -> bool:
+        return candle[2] <= price <= candle[1]
+
+    def excursions(window: list[tuple[int, float, float]]) -> tuple[float, float]:
+        highs = [c[1] for c in window]
+        lows = [c[2] for c in window]
+        if long:
+            mfe = (max(highs) - entry) / r
+            mae = (min(lows) - entry) / r
+        else:
+            mfe = (entry - min(lows)) / r
+            mae = (entry - max(highs)) / r
+        return mfe, mae
+
+    def record(
+        status: str,
+        resolved_time: int | None,
+        bars: int | None,
+        window: list[tuple[int, float, float]],
+        sl_then_tp: bool | None,
+    ) -> OutcomeRecord:
+        if r == 0 or not window:
+            mfe = mae = None
+        else:
+            mfe, mae = excursions(window)
+            if status == "not_triggered":
+                mae = min(mae, 0.0)
+        return OutcomeRecord(status, resolved_time, bars, mfe, mae, sl_then_tp)
+
+    activation = next(
+        (i for i, candle in enumerate(walked) if touches(entry, candle)), None
+    )
+    if activation is None:
+        return record("not_triggered", None, None, walked, None)
+
+    resolution = None
+    for j in range(activation, len(walked)):
+        candle = walked[j]
+        hit_stop = touches(stop, candle)
+        hit_tp = touches(take_profit, candle)
+        if hit_stop and hit_tp:
+            resolution = (j, "ambiguous")
+            break
+        if hit_stop:
+            resolution = (j, "stop_loss")
+            break
+        if hit_tp:
+            resolution = (j, "take_profit")
+            break
+
+    if resolution is None:
+        return record("expired", None, None, walked[activation:], None)
+
+    index, status = resolution
+    window = walked[activation : index + 1]
+    bars = index - activation
+    resolved_time = walked[index][0]
+    if status in {"stop_loss", "ambiguous"} and r > 0:
+        sl_then_tp = any(
+            touches(take_profit, walked[k]) for k in range(index + 1, len(walked))
+        )
+    else:
+        sl_then_tp = None
+    return record(status, resolved_time, bars, window, sl_then_tp)
